@@ -43,6 +43,8 @@ type OperatorReconcileInput struct {
 // OperatorWriteInfo keeps the application boundary compact while making the
 // frozen intent available for explicit review with --fields or raw output.
 type OperatorWriteInfo struct {
+	PlanVersion      int                     `json:"plan_version,omitempty"`
+	PlanLifetime     string                  `json:"plan_lifetime,omitempty"`
 	PlanID           string                  `json:"plan_id,omitempty"`
 	State            string                  `json:"state"`
 	Kind             string                  `json:"kind"`
@@ -68,7 +70,8 @@ type OperatorWriteInfo struct {
 
 func operatorSnapshotInfo(snapshot operatorwrite.Snapshot) OperatorWriteInfo {
 	projectID, projectKey := snapshot.ProjectRef()
-	return OperatorWriteInfo{State: "snapshot", Kind: string(snapshot.Kind), ConfirmationMode: operatorwrite.ConfirmationMode, Notifications: operatorwrite.Notifications,
+	return OperatorWriteInfo{PlanVersion: operatorwrite.PlanVersion2, PlanLifetime: operatorwrite.PlanLifetime(operatorwrite.PlanVersion2),
+		State: "snapshot", Kind: string(snapshot.Kind), ConfirmationMode: operatorwrite.ConfirmationMode, Notifications: operatorwrite.Notifications,
 		Profile: snapshot.Binding.ProfileName, Instance: snapshot.Binding.InstanceURL, AccountID: snapshot.Binding.AccountID,
 		AccountLogin: snapshot.Binding.AccountLogin, IssueID: snapshot.Issue.ID, ProjectID: projectID,
 		ProjectKey: projectKey, Snapshot: &snapshot}
@@ -77,8 +80,11 @@ func operatorSnapshotInfo(snapshot operatorwrite.Snapshot) OperatorWriteInfo {
 func operatorRecordInfo(record operatorwrite.Record) OperatorWriteInfo {
 	result := operatorSnapshotInfo(record.Plan.Snapshot)
 	result.Snapshot = nil
+	result.PlanVersion, result.PlanLifetime = record.Plan.Version, operatorwrite.PlanLifetime(record.Plan.Version)
 	result.PlanID, result.State, result.IntentSHA256 = record.Plan.ID, string(record.State), record.Plan.SHA256
-	result.ExpiresAt = record.Plan.ExpiresAt.Format(time.RFC3339)
+	if !record.Plan.ExpiresAt.IsZero() {
+		result.ExpiresAt = record.Plan.ExpiresAt.Format(time.RFC3339)
+	}
 	result.NonReplayable, result.Plan = record.NonReplayable(), &record.Plan
 	if record.Result != nil {
 		result.RemoteID, result.RemoteReadableID = record.Result.RemoteID, record.Result.RemoteReadableID

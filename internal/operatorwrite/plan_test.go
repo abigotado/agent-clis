@@ -57,7 +57,7 @@ func TestPrepareFrozenBoundedPlan(t *testing.T) {
 			if err := ValidatePlan(p); err != nil {
 				t.Fatal(err)
 			}
-			if p.ExpiresAt.Sub(p.CreatedAt) != PlanTTL || p.ConfirmationMode != ConfirmationMode || p.Notifications != Notifications {
+			if p.Version != PlanVersion2 || !p.ExpiresAt.IsZero() || p.ConfirmationMode != ConfirmationMode || p.Notifications != Notifications {
 				t.Fatalf("incorrect plan metadata: %+v", p)
 			}
 			if kind == KindIssueUpdate {
@@ -161,12 +161,25 @@ func TestTouchedSchemaProjectionIsDigestBound(t *testing.T) {
 
 func TestPlanLifetimeAndInputBounds(t *testing.T) {
 	p := testPlan(t, KindIssueUpdate)
-	for _, now := range []time.Time{p.CreatedAt.Add(-time.Nanosecond), p.ExpiresAt, p.ExpiresAt.Add(time.Minute)} {
-		if CheckFresh(p, now) == nil {
+	if CheckFresh(p, p.CreatedAt.Add(-time.Nanosecond)) == nil {
+		t.Fatal("future plan accepted")
+	}
+	if err := CheckFresh(p, p.CreatedAt.Add(24*time.Hour)); err != nil {
+		t.Fatalf("v2 plan expired by wall clock: %v", err)
+	}
+	legacy := p
+	legacy.Version, legacy.ExpiresAt = LegacyPlanVersion1, p.CreatedAt.Add(LegacyPlanTTL)
+	var err error
+	legacy.SHA256, err = digest(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, now := range []time.Time{legacy.CreatedAt.Add(-time.Nanosecond), legacy.ExpiresAt, legacy.ExpiresAt.Add(time.Minute)} {
+		if CheckFresh(legacy, now) == nil {
 			t.Fatal("expired or future plan accepted")
 		}
 	}
-	if err := CheckFresh(p, p.CreatedAt); err != nil {
+	if err := CheckFresh(legacy, legacy.CreatedAt); err != nil {
 		t.Fatal(err)
 	}
 	s := testSnapshot(t, KindCommentAdd)
@@ -178,7 +191,7 @@ func TestPlanLifetimeAndInputBounds(t *testing.T) {
 	if _, err := Prepare(s, Request{Kind: KindIssueUpdate}, s.CapturedAt.Add(time.Minute)); err == nil {
 		t.Fatal("operation switch accepted")
 	}
-	if _, err := Prepare(s, Request{Kind: KindCommentAdd, CommentText: "ok"}, s.CapturedAt.Add(PlanTTL)); err == nil {
+	if _, err := Prepare(s, Request{Kind: KindCommentAdd, CommentText: "ok"}, s.CapturedAt.Add(SnapshotTTL)); err == nil {
 		t.Fatal("stale snapshot accepted")
 	}
 }
@@ -194,7 +207,7 @@ func TestDecodeRejectsUnknownDuplicateOversizedAndRedacts(t *testing.T) {
 	}
 	for _, input := range []string{
 		`{"SECRET_SENTINEL":"SECRET_SENTINEL"}`,
-		strings.Replace(string(raw), `"version":1`, `"version":1,"version":1`, 1),
+		strings.Replace(string(raw), `"version":2`, `"version":2,"version":2`, 1),
 		string(raw) + ` {"SECRET_SENTINEL":true}`,
 		strings.Repeat("x", MaxPlanBytes+1),
 		`{"request":{"kind":"comment.add","comment_text":"SECRET_SENTINEL"}}`,

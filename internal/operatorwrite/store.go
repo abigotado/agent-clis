@@ -164,8 +164,11 @@ func readRecord(d *secureDirectory, id string) (Record, error) {
 }
 
 func validAttempt(a Attempt, p Plan) bool {
-	return protocolvalue.ValidateCanonicalBase32ID(a.ID, "YTOA-") == nil && a.PlanSHA256 == p.SHA256 &&
-		!a.ClaimedAt.Before(p.CreatedAt) && a.ClaimedAt.Before(p.ExpiresAt) && a.ClaimedAt.Location() == time.UTC
+	if protocolvalue.ValidateCanonicalBase32ID(a.ID, "YTOA-") != nil || a.PlanSHA256 != p.SHA256 ||
+		a.ClaimedAt.Before(p.CreatedAt) || a.ClaimedAt.Location() != time.UTC {
+		return false
+	}
+	return p.Version == PlanVersion2 || p.Version == LegacyPlanVersion1 && a.ClaimedAt.Before(p.ExpiresAt)
 }
 
 func (s *Store) Claim(ctx context.Context, id, sha string, now time.Time) (Attempt, error) {

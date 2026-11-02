@@ -170,7 +170,7 @@ func Prepare(snapshot Snapshot, request Request, now time.Time) (Plan, error) {
 	if err := ValidateSnapshot(snapshot); err != nil {
 		return Plan{}, err
 	}
-	if request.Kind != snapshot.Kind || now.IsZero() || snapshot.CapturedAt.After(now) || now.Sub(snapshot.CapturedAt) >= PlanTTL {
+	if request.Kind != snapshot.Kind || now.IsZero() || snapshot.CapturedAt.After(now) || now.Sub(snapshot.CapturedAt) >= SnapshotTTL {
 		return Plan{}, invalid()
 	}
 	id, err := newID(PlanIDPrefix)
@@ -208,8 +208,8 @@ func Prepare(snapshot Snapshot, request Request, now time.Time) (Plan, error) {
 	if err := json.Unmarshal(raw, &frozen); err != nil {
 		return Plan{}, invalid()
 	}
-	plan := Plan{Version: Version, Lane: Lane, ID: id, ConfirmationMode: ConfirmationMode, Notifications: Notifications,
-		Snapshot: frozen, Request: request, CreatedAt: now.UTC(), ExpiresAt: now.UTC().Add(PlanTTL)}
+	plan := Plan{Version: PlanVersion2, Lane: Lane, ID: id, ConfirmationMode: ConfirmationMode, Notifications: Notifications,
+		Snapshot: frozen, Request: request, CreatedAt: now.UTC()}
 	plan.SHA256, err = digest(plan)
 	if err != nil {
 		return Plan{}, err
@@ -227,11 +227,22 @@ func digest(p Plan) (string, error) {
 }
 
 func ValidatePlan(p Plan) error {
-	if p.Version != Version || p.Lane != Lane || ValidateID(p.ID) != nil || p.ConfirmationMode != ConfirmationMode ||
+	if p.Lane != Lane || ValidateID(p.ID) != nil || p.ConfirmationMode != ConfirmationMode ||
 		p.Notifications != Notifications || ValidateSnapshot(p.Snapshot) != nil || p.Request.Kind != p.Snapshot.Kind ||
-		p.CreatedAt.IsZero() || p.CreatedAt.Location() != time.UTC || p.ExpiresAt.Location() != time.UTC ||
-		p.ExpiresAt.Sub(p.CreatedAt) != PlanTTL || p.Snapshot.CapturedAt.After(p.CreatedAt) ||
-		p.CreatedAt.Sub(p.Snapshot.CapturedAt) >= PlanTTL || !protocolvalue.IsSHA256(p.SHA256) {
+		p.CreatedAt.IsZero() || p.CreatedAt.Location() != time.UTC || p.Snapshot.CapturedAt.After(p.CreatedAt) ||
+		p.CreatedAt.Sub(p.Snapshot.CapturedAt) >= SnapshotTTL || !protocolvalue.IsSHA256(p.SHA256) {
+		return invalid()
+	}
+	switch p.Version {
+	case LegacyPlanVersion1:
+		if p.ExpiresAt.IsZero() || p.ExpiresAt.Location() != time.UTC || p.ExpiresAt.Sub(p.CreatedAt) != LegacyPlanTTL {
+			return invalid()
+		}
+	case PlanVersion2:
+		if !p.ExpiresAt.IsZero() {
+			return invalid()
+		}
+	default:
 		return invalid()
 	}
 	if !validRequest(p.Request) {
@@ -266,7 +277,11 @@ func CheckFresh(p Plan, now time.Time) error {
 	if err := ValidatePlan(p); err != nil {
 		return err
 	}
-	if now.Before(p.CreatedAt) || !now.Before(p.ExpiresAt) {
+	if now.Before(p.CreatedAt) {
+		return errx.Conflict("OPERATOR_PLAN_EXPIRED", "operator-write plan is not yet valid on the local clock").
+			WithHint("check the local clock; keep the existing plan and do not renew it")
+	}
+	if p.Version == LegacyPlanVersion1 && !now.Before(p.ExpiresAt) {
 		return errx.Conflict("OPERATOR_PLAN_EXPIRED", "operator-write plan is outside its local lifetime").WithHint("inspect again and confirm a newly prepared plan")
 	}
 	return nil

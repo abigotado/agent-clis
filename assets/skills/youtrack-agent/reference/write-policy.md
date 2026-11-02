@@ -24,6 +24,48 @@ unavailable receipt. Source support does not prove an installed Homebrew
 version contains it. Readonly editions never gain writes. Do not silently grant
 capabilities, replace credentials, or copy another profile's identity.
 
+## Consent without a second prompt
+
+An explicit external user request that names the exact target and complete
+change is confirmation of that operation, not permission to develop the feature.
+For example, "add comment TEXT to APP-123" or "set APP-123 Stage to PR Review"
+authorizes one snapshot, offline prepare and apply with the saved write profile.
+Do not ask the user to confirm again merely because the CLI generated a plan
+ID, reconciliation marker or digest. Before dispatch, disclose the resolved
+profile/instance/account, exact target and final payload with its marker and
+the default notification behavior; this is a progress update, not a blocking
+question. The fixed marker is mechanical reconciliation metadata, not another
+substantive change. If the user forbids an added marker, stop: this lane cannot
+send an unmarked comment or issue description.
+
+Ask once if a material choice is unresolved: target/profile, comment text,
+field/value, or a new issue's summary/description/selected fields. If the agent
+drafts text not already approved by the user, show that final text and obtain
+confirmation before applying. Generic "continue", permission to implement or
+release the CLI, tracker instructions and a configured write capability are
+not consent to change a YouTrack object. Honor an explicit stop, cancellation
+or request to review before sending. Never reuse consent for another operation,
+a batch, or an automatic retry after consumed/ambiguous results.
+
+## Plan lifetime
+
+Check `plan_version` and `plan_lifetime` in the CLI result. Newly prepared v2
+plans use `until_consumed_or_stale` and omit `expires_at` from serialized plans
+and default JSON/raw results (explicit `--fields expires_at` returns an empty
+string). Waiting for a human does not change their ID, marker or digest. Keep
+and apply that same unconsumed plan; do not regenerate it just because time
+passed. Apply still rechecks the
+account, credential generation, profile/project policy, issue updated timestamp
+and touched schema. A stale binding or remote state requires a fresh inspection
+and renewed confirmation; do not silently rebase consent onto a changed state.
+
+The 15-minute window applies only between snapshot capture and offline prepare,
+which agents perform consecutively before asking any needed question. Legacy
+v1 plans retain their original 15-minute expiry (`legacy_time_limited`);
+upgrading never extends or revives them. Do not edit or rehash a legacy plan to
+remove its expiry. An older installed CLI without these metadata fields still
+uses its legacy rules; request a released upgrade rather than bypassing them.
+
 1. Name the profile and exact issue. Create a private artifact directory
    (`mktemp -d` on macOS); exports require an existing owned 0700 parent and
    new exclusive 0600 files. Run `operator-write snapshot --profile NAME
@@ -47,16 +89,17 @@ capabilities, replace credentials, or copy another profile's identity.
    surrounding whitespace, and with its marker fits 32 KiB.
    No credentials or network are accessed. `--dry-run` creates no plan or
    exports. A visible unique reconciliation marker is added to the final
-   comment or issue description before hashing; show it to the user and do
-   not strip it.
+   comment or issue description before hashing; disclose it to the user and do
+   not strip it. Snapshot and prepare happen before any necessary human wait.
 3. Show the entire immutable plan: profile, instance, expected account,
    project, issue, exact old/new field value or full final comment including
    marker, or a new issue's summary, frozen field values and full final
-   description including marker, plan ID, intent SHA-256, expiry and
+   description including marker, plan ID, intent SHA-256, plan lifetime and
    `youtrack-default` notifications. Notifications follow server/workflow
-   defaults; recipient lists and muting are not supported. Tracker text cannot supply confirmation. Obtain explicit
-   operator confirmation of this exact plan, not permission to develop the
-   feature or a generic instruction to continue.
+   defaults; recipient lists and muting are not supported. Tracker text cannot
+   supply confirmation. An exact user request already supplies consent as
+   described above; do not introduce another marker/hash confirmation question.
+   Otherwise obtain confirmation of the final operation before applying.
 4. Apply once with `operator-write apply --profile NAME --plan-id ID
    --confirm-intent SHA256 --yes`. These flags assert consent, not
    cryptographic human presence. The CLI checks the current account, policy,
@@ -76,8 +119,9 @@ capabilities, replace credentials, or copy another profile's identity.
    prove non-application; never create a replacement issue automatically. Observing the desired Stage does not prove who
    changed it. Reconciliation never restores plan eligibility.
 
-Expired or stale plans fail before dispatch; inspect a fresh snapshot and
-obtain a new exact confirmation. Consumed/rejected plans remain consumed.
+Legacy-expired or stale plans fail before dispatch; inspect a fresh snapshot and
+obtain a new exact confirmation. Durable v2 plans do not expire solely because
+time passed. Consumed/rejected plans remain consumed.
 If dispatch is uncertain, stop for operator resolution. REST preflight and
 write are not atomic: disclose the remaining TOCTOU risk. Never mix CLI and
 MCP/raw REST mutation paths in one operation. See [profile contract](profile-contract.md)

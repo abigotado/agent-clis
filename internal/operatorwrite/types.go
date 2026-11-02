@@ -6,12 +6,17 @@ package operatorwrite
 import "time"
 
 const (
-	Version          = 1
-	Lane             = "operator-write-v1"
-	ConfirmationMode = "operator_confirmed"
-	Notifications    = "youtrack-default"
-	PlanIDPrefix     = "YTOW-"
-	PlanTTL          = 15 * time.Minute
+	// Version remains the frozen snapshot and record version. Plan versions are
+	// independently versioned so new plans do not change their stored lane.
+	Version            = 1
+	LegacyPlanVersion1 = 1
+	PlanVersion2       = 2
+	Lane               = "operator-write-v1"
+	ConfirmationMode   = "operator_confirmed"
+	Notifications      = "youtrack-default"
+	PlanIDPrefix       = "YTOW-"
+	SnapshotTTL        = 15 * time.Minute
+	LegacyPlanTTL      = 15 * time.Minute
 	// Caps apply to complete JSON inputs/records, including escaping and metadata.
 	MaxSnapshotBytes = 24 * 1024
 	MaxRequestBytes  = 256 * 1024
@@ -26,6 +31,23 @@ const (
 	// MaxCreateFieldNameBytes matches the REST client's identifier bound.
 	MaxCreateFieldNameBytes = 128
 )
+
+const (
+	LegacyPlanLifetime  = "legacy_time_limited"
+	CurrentPlanLifetime = "until_consumed_or_stale"
+)
+
+// PlanLifetime reports the stable lifecycle metadata for an accepted plan version.
+func PlanLifetime(version int) string {
+	switch version {
+	case LegacyPlanVersion1:
+		return LegacyPlanLifetime
+	case PlanVersion2:
+		return CurrentPlanLifetime
+	default:
+		return ""
+	}
+}
 
 type Kind string
 
@@ -132,7 +154,7 @@ type Plan struct {
 	Snapshot         Snapshot  `json:"snapshot"`
 	Request          Request   `json:"request"`
 	CreatedAt        time.Time `json:"created_at"`
-	ExpiresAt        time.Time `json:"expires_at"`
+	ExpiresAt        time.Time `json:"expires_at,omitzero"`
 	SHA256           string    `json:"sha256"`
 }
 
