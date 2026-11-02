@@ -31,6 +31,8 @@ func (view operatorWriteView) Fields() []output.Field {
 	return []output.Field{
 		{Name: "trust", Value: untrustedYouTrackContent, Raw: untrustedYouTrackContent, Always: true},
 		{Name: "source", Value: "operator-write-v1", Raw: "operator-write-v1", Always: true},
+		{Name: "plan_version", Value: strconv.Itoa(view.PlanVersion), Raw: view.PlanVersion},
+		{Name: "plan_lifetime", Value: view.PlanLifetime, Raw: view.PlanLifetime},
 		{Name: "confirmation_mode", Value: view.ConfirmationMode, Raw: view.ConfirmationMode, Always: true},
 		{Name: "notifications", Value: view.Notifications, Raw: view.Notifications, Always: true},
 		{Name: "expires_at", Value: view.ExpiresAt, Raw: view.ExpiresAt, OnRequest: view.ExpiresAt == ""},

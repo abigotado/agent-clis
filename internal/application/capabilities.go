@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/abigotado/youtrack-agent-cli/internal/operatorwrite"
 	"github.com/abigotado/youtrack-agent-cli/internal/profile"
 	"github.com/abigotado/youtrack-agent-cli/internal/writepolicy"
 )
@@ -15,6 +16,8 @@ type CapabilitiesInfo struct {
 	OperatorWriteSupported         bool     `json:"operator_write_supported"`
 	NativeUserPresenceSupported    bool     `json:"native_user_presence_supported"`
 	ConfirmationMode               string   `json:"confirmation_mode"`
+	PlanVersion                    int      `json:"plan_version"`
+	PlanLifetime                   string   `json:"plan_lifetime"`
 	Profile                        string   `json:"profile,omitempty"`
 	Instance                       string   `json:"instance,omitempty"`
 	AccountID                      string   `json:"account_id,omitempty"`
@@ -30,7 +33,8 @@ type CapabilitiesInfo struct {
 // non-secret local generation and current identity-bound policy.
 func (s *Service) Capabilities(ctx context.Context, name string) (CapabilitiesInfo, error) {
 	result := CapabilitiesInfo{Edition: "standard", OperatorWriteSupported: s.OperatorBackendSupported(),
-		ConfirmationMode: "operator_confirmed", Kinds: []string{}, ReadinessScope: "local_configuration_only"}
+		ConfirmationMode: "operator_confirmed", PlanVersion: operatorwrite.PlanVersion2,
+		PlanLifetime: operatorwrite.PlanLifetime(operatorwrite.PlanVersion2), Kinds: []string{}, ReadinessScope: "local_configuration_only"}
 	if name == "" {
 		return result, nil
 	}

@@ -24,9 +24,6 @@ func TestStoreExclusiveClaimAndConsumedFinalization(t *testing.T) {
 	if _, err := s.Create(ctx, p); err == nil {
 		t.Fatal("duplicate plan replaced")
 	}
-	if _, err := s.Claim(ctx, p.ID, p.SHA256, p.ExpiresAt); err == nil {
-		t.Fatal("expired claim accepted")
-	}
 	if _, err := s.Claim(ctx, p.ID, "bad", p.CreatedAt); err == nil {
 		t.Fatal("wrong digest accepted")
 	}
@@ -34,16 +31,17 @@ func TestStoreExclusiveClaimAndConsumedFinalization(t *testing.T) {
 	if err != nil || r.State != StatePrepared {
 		t.Fatalf("failed prechecks consumed plan: %+v %v", r, err)
 	}
-	a, err := s.Claim(ctx, p.ID, p.SHA256, p.CreatedAt)
+	claimedAt := p.CreatedAt.Add(24 * time.Hour)
+	a, err := s.Claim(ctx, p.ID, p.SHA256, claimedAt)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("v2 claim expired by wall clock: %v", err)
 	}
 	r, err = s.Get(ctx, p.ID)
 	if err != nil || r.State != StateInFlight || !r.NonReplayable() {
 		t.Fatalf("claim not durable: %+v %v", r, err)
 	}
 	for _, result := range []Result{{State: StateUnknown, Code: "WRITE_OUTCOME_UNKNOWN"}, {State: StateOperatorRequired, Code: "OPERATOR_REQUIRED"}, {State: StateReconciled, Code: "OBSERVED_APPLIED", RemoteID: "4-1"}} {
-		r, err = s.Finalize(ctx, p.ID, a, result, p.CreatedAt.Add(time.Minute))
+		r, err = s.Finalize(ctx, p.ID, a, result, claimedAt.Add(time.Minute))
 		if err != nil || !r.NonReplayable() {
 			t.Fatalf("finalization: %+v %v", r, err)
 		}

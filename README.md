@@ -194,7 +194,15 @@ instead of assuming that an installed binary has these commands.
 
 The path uses explicit operator confirmation of an immutable intent, a bound
 profile/project allowlist, fresh preflight, and a permanent local claim before
-one POST. It is not native proof of human presence and does not defend against
+one POST. A precise user request already authorizes that exact change; agents
+disclose the generated reconciliation marker without asking for a second
+marker/hash confirmation. If the payload or target still needs a decision, ask
+once before sending. New plan schema v2 has no wall-clock expiry, so a delayed
+reply does not require a new marker. The 15-minute snapshot-to-prepare window
+and live stale-state checks remain; legacy v1 plans keep their original expiry.
+Check `plan_version` and `plan_lifetime` in `capabilities` and plan results to
+distinguish source support from an installed release.
+It is not native proof of human presence and does not defend against
 hostile same-user processes or restored local state. A separate authenticated
 write profile is required; the existing read profile stays unchanged.
 

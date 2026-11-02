@@ -7,8 +7,14 @@ Status: accepted decision. Source support is not an installed release; check
 
 The standard macOS CLI has a distinct `operator-write` path for one single-value
 state/enum field update, one public comment, or one new issue in an allowlisted
-project. An operator reviews the stored
-plan and confirms its digest with `--confirm-intent SHA256 --yes`. This follows
+project. An operator authorizes the exact change; the agent binds that consent
+to the stored plan with `--confirm-intent SHA256 --yes`. An explicit request
+with a complete target and payload is already authorization for that operation,
+including the disclosed fixed reconciliation marker and default notifications.
+It does not require another affirmative reply just to approve the generated
+marker or digest. If a material choice or agent-drafted text is unresolved,
+show the final operation and ask once. A generic instruction to continue or to
+develop/release the CLI does not authorize live writes. This follows
 the operator-assertion model of the existing Slack/Jira CLIs, not independently
 verified human presence or a signed receipt.
 
@@ -86,10 +92,13 @@ youtrack-agent-cli operator-write apply --profile work-write --plan-id PLAN_ID \
 Preparation receives one bounded structured request on stdin and cannot change
 the snapshotted kind, field or target: `{"kind":"issue.update"}` or
 `{"kind":"comment.add","comment_text":"EXACT TEXT"}`. For comments, snapshot `--kind comment.add`
-without field/schema selection, then provide nonblank text. Review complete final
+without field/schema selection, then provide nonblank text. Disclose complete final
 text including its unique visible marker, target, project/account and notification
-caveat before confirming the authoritative stored plan's hash. Edited exports
-are not apply authority. A dry-run creates no plan, ledger or export and cannot
+caveat before applying the authoritative stored plan's hash. An exact external
+user request supplies consent; ask for confirmation only when a material choice
+is unresolved or changed. Do not treat mechanical marker/hash generation as a
+new operation. A user who forbids markers cannot use this marked-write lane.
+Edited exports are not apply authority. A dry-run creates no plan, ledger or export and cannot
 be applied as a stored plan.
 
 Direct `--field-id PROJECT_FIELD_ID --value-id VALUE_ID` avoids name discovery.
@@ -102,11 +111,49 @@ Only touched schema is frozen, not the whole project. This follows
 
 Snapshots bind account/profile, immutable issue/project identity, current state
 and selected field/target. Plans additionally bind credential generation, current
-policy revision/hash, final payload/marker, notification policy and a 15-minute
-local-clock lifetime. Offline prepare never accesses credentials, OAuth, browser,
-DNS or sockets. Apply validates consent, hash and local bindings before credentials,
+policy revision/hash, final payload/marker and notification policy. Offline
+prepare requires a snapshot less than 15 minutes old: perform snapshot and
+prepare consecutively before waiting for any necessary human review. Newly
+prepared **plan schema v2 has no wall-clock expiry**, so the same plan ID,
+marker and digest survive a delayed response. Offline prepare never accesses
+credentials, OAuth, browser, DNS or sockets. Apply validates consent, hash and local bindings before credentials,
 then verifies fresh account/remote preconditions. It consumes the local attempt
 before dispatch and never restores it.
+
+### Lifetime, compatibility and consent boundaries
+
+`capabilities` advertises `plan_version: 2` and
+`plan_lifetime: until_consumed_or_stale`; plan/status/apply results report their
+actual plan version/lifetime. V2 default JSON/raw results and serialized plans
+omit `expires_at`. An explicit `--fields expires_at` projection retains the
+existing selectable field vocabulary and returns an empty string for v2; use
+`plan_version` and `plan_lifetime`, not that empty string, to select the policy.
+The unchanged `source`/lane name `operator-write-v1` identifies the operator
+storage namespace, not the nested plan schema or JSON envelope version.
+
+Legacy plan schema v1 retains its exact bytes, digest, 15-minute expiry and
+claim validation; its results report `legacy_time_limited` and the original
+`expires_at`. Upgrading never migrates, extends or revives those plans. An old
+binary refuses v2 plans rather than granting them authority. Do not edit a
+plan's version, timestamps or hash to work around either contract.
+
+Durability does not waive live preconditions. Both comment additions and field
+updates still require the frozen issue's `updated` timestamp, project and
+archive state; field updates and creation also recheck their touched schema.
+Profile identity, credential generation and policy revision/hash must still
+match. A changed state requires inspection and fresh consent, not an automatic
+replacement plan. Deliberately creating equivalent new plans is still not
+deduplicated across plan IDs. Unknown or consumed attempts never authorize a
+fresh equivalent plan or retry.
+
+Prepared v2 plans remain in private local storage until consumed or made stale;
+there is no new cancel command or automatic cleanup. A user cancellation must
+be honored by the cooperating agent; it does not cryptographically revoke a
+plan for another process. Changing the bound credential generation or project
+policy invalidates applicability through existing checks. This lane still
+does not resist a malicious same-user process or disk rollback. A clock before
+`created_at` is refused, even for v2. Native receipt TTLs and the unavailable
+native `mutation` authority path are unchanged.
 
 ## Issue creation
 

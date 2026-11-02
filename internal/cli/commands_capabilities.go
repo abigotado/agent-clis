@@ -16,6 +16,8 @@ func (view capabilitiesView) Fields() []output.Field {
 		{Name: "operator_write_supported", Value: strconv.FormatBool(view.OperatorWriteSupported), Raw: view.OperatorWriteSupported},
 		{Name: "native_user_presence_supported", Value: strconv.FormatBool(view.NativeUserPresenceSupported), Raw: view.NativeUserPresenceSupported},
 		{Name: "confirmation_mode", Value: view.ConfirmationMode, Raw: view.ConfirmationMode, Always: true},
+		{Name: "plan_version", Value: strconv.Itoa(view.PlanVersion), Raw: view.PlanVersion},
+		{Name: "plan_lifetime", Value: view.PlanLifetime, Raw: view.PlanLifetime},
 		{Name: "locally_ready", Value: strconv.FormatBool(view.LocallyReady), Raw: view.LocallyReady},
 		{Name: "credential_generation_configured", Value: strconv.FormatBool(view.CredentialGenerationConfigured), Raw: view.CredentialGenerationConfigured},
 		{Name: "project_policy_configured", Value: strconv.FormatBool(view.ProjectPolicyConfigured), Raw: view.ProjectPolicyConfigured},
