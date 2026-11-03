@@ -134,6 +134,11 @@ Two hazards that are easy to reintroduce:
 - Never apply a consumed operator plan again. Unknown results use bounded
   `operator-write reconcile`; verified-write local/output failure is
   `WRITE_APPLIED_LOCAL_FAILURE`, never an invitation to repeat the write.
+- `operator-write` comment deletion requires exact issue and immutable comment
+  IDs, explicit `comment-delete` capability and the bound project policy.
+  Deletion alone uses plan v3; historical kinds retain v1/v2 bytes and hashes.
+  Show the full frozen comment as untrusted data. Consume before one DELETE;
+  reconciliation is GET-only and absence/404 never proves hard deletion.
 - `capabilities` describes local configuration, not Keychain availability or
   verified server permissions.
 

@@ -186,7 +186,7 @@ editions remain Remote-MCP-only.
 ## Operator-confirmed writes
 
 This source tree adds `operator-write` for single Stage/State/Enum updates,
-public comment additions and issue creation in allowlisted projects on the
+public comment additions, exact comment deletion and issue creation in allowlisted projects on the
 standard macOS CGO build. The previously
 released v0.3.0 is read-only; source changes reach installed Homebrew binaries
 only after a new release and tap update. Check `version` and `capabilities`
@@ -194,12 +194,19 @@ instead of assuming that an installed binary has these commands.
 
 The path uses explicit operator confirmation of an immutable intent, a bound
 profile/project allowlist, fresh preflight, and a permanent local claim before
-one POST. A precise user request already authorizes that exact change; agents
+one mutation attempt. Comment deletion uses one exact DELETE and permanently
+removes one active, text-only comment without attachments. It requires the
+separately declared `comment-delete` capability; existing profiles gain no
+new authority. A precise user request already authorizes that exact change; agents
 disclose the generated reconciliation marker without asking for a second
 marker/hash confirmation. If the payload or target still needs a decision, ask
-once before sending. New plan schema v2 has no wall-clock expiry, so a delayed
+once before sending. Plan schemas v2 and v3 have no wall-clock expiry, so a delayed
 reply does not require a new marker. The 15-minute snapshot-to-prepare window
 and live stale-state checks remain; legacy v1 plans keep their original expiry.
+Existing operations still prepare v2 plans; deletion alone prepares v3. Both
+historical formats retain their original bytes and hashes. A lost DELETE
+response requires GET-only reconciliation: a missing comment or `404` does not
+prove deletion and never authorizes a retry.
 Check `plan_version` and `plan_lifetime` in `capabilities` and plan results to
 distinguish source support from an installed release.
 It is not native proof of human presence and does not defend against
@@ -207,7 +214,7 @@ hostile same-user processes or restored local state. A separate authenticated
 write profile is required; the existing read profile stays unchanged.
 
 See [the operator-write decision, threat model and command flow](docs/operator-writes.md)
-for setup, exact field snapshots, marked comments and issues, and non-retryable
+for setup, exact field/comment snapshots, marked comments and issues, and non-retryable
 outcomes. Editing existing comments and batch changes are not included.
 
 ## Native-presence writes remain closed

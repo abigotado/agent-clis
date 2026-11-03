@@ -12,29 +12,32 @@ import (
 // CapabilitiesInfo describes local configuration, never server permissions or
 // credential-store accessibility. Reading it is entirely offline.
 type CapabilitiesInfo struct {
-	Edition                        string   `json:"edition"`
-	OperatorWriteSupported         bool     `json:"operator_write_supported"`
-	NativeUserPresenceSupported    bool     `json:"native_user_presence_supported"`
-	ConfirmationMode               string   `json:"confirmation_mode"`
-	PlanVersion                    int      `json:"plan_version"`
-	PlanLifetime                   string   `json:"plan_lifetime"`
-	Profile                        string   `json:"profile,omitempty"`
-	Instance                       string   `json:"instance,omitempty"`
-	AccountID                      string   `json:"account_id,omitempty"`
-	AccountLogin                   string   `json:"account_login,omitempty"`
-	LocallyReady                   bool     `json:"locally_ready"`
-	CredentialGenerationConfigured bool     `json:"credential_generation_configured"`
-	ProjectPolicyConfigured        bool     `json:"project_policy_configured"`
-	Kinds                          []string `json:"kinds"`
-	ReadinessScope                 string   `json:"readiness_scope"`
+	Edition                        string         `json:"edition"`
+	OperatorWriteSupported         bool           `json:"operator_write_supported"`
+	NativeUserPresenceSupported    bool           `json:"native_user_presence_supported"`
+	ConfirmationMode               string         `json:"confirmation_mode"`
+	PlanVersion                    int            `json:"plan_version"`
+	PlanLifetime                   string         `json:"plan_lifetime"`
+	PlanVersions                   map[string]int `json:"plan_versions"`
+	Profile                        string         `json:"profile,omitempty"`
+	Instance                       string         `json:"instance,omitempty"`
+	AccountID                      string         `json:"account_id,omitempty"`
+	AccountLogin                   string         `json:"account_login,omitempty"`
+	LocallyReady                   bool           `json:"locally_ready"`
+	CredentialGenerationConfigured bool           `json:"credential_generation_configured"`
+	ProjectPolicyConfigured        bool           `json:"project_policy_configured"`
+	Kinds                          []string       `json:"kinds"`
+	ReadinessScope                 string         `json:"readiness_scope"`
 }
 
 // Capabilities reports build support and, optionally, one explicit profile's
 // non-secret local generation and current identity-bound policy.
 func (s *Service) Capabilities(ctx context.Context, name string) (CapabilitiesInfo, error) {
 	result := CapabilitiesInfo{Edition: "standard", OperatorWriteSupported: s.OperatorBackendSupported(),
-		ConfirmationMode: "operator_confirmed", PlanVersion: operatorwrite.PlanVersion2,
-		PlanLifetime: operatorwrite.PlanLifetime(operatorwrite.PlanVersion2), Kinds: []string{}, ReadinessScope: "local_configuration_only"}
+		ConfirmationMode: "operator_confirmed", PlanVersion: operatorwrite.PlanVersion3,
+		PlanLifetime: operatorwrite.PlanLifetime(operatorwrite.PlanVersion3),
+		PlanVersions: map[string]int{"issue.create": operatorwrite.PlanVersion2, "issue.update": operatorwrite.PlanVersion2, "comment.add": operatorwrite.PlanVersion2, "comment.delete": operatorwrite.PlanVersion3},
+		Kinds:        []string{}, ReadinessScope: "local_configuration_only"}
 	if name == "" {
 		return result, nil
 	}
@@ -54,6 +57,9 @@ func (s *Service) Capabilities(ctx context.Context, name string) (CapabilitiesIn
 		}
 		if selected.HasCapability(profile.CapabilityCommentAdd) {
 			result.Kinds = append(result.Kinds, "comment.add")
+		}
+		if selected.HasCapability(profile.CapabilityCommentDelete) {
+			result.Kinds = append(result.Kinds, "comment.delete")
 		}
 	}
 	if s.Policies != nil {

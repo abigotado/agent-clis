@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"strconv"
 
 	"github.com/abigotado/youtrack-agent-cli/internal/application"
@@ -18,15 +19,34 @@ type operatorWriteView struct {
 func (view operatorWriteView) Fields() []output.Field {
 	field := output.Field{Name: "field"}
 	fields := output.Field{Name: "fields", OnRequest: true}
+	deleteTarget := view.Kind == "comment.delete"
 	commentText, summary, description := "", "", ""
+	comment := output.Field{Name: "comment", OnRequest: true}
+	requiredPermission := output.Field{Name: "required_server_permission", OnRequest: true}
 	if view.Snapshot != nil {
 		field.Raw = view.Snapshot.Field
 		fields.Raw, fields.OnRequest = view.Snapshot.Fields, len(view.Snapshot.Fields) == 0
+		if view.Snapshot.Comment != nil {
+			comment.Raw, comment.Always, comment.OnRequest = view.Snapshot.Comment, true, false
+			requiredPermission.Value, requiredPermission.Raw, requiredPermission.Always, requiredPermission.OnRequest = view.Snapshot.Comment.RequiredServerPermission, view.Snapshot.Comment.RequiredServerPermission, true, false
+		}
 	}
 	if view.Plan != nil {
 		field.Raw = view.Plan.Snapshot.Field
 		fields.Raw, fields.OnRequest = view.Plan.Snapshot.Fields, len(view.Plan.Snapshot.Fields) == 0
 		commentText, summary, description = view.Plan.Request.CommentText, view.Plan.Request.Summary, view.Plan.Request.Description
+		if view.Plan.Snapshot.Comment != nil {
+			comment.Raw, comment.Always, comment.OnRequest = view.Plan.Snapshot.Comment, true, false
+			requiredPermission.Value, requiredPermission.Raw, requiredPermission.Always, requiredPermission.OnRequest = view.Plan.Snapshot.Comment.RequiredServerPermission, view.Plan.Snapshot.Comment.RequiredServerPermission, true, false
+		}
+	}
+	if comment.Raw != nil {
+		raw, err := json.Marshal(comment.Raw)
+		if err != nil {
+			comment.Value = "<invalid frozen comment>"
+		} else {
+			comment.Value = string(raw)
+		}
 	}
 	return []output.Field{
 		{Name: "trust", Value: untrustedYouTrackContent, Raw: untrustedYouTrackContent, Always: true},
@@ -41,9 +61,10 @@ func (view operatorWriteView) Fields() []output.Field {
 		{Name: "kind", Value: view.Kind, Raw: view.Kind},
 		{Name: "intent_sha256", Value: view.IntentSHA256, Raw: view.IntentSHA256},
 		{Name: "profile", Value: view.Profile, Raw: view.Profile},
-		{Name: "issue_id", Value: view.IssueID, Raw: view.IssueID},
-		{Name: "project_id", Value: view.ProjectID, Raw: view.ProjectID},
-		{Name: "project_key", Value: view.ProjectKey, Raw: view.ProjectKey},
+		{Name: "issue_id", Value: view.IssueID, Raw: view.IssueID, Always: deleteTarget},
+		{Name: "comment_id", Value: view.CommentID, Raw: view.CommentID, Always: deleteTarget},
+		{Name: "project_id", Value: view.ProjectID, Raw: view.ProjectID, Always: deleteTarget},
+		{Name: "project_key", Value: view.ProjectKey, Raw: view.ProjectKey, Always: deleteTarget},
 		{Name: "non_replayable", Value: strconv.FormatBool(view.NonReplayable), Raw: view.NonReplayable, Always: true},
 		{Name: "remote_id", Value: view.RemoteID, Raw: view.RemoteID},
 		{Name: "remote_readable_id", Value: view.RemoteReadableID, Raw: view.RemoteReadableID},
@@ -53,6 +74,8 @@ func (view operatorWriteView) Fields() []output.Field {
 		{Name: "summary", Value: summary, Raw: summary, OnRequest: summary == ""},
 		{Name: "description", Value: description, Raw: description, OnRequest: description == ""},
 		{Name: "comment_text", Value: commentText, Raw: commentText, OnRequest: commentText == ""},
+		comment,
+		requiredPermission,
 		{Name: "evidence", Value: view.Evidence, Raw: view.Evidence, OnRequest: view.Evidence == ""},
 		{Name: "snapshot", Raw: view.Snapshot, OnRequest: true},
 		{Name: "plan", Raw: view.Plan, OnRequest: true},
@@ -83,6 +106,9 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 		if input.Kind == "" || input.IssueID == "" && input.ProjectID == "" || input.OutputPath == "" {
 			return errx.Usage("operator-write snapshot requires --kind, --id or --project, and --out")
 		}
+		if input.Kind == "comment.delete" && (len(fieldNames) != 0 || len(valueNames) != 0 || len(fieldIDs) != 0 || len(valueIDs) != 0) {
+			return errx.Usage("comment.delete snapshot does not accept field or value selectors")
+		}
 		if input.Kind != "issue.create" {
 			// Single-field kinds keep the scalar flags' last-value-wins meaning.
 			fieldNames, valueNames, fieldIDs, valueIDs = lastValue(fieldNames), lastValue(valueNames), lastValue(fieldIDs), lastValue(valueIDs)
@@ -108,8 +134,9 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 		return a.renderOperatorWrite(result)
 	}}
 	flags := command.Flags()
-	flags.StringVar(&input.Kind, "kind", "", "supported write kind: issue.create, issue.update, or comment.add")
-	flags.StringVar(&input.IssueID, "id", "", "exact issue entity or readable ID for issue.update or comment.add")
+	flags.StringVar(&input.Kind, "kind", "", "supported write kind: issue.create, issue.update, comment.add, or comment.delete")
+	flags.StringVar(&input.IssueID, "id", "", "exact issue entity or readable ID for issue.update, comment.add, or comment.delete")
+	flags.StringVar(&input.CommentID, "comment-id", "", "immutable exact comment ID for comment.delete")
 	flags.StringVar(&input.ProjectID, "project", "", "exact project entity ID or key for issue.create")
 	flags.StringArrayVar(&fieldNames, "field", nil, "exact field name, for example Stage; repeatable for issue.create, last wins otherwise")
 	flags.StringArrayVar(&valueNames, "value", nil, "exact target bundle value name, paired with --field")
@@ -167,7 +194,7 @@ func (a *App) newOperatorPrepareCommand() *cobra.Command {
 
 func (a *App) newOperatorApplyCommand() *cobra.Command {
 	var planID, digest string
-	command := &cobra.Command{Use: "apply", Short: "Consume one exact confirmed intent for at most one POST", Args: usageArgs(cobra.NoArgs), RunE: func(cmd *cobra.Command, _ []string) error {
+	command := &cobra.Command{Use: "apply", Short: "Consume one exact confirmed intent for at most one mutation", Args: usageArgs(cobra.NoArgs), RunE: func(cmd *cobra.Command, _ []string) error {
 		if err := a.resolveOperationProfile(cmd, "write"); err != nil {
 			return err
 		}

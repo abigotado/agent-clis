@@ -130,6 +130,23 @@ type Comment struct {
 	Visibility *Visibility `json:"visibility"`
 }
 
+// CommentDeleteTarget is the strict, immutable projection required before an
+// operator-confirmed comment deletion. Its fields are untrusted server data;
+// callers bind them into the durable deletion plan before dispatch.
+type CommentDeleteTarget struct {
+	ID          string     `json:"id"`
+	IssueID     string     `json:"issue_id"`
+	Text        string     `json:"text"`
+	AuthorID    string     `json:"author_id"`
+	AuthorLogin string     `json:"author_login"`
+	Created     int64      `json:"created"`
+	Updated     *int64     `json:"updated"`
+	Deleted     bool       `json:"deleted"`
+	Pinned      bool       `json:"pinned"`
+	Visibility  Visibility `json:"visibility"`
+	Attachments []string   `json:"attachments"`
+}
+
 // PageOptions bounds one collection request. The client never follows or
 // automatically requests another page.
 type PageOptions struct {

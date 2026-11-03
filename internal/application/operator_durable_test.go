@@ -3,6 +3,7 @@ package application
 import (
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +42,14 @@ func TestCapabilitiesAdvertiseDurablePlanMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if capabilities.PlanVersion != operatorwrite.PlanVersion2 || capabilities.PlanLifetime != operatorwrite.CurrentPlanLifetime {
+	wantVersions := map[string]int{
+		"issue.create":   operatorwrite.PlanVersion2,
+		"issue.update":   operatorwrite.PlanVersion2,
+		"comment.add":    operatorwrite.PlanVersion2,
+		"comment.delete": operatorwrite.PlanVersion3,
+	}
+	if capabilities.PlanVersion != operatorwrite.PlanVersion3 || capabilities.PlanLifetime != operatorwrite.CurrentPlanLifetime ||
+		!reflect.DeepEqual(capabilities.PlanVersions, wantVersions) {
 		t.Fatalf("capabilities=%#v", capabilities)
 	}
 }

@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	MaxOperatorSnapshotBytes = operatorwrite.MaxSnapshotBytes
+	MaxOperatorSnapshotBytes = operatorwrite.MaxCommentDeleteSnapshotBytes
 	MaxOperatorRequestBytes  = operatorwrite.MaxRequestBytes
 )
 
@@ -20,8 +20,8 @@ type OperatorFieldSelection struct {
 // OperatorSnapshotInput selects an exact issue for issue.update/comment.add,
 // or an exact project entity ID or key for issue.create.
 type OperatorSnapshotInput struct {
-	Profile, Kind, IssueID, ProjectID, OutputPath string
-	Fields                                        []OperatorFieldSelection
+	Profile, Kind, IssueID, CommentID, ProjectID, OutputPath string
+	Fields                                                   []OperatorFieldSelection
 }
 
 type OperatorPrepareInput struct {
@@ -57,6 +57,7 @@ type OperatorWriteInfo struct {
 	AccountID        string                  `json:"account_id"`
 	AccountLogin     string                  `json:"account_login"`
 	IssueID          string                  `json:"issue_id"`
+	CommentID        string                  `json:"comment_id,omitempty"`
 	ProjectID        string                  `json:"project_id"`
 	ProjectKey       string                  `json:"project_key"`
 	NonReplayable    bool                    `json:"non_replayable"`
@@ -70,11 +71,19 @@ type OperatorWriteInfo struct {
 
 func operatorSnapshotInfo(snapshot operatorwrite.Snapshot) OperatorWriteInfo {
 	projectID, projectKey := snapshot.ProjectRef()
-	return OperatorWriteInfo{PlanVersion: operatorwrite.PlanVersion2, PlanLifetime: operatorwrite.PlanLifetime(operatorwrite.PlanVersion2),
+	version := operatorwrite.PlanVersion2
+	if snapshot.Kind == operatorwrite.KindCommentDelete {
+		version = operatorwrite.PlanVersion3
+	}
+	result := OperatorWriteInfo{PlanVersion: version, PlanLifetime: operatorwrite.PlanLifetime(version),
 		State: "snapshot", Kind: string(snapshot.Kind), ConfirmationMode: operatorwrite.ConfirmationMode, Notifications: operatorwrite.Notifications,
 		Profile: snapshot.Binding.ProfileName, Instance: snapshot.Binding.InstanceURL, AccountID: snapshot.Binding.AccountID,
 		AccountLogin: snapshot.Binding.AccountLogin, IssueID: snapshot.Issue.ID, ProjectID: projectID,
 		ProjectKey: projectKey, Snapshot: &snapshot}
+	if snapshot.Comment != nil {
+		result.CommentID = snapshot.Comment.ID
+	}
+	return result
 }
 
 func operatorRecordInfo(record operatorwrite.Record) OperatorWriteInfo {
