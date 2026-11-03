@@ -565,6 +565,9 @@ func (s *Service) ApplyOperatorWrite(ctx context.Context, input OperatorApplyInp
 				return err
 			}
 			if plan.Snapshot.Kind == operatorwrite.KindCommentDelete {
+				if err := verifyClientAccount(ctx, client, selected); err != nil {
+					return err
+				}
 				if err := verifyOperatorRemote(ctx, client, plan.Snapshot); err != nil {
 					return err
 				}
