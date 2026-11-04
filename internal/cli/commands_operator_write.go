@@ -62,7 +62,7 @@ func (view operatorWriteView) Fields() []output.Field {
 		{Name: "intent_sha256", Value: view.IntentSHA256, Raw: view.IntentSHA256},
 		{Name: "profile", Value: view.Profile, Raw: view.Profile},
 		{Name: "issue_id", Value: view.IssueID, Raw: view.IssueID, Always: deleteTarget},
-		{Name: "comment_id", Value: view.CommentID, Raw: view.CommentID, Always: deleteTarget},
+		{Name: "comment_id", Value: view.CommentID, Raw: view.CommentID, OnRequest: !deleteTarget, Always: deleteTarget},
 		{Name: "project_id", Value: view.ProjectID, Raw: view.ProjectID, Always: deleteTarget},
 		{Name: "project_key", Value: view.ProjectKey, Raw: view.ProjectKey, Always: deleteTarget},
 		{Name: "non_replayable", Value: strconv.FormatBool(view.NonReplayable), Raw: view.NonReplayable, Always: true},

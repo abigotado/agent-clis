@@ -242,6 +242,9 @@ func validateOperatorTarget(kind operatorwrite.Kind, input OperatorSnapshotInput
 		if len(input.Fields) != 0 {
 			return errx.Usage("comment.delete snapshot does not accept field or value selectors")
 		}
+		if err := youtrack.ValidateDeleteCommentInput(youtrack.DeleteCommentInput{IssueID: input.IssueID, CommentID: input.CommentID}); err != nil {
+			return err
+		}
 	default:
 		return errx.Usage("unsupported operator-write kind")
 	}
@@ -885,16 +888,22 @@ func (s *Service) ReconcileOperatorWrite(ctx context.Context, input OperatorReco
 		}
 	case operatorwrite.KindCommentDelete:
 		issue, issueErr := client.GetIssue(ctx, snapshot.Issue.ID)
-		if issueErr == nil && (issue.Project.ID != snapshot.Issue.ProjectID || issue.Project.ShortName != snapshot.Issue.ProjectKey) {
-			return OperatorWriteInfo{}, errx.Conflict("OPERATOR_PROJECT_CHANGED", "target issue moved from the frozen project")
-		}
-		if issueErr != nil && errx.ExitCode(issueErr) != errx.CodeNotFound {
-			return OperatorWriteInfo{}, issueErr
-		}
-		if issueErr == nil {
+		if issueErr != nil {
+			switch errx.ExitCode(issueErr) {
+			case errx.CodeAuth, errx.CodePermission, errx.CodeNotFound:
+				// The exact issue cannot prove a hard deletion, so do not cross-read a comment.
+			default:
+				return OperatorWriteInfo{}, issueErr
+			}
+		} else if issue.Project.ID == snapshot.Issue.ProjectID && issue.Project.ShortName == snapshot.Issue.ProjectKey {
 			_, commentErr := client.GetComment(ctx, snapshot.Issue.ID, snapshot.Comment.ID)
-			if commentErr != nil && errx.ExitCode(commentErr) != errx.CodeNotFound {
-				return OperatorWriteInfo{}, commentErr
+			if commentErr != nil {
+				switch errx.ExitCode(commentErr) {
+				case errx.CodeAuth, errx.CodePermission, errx.CodeNotFound:
+					// Absence or inaccessible content cannot prove a hard deletion.
+				default:
+					return OperatorWriteInfo{}, commentErr
+				}
 			}
 		}
 		evidence = "hard_delete_not_proven"

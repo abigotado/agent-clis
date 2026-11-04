@@ -110,6 +110,44 @@ func TestCommentDeleteOutputAlwaysRendersFullUntrustedTarget(t *testing.T) {
 	}
 }
 
+func TestOperatorWriteCommentIDProjectionKeepsLegacyDefaultShape(t *testing.T) {
+	deleteResult := application.OperatorWriteInfo{State: "snapshot", Kind: "comment.delete", IssueID: "2-12", CommentID: "4-1", ProjectID: "0-3", ProjectKey: "APP", Snapshot: &operatorwrite.Snapshot{Kind: operatorwrite.KindCommentDelete, Comment: &operatorwrite.Comment{
+		ID: "4-1", Text: "UNTRUSTED complete text", RequiredServerPermission: "Delete Comment", Attachments: []string{},
+	}}}
+	tests := []struct {
+		name          string
+		result        application.OperatorWriteInfo
+		fields        []string
+		wantCommentID bool
+		wantDeleteSet bool
+	}{
+		{"historical comment add default omits empty comment id", application.OperatorWriteInfo{State: "applied", Kind: "comment.add", IssueID: "2-12", ProjectID: "0-3", ProjectKey: "APP"}, nil, false, false},
+		{"historical comment add explicitly selects empty comment id", application.OperatorWriteInfo{State: "applied", Kind: "comment.add", IssueID: "2-12", ProjectID: "0-3", ProjectKey: "APP"}, []string{"comment_id"}, true, false},
+		{"delete fields state retains complete target context", deleteResult, []string{"state"}, true, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			app, _, _, _, stdout, stderr := testApp(t)
+			app.out = &output.Writer{Format: output.FormatJSON, Fields: test.fields, Out: stdout, Err: stderr}
+			if err := app.renderOperatorWrite(test.result); err != nil {
+				t.Fatal(err)
+			}
+			data := decode(t, stdout)["data"].(map[string]any)
+			commentID, present := data["comment_id"]
+			if present != test.wantCommentID || present && commentID != "" && commentID != "4-1" {
+				t.Fatalf("comment_id=%#v present=%t data=%#v", commentID, present, data)
+			}
+			if test.wantDeleteSet {
+				for _, field := range []string{"issue_id", "comment_id", "project_id", "project_key", "comment", "required_server_permission", "trust", "source"} {
+					if _, present := data[field]; !present {
+						t.Fatalf("delete projection omitted %q: %#v", field, data)
+					}
+				}
+			}
+		})
+	}
+}
+
 type cliCommentDeleteTransport struct {
 	base  http.RoundTripper
 	calls atomic.Int32
