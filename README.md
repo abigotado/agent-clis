@@ -118,7 +118,7 @@ youtrack-agent-cli profile defaults show -o json
 youtrack-agent-cli inspect comments --id BGR-1073 --limit 10 --offset 0 -o json
 ```
 
-The four `inspect` commands use the saved read profile. `operator-write snapshot`,
+The `inspect` commands use the saved read profile. `operator-write snapshot`,
 `prepare`, `apply`, and `reconcile` use the saved write profile. An explicit
 `--profile NAME` overrides the corresponding default without reading defaults;
 an explicitly empty flag is an error. A missing default still requires selection:

@@ -2,7 +2,7 @@
 
 # Command reference
 
-JSON mode writes one stable envelope to stdout and is the default when stdout is not a TTY. Text, raw, and help output are explicitly selected exceptions. The four `inspect` commands use an explicit `--profile` or the saved read default; `operator-write snapshot`, `prepare`, `apply`, and `reconcile` use an explicit profile or the saved write default. Explicit flags override defaults; empty flags and stale saved identities fail closed. Auth, profile administration, project policy, and native mutation retain explicit-profile requirements. No-profile `capabilities` remains build-only; local operator status does not consult defaults. Configure selection with `profile defaults show|set|clear`. See `contract.md` for exit codes and envelopes.
+JSON mode writes one stable envelope to stdout and is the default when stdout is not a TTY. Text, raw, and help output are explicitly selected exceptions. The `inspect` commands use an explicit `--profile` or the saved read default; `operator-write snapshot`, `prepare`, `apply`, and `reconcile` use an explicit profile or the saved write default. Explicit flags override defaults; empty flags and stale saved identities fail closed. Auth, profile administration, project policy, and native mutation retain explicit-profile requirements. No-profile `capabilities` remains build-only; local operator status does not consult defaults. Configure selection with `profile defaults show|set|clear`. See `contract.md` for exit codes and envelopes.
 
 ## JSON response recovery
 
