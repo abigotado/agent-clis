@@ -185,6 +185,16 @@ Read one exact issue through the narrow REST helper
 | --- | --- | --- | --- |
 | `--id` | string |  | exact YouTrack issue database ID or readable ID |
 
+### `youtrack-agent-cli inspect issues`
+
+Search one bounded page of compact issue summaries
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--limit` | int | `10` | maximum issues in this page (1-50) |
+| `--offset` | int | `0` | explicit bounded page offset; pages are not a stable snapshot |
+| `--query` | string |  | one bounded YouTrack search query |
+
 ### `youtrack-agent-cli inspect project`
 
 Read one exact project

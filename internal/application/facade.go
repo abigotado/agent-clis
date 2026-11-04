@@ -103,6 +103,16 @@ type IssueInfo struct {
 	CustomFields  []IssueCustomFieldInfo `json:"custom_fields,omitempty"`
 }
 
+// IssueSearchInfo is the compact issue projection returned for discovery.
+// Detailed issue fields require an exact inspect issue read.
+type IssueSearchInfo struct {
+	ID         string      `json:"id"`
+	ReadableID string      `json:"readable_id"`
+	Summary    string      `json:"summary"`
+	Project    ProjectInfo `json:"project"`
+	Updated    int64       `json:"updated"`
+}
+
 type IdentityInfo struct {
 	ID    string `json:"id"`
 	Name  string `json:"name,omitempty"`
@@ -214,6 +224,18 @@ func ValidateSkillOptions(opts SkillOptions) error {
 }
 
 func ValidateProfileName(name string) error { return profile.ValidateName(name) }
+
+// ValidateIssueSearchInput rejects malformed discovery input before a profile,
+// credential, or network access is attempted.
+func ValidateIssueSearchInput(query string, limit, offset int) error {
+	if err := youtrack.ValidateIssueQuery(query); err != nil {
+		return err
+	}
+	if limit < 1 || limit > 50 || offset < 0 {
+		return errx.Usage("--limit must be 1-50 and --offset must be nonnegative")
+	}
+	return nil
+}
 
 func (s *Service) ListProfileInfo(ctx context.Context) ([]ProfileInfo, error) {
 	values, err := s.ListProfiles(ctx)
@@ -445,6 +467,15 @@ func (s *Service) InspectIssueInfo(ctx context.Context, name, issueID string) (I
 	return issueInfo(value), profileInfo(selected), err
 }
 
+func (s *Service) InspectIssuesInfo(ctx context.Context, name, query string, top, skip int) ([]IssueSearchInfo, bool, ProfileInfo, error) {
+	values, truncated, selected, err := s.InspectIssues(ctx, name, query, top, skip)
+	result := make([]IssueSearchInfo, len(values))
+	for index, value := range values {
+		result[index] = issueSearchInfo(value)
+	}
+	return result, truncated, profileInfo(selected), err
+}
+
 func (s *Service) InspectCommentsInfo(ctx context.Context, name, issueID string, top, skip int) ([]CommentInfo, bool, ProfileInfo, error) {
 	values, truncated, selected, err := s.InspectComments(ctx, name, issueID, top, skip)
 	result := make([]CommentInfo, len(values))
@@ -642,6 +673,10 @@ func issueInfo(value youtrack.Issue) IssueInfo {
 		result.CustomFields[index] = IssueCustomFieldInfo{ID: field.ID, Name: field.Name, Type: field.Type, Value: append(json.RawMessage(nil), field.Value...)}
 	}
 	return result
+}
+
+func issueSearchInfo(value youtrack.IssueSummary) IssueSearchInfo {
+	return IssueSearchInfo{ID: value.ID, ReadableID: value.IDReadable, Summary: value.Summary, Project: projectInfo(value.Project), Updated: value.Updated}
 }
 
 func commentInfo(value youtrack.Comment) CommentInfo {
