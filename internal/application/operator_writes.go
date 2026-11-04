@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,6 +41,8 @@ func requireOperatorProfile(selected profile.Profile, kind operatorwrite.Kind) e
 		capability = profile.CapabilityIssueUpdate
 	case operatorwrite.KindCommentAdd:
 		capability = profile.CapabilityCommentAdd
+	case operatorwrite.KindCommentDelete:
+		capability = profile.CapabilityCommentDelete
 	default:
 		return errx.Usage("unsupported operator-write kind")
 	}
@@ -170,6 +173,14 @@ func (s *Service) SnapshotOperatorWrite(ctx context.Context, input OperatorSnaps
 			}
 			snapshot.Field = &field
 		}
+		if kind == operatorwrite.KindCommentDelete {
+			target, err := client.GetCommentForDeletion(ctx, issue.ID, input.CommentID)
+			if err != nil {
+				return OperatorWriteInfo{}, err
+			}
+			comment := operatorDeleteComment(target, snapshot.Binding.AccountID)
+			snapshot.Comment = &comment
+		}
 	}
 	if err := operatorwrite.ValidateSnapshot(snapshot); err != nil {
 		return OperatorWriteInfo{}, err
@@ -204,30 +215,63 @@ func validateOperatorTarget(kind operatorwrite.Kind, input OperatorSnapshotInput
 	}
 	switch kind {
 	case operatorwrite.KindIssueCreate:
-		if input.ProjectID == "" || input.IssueID != "" {
+		if input.ProjectID == "" || input.IssueID != "" || input.CommentID != "" {
 			return errx.Usage("issue.create snapshot requires an exact --project and no --id")
 		}
 		if len(input.Fields) > operatorwrite.MaxCreateFields {
 			return errx.Usage("issue.create snapshot accepts at most %d field selections", operatorwrite.MaxCreateFields)
 		}
 	case operatorwrite.KindIssueUpdate:
-		if input.IssueID == "" || input.ProjectID != "" {
+		if input.IssueID == "" || input.ProjectID != "" || input.CommentID != "" {
 			return errx.Usage("issue.update snapshot requires an exact --id and no --project")
 		}
 		if len(input.Fields) != 1 {
 			return errx.Usage("issue snapshot requires either --field and --value or --field-id and --value-id")
 		}
 	case operatorwrite.KindCommentAdd:
-		if input.IssueID == "" || input.ProjectID != "" {
+		if input.IssueID == "" || input.ProjectID != "" || input.CommentID != "" {
 			return errx.Usage("comment.add snapshot requires an exact --id and no --project")
 		}
 		if len(input.Fields) != 0 {
 			return errx.Usage("comment snapshot does not accept field or value selectors")
 		}
+	case operatorwrite.KindCommentDelete:
+		if input.IssueID == "" || input.CommentID == "" || input.ProjectID != "" {
+			return errx.Usage("comment.delete snapshot requires exact --id and --comment-id with no --project")
+		}
+		if len(input.Fields) != 0 {
+			return errx.Usage("comment.delete snapshot does not accept field or value selectors")
+		}
+		if err := youtrack.ValidateDeleteCommentInput(youtrack.DeleteCommentInput{IssueID: input.IssueID, CommentID: input.CommentID}); err != nil {
+			return err
+		}
 	default:
 		return errx.Usage("unsupported operator-write kind")
 	}
 	return nil
+}
+
+func operatorDeleteComment(target youtrack.CommentDeleteTarget, accountID string) operatorwrite.Comment {
+	visibility := operatorwrite.CommentVisibility{Type: target.Visibility.Type,
+		PermittedGroupIDs: make([]string, len(target.Visibility.PermittedGroups)),
+		PermittedUserIDs:  make([]string, len(target.Visibility.PermittedUsers))}
+	for index, group := range target.Visibility.PermittedGroups {
+		visibility.PermittedGroupIDs[index] = group.ID
+	}
+	for index, user := range target.Visibility.PermittedUsers {
+		visibility.PermittedUserIDs[index] = user.ID
+	}
+	sort.Strings(visibility.PermittedGroupIDs)
+	sort.Strings(visibility.PermittedUserIDs)
+	permission := "Delete Not Own Comment"
+	if target.AuthorID == accountID {
+		permission = "Delete Comment"
+	}
+	attachments := make([]string, len(target.Attachments))
+	copy(attachments, target.Attachments)
+	return operatorwrite.Comment{ID: target.ID, Text: target.Text, AuthorID: target.AuthorID, AuthorLogin: target.AuthorLogin,
+		Created: target.Created, Updated: target.Updated, Deleted: target.Deleted, Pinned: target.Pinned,
+		Visibility: visibility, Attachments: attachments, RequiredServerPermission: permission}
 }
 
 // resolveOperatorField reads the exact selected schema. Name resolution uses
@@ -492,6 +536,11 @@ func (s *Service) ApplyOperatorWrite(ctx context.Context, input OperatorApplyInp
 			return OperatorWriteInfo{}, err
 		}
 	}
+	if plan.Snapshot.Kind == operatorwrite.KindCommentDelete {
+		if err := youtrack.ValidateDeleteCommentInput(youtrack.DeleteCommentInput{IssueID: plan.Snapshot.Issue.ID, CommentID: plan.Snapshot.Comment.ID}); err != nil {
+			return OperatorWriteInfo{}, err
+		}
+	}
 	if err := s.checkOperatorBinding(ctx, plan.Snapshot, input.Profile); err != nil {
 		return OperatorWriteInfo{}, err
 	}
@@ -504,8 +553,10 @@ func (s *Service) ApplyOperatorWrite(ctx context.Context, input OperatorApplyInp
 	if err := verifyClientAccount(ctx, client, selected); err != nil {
 		return OperatorWriteInfo{}, err
 	}
-	if err := verifyOperatorRemote(ctx, client, plan.Snapshot); err != nil {
-		return OperatorWriteInfo{}, err
+	if plan.Snapshot.Kind != operatorwrite.KindCommentDelete {
+		if err := verifyOperatorRemote(ctx, client, plan.Snapshot); err != nil {
+			return OperatorWriteInfo{}, err
+		}
 	}
 	var result operatorwrite.Record
 	err = s.Profiles.WithProfileLock(ctx, input.Profile, func() error {
@@ -515,6 +566,14 @@ func (s *Service) ApplyOperatorWrite(ctx context.Context, input OperatorApplyInp
 			}
 			if err := operatorwrite.CheckFresh(plan, s.currentTime()); err != nil {
 				return err
+			}
+			if plan.Snapshot.Kind == operatorwrite.KindCommentDelete {
+				if err := verifyClientAccount(ctx, client, selected); err != nil {
+					return err
+				}
+				if err := verifyOperatorRemote(ctx, client, plan.Snapshot); err != nil {
+					return err
+				}
 			}
 			attempt, claimErr := s.OperatorWrites.Claim(ctx, plan.ID, plan.SHA256, s.currentTime())
 			if claimErr != nil {
@@ -581,7 +640,7 @@ func verifyOperatorRemote(ctx context.Context, client *youtrack.Client, snapshot
 			}
 		}
 		return nil
-	case operatorwrite.KindIssueUpdate, operatorwrite.KindCommentAdd:
+	case operatorwrite.KindIssueUpdate, operatorwrite.KindCommentAdd, operatorwrite.KindCommentDelete:
 		issue, err := client.GetIssue(ctx, snapshot.Issue.ID)
 		if err != nil {
 			return err
@@ -591,6 +650,13 @@ func verifyOperatorRemote(ctx context.Context, client *youtrack.Client, snapshot
 		}
 		if snapshot.Kind == operatorwrite.KindCommentAdd {
 			return nil
+		}
+		if snapshot.Kind == operatorwrite.KindCommentDelete {
+			target, err := client.GetCommentForDeletion(ctx, issue.ID, snapshot.Comment.ID)
+			if err != nil {
+				return err
+			}
+			return requireSameComment(*snapshot.Comment, operatorDeleteComment(target, snapshot.Binding.AccountID))
 		}
 		schema, err := client.GetProjectField(ctx, issue.Project.ID, snapshot.Field.ProjectFieldID)
 		if err != nil {
@@ -604,6 +670,21 @@ func verifyOperatorRemote(ctx context.Context, client *youtrack.Client, snapshot
 	default:
 		return errx.Usage("unsupported operator-write kind")
 	}
+}
+
+func requireSameComment(frozen, current operatorwrite.Comment) error {
+	frozenJSON, err := json.Marshal(frozen)
+	if err != nil {
+		return errx.Internal("encode frozen delete comment")
+	}
+	currentJSON, err := json.Marshal(current)
+	if err != nil {
+		return errx.Internal("encode current delete comment")
+	}
+	if !bytes.Equal(frozenJSON, currentJSON) {
+		return errx.Conflict("OPERATOR_COMMENT_STALE", "target comment changed after snapshot").WithHint("inspect a new snapshot and prepare a fresh intent")
+	}
+	return nil
 }
 
 func requireSameField(frozen, current operatorwrite.Field) error {
@@ -649,6 +730,11 @@ func dispatchOperatorWrite(ctx context.Context, client *youtrack.Client, plan op
 			return comment.ID, "", operatorUnknownError()
 		}
 		return comment.ID, "", nil
+	case operatorwrite.KindCommentDelete:
+		if err := client.DeleteComment(ctx, youtrack.DeleteCommentInput{IssueID: snapshot.Issue.ID, CommentID: snapshot.Comment.ID}); err != nil {
+			return "", "", err
+		}
+		return snapshot.Comment.ID, "", nil
 	default:
 		// Unreachable for a validated plan; it is classified unknown, never rejected.
 		return "", "", operatorUnknownError()
@@ -800,6 +886,27 @@ func (s *Service) ReconcileOperatorWrite(ctx context.Context, input OperatorReco
 				}
 			}
 		}
+	case operatorwrite.KindCommentDelete:
+		issue, issueErr := client.GetIssue(ctx, snapshot.Issue.ID)
+		if issueErr != nil {
+			switch errx.ExitCode(issueErr) {
+			case errx.CodeAuth, errx.CodePermission, errx.CodeNotFound:
+				// The exact issue cannot prove a hard deletion, so do not cross-read a comment.
+			default:
+				return OperatorWriteInfo{}, issueErr
+			}
+		} else if issue.Project.ID == snapshot.Issue.ProjectID && issue.Project.ShortName == snapshot.Issue.ProjectKey {
+			_, commentErr := client.GetComment(ctx, snapshot.Issue.ID, snapshot.Comment.ID)
+			if commentErr != nil {
+				switch errx.ExitCode(commentErr) {
+				case errx.CodeAuth, errx.CodePermission, errx.CodeNotFound:
+					// Absence or inaccessible content cannot prove a hard deletion.
+				default:
+					return OperatorWriteInfo{}, commentErr
+				}
+			}
+		}
+		evidence = "hard_delete_not_proven"
 	default:
 		return OperatorWriteInfo{}, errx.Usage("unsupported operator-write kind")
 	}

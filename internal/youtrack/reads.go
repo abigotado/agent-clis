@@ -1,7 +1,10 @@
 package youtrack
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"net/url"
 	"strconv"
 	"strings"
@@ -10,12 +13,41 @@ import (
 )
 
 const (
-	currentUserFields  = "id,login,name,fullName,email"
-	projectFields      = "id,shortName,name,archived"
-	issueFields        = "id,idReadable,summary,description,project(id,shortName,name,archived),reporter(id,login,name,fullName),created,updated,commentsCount,customFields(id,name,$type,projectCustomField(id,field(id)),value(id,name,login,fullName,text,presentation,isResolved,$type))"
-	projectFieldFields = "id,$type,field(id,name,fieldType(id,valueType,isMultiValue,$type)),canBeEmpty,isPublic,bundle(id,$type,values(id,name,localizedName,archived,$type),aggregatedUsers(id,login,name,fullName))"
-	commentFields      = "id,author(id,login,name,fullName),created,updated,deleted,text,visibility($type,permittedGroups(id,name),permittedUsers(id,name,login))"
+	currentUserFields   = "id,login,name,fullName,email"
+	projectFields       = "id,shortName,name,archived"
+	issueFields         = "id,idReadable,summary,description,project(id,shortName,name,archived),reporter(id,login,name,fullName),created,updated,commentsCount,customFields(id,name,$type,projectCustomField(id,field(id)),value(id,name,login,fullName,text,presentation,isResolved,$type))"
+	projectFieldFields  = "id,$type,field(id,name,fieldType(id,valueType,isMultiValue,$type)),canBeEmpty,isPublic,bundle(id,$type,values(id,name,localizedName,archived,$type),aggregatedUsers(id,login,name,fullName))"
+	commentFields       = "id,author(id,login,name,fullName),created,updated,deleted,text,visibility($type,permittedGroups(id,name),permittedUsers(id,name,login))"
+	commentDeleteFields = "id,issue(id),author(id,login),created,updated,deleted,pinned,text,visibility($type,permittedGroups(id,name),permittedUsers(id,name,login)),attachments(id)"
 )
+
+type commentDeleteResponse struct {
+	ID    string `json:"id"`
+	Issue *struct {
+		ID string `json:"id"`
+	} `json:"issue"`
+	Author      *User           `json:"author"`
+	Created     *int64          `json:"created"`
+	Updated     json.RawMessage `json:"updated"`
+	Deleted     *bool           `json:"deleted"`
+	Pinned      *bool           `json:"pinned"`
+	Text        json.RawMessage `json:"text"`
+	Visibility  json.RawMessage `json:"visibility"`
+	Attachments json.RawMessage `json:"attachments"`
+}
+
+type commentDeleteVisibilityResponse struct {
+	Type            string          `json:"$type"`
+	PermittedGroups json.RawMessage `json:"permittedGroups"`
+	PermittedUsers  json.RawMessage `json:"permittedUsers"`
+}
+
+type commentDeleteIdentityResponse struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Login string `json:"login"`
+	Type  string `json:"$type"`
+}
 
 type exactProjectFieldResponse struct {
 	ProjectField
@@ -195,6 +227,26 @@ func (client *Client) GetComment(ctx context.Context, issueID, commentID string)
 	return comment, nil
 }
 
+// GetCommentForDeletion reads the stricter exact comment projection required
+// for a one-shot delete. It accepts only active, attachment-free comments and
+// preserves the explicit updated:null distinction in the returned target.
+func (client *Client) GetCommentForDeletion(ctx context.Context, issueID, commentID string) (CommentDeleteTarget, error) {
+	if err := validateIdentifier("issue", issueID); err != nil {
+		return CommentDeleteTarget{}, err
+	}
+	if err := validateIdentifier("comment", commentID); err != nil {
+		return CommentDeleteTarget{}, err
+	}
+	var response commentDeleteResponse
+	if err := client.readJSON(ctx, request{
+		path:  "/issues/" + url.PathEscape(issueID) + "/comments/" + url.PathEscape(commentID),
+		query: fieldsQuery(commentDeleteFields), operation: "comments.delete_preflight",
+	}, &response); err != nil {
+		return CommentDeleteTarget{}, err
+	}
+	return commentDeleteTarget(response, issueID, commentID)
+}
+
 // ListComments reads exactly one bounded page. The API documents no ordering,
 // author, or time filter, so callers must not infer those server guarantees.
 func (client *Client) ListComments(ctx context.Context, issueID string, options PageOptions) ([]Comment, error) {
@@ -276,6 +328,142 @@ func validateIdentifier(kind, value string) error {
 		return nil
 	}
 	return errx.Usage("%s identifier must be 1-%d ASCII letters, digits, dot, dash, or underscore", kind, maxIdentifierBytes)
+}
+
+func commentDeleteTarget(response commentDeleteResponse, issueID, commentID string) (CommentDeleteTarget, error) {
+	if !validEntityID(response.ID) || response.ID != commentID || response.Issue == nil || response.Issue.ID != issueID ||
+		!validEntityID(response.Issue.ID) || response.Author == nil || !validEntityID(response.Author.ID) ||
+		strings.TrimSpace(response.Author.Login) == "" || response.Created == nil || *response.Created < 0 ||
+		response.Deleted == nil || *response.Deleted || response.Pinned == nil || len(response.Updated) == 0 ||
+		len(response.Text) == 0 || len(response.Visibility) == 0 || len(response.Attachments) == 0 {
+		return CommentDeleteTarget{}, invalidReadResponse()
+	}
+
+	updated, err := decodeOptionalTimestamp(response.Updated)
+	if err != nil {
+		return CommentDeleteTarget{}, invalidReadResponse()
+	}
+	text, err := decodeRequiredCommentText(response.Text)
+	if err != nil {
+		return CommentDeleteTarget{}, invalidReadResponse()
+	}
+	visibility, err := decodeCommentDeleteVisibility(response.Visibility)
+	if err != nil {
+		return CommentDeleteTarget{}, invalidReadResponse()
+	}
+	attachments, err := decodeEmptyCommentAttachments(response.Attachments)
+	if err != nil {
+		return CommentDeleteTarget{}, invalidReadResponse()
+	}
+	return CommentDeleteTarget{
+		ID: response.ID, IssueID: response.Issue.ID, Text: text,
+		AuthorID: response.Author.ID, AuthorLogin: response.Author.Login,
+		Created: *response.Created, Updated: updated, Deleted: *response.Deleted,
+		Pinned: *response.Pinned, Visibility: visibility, Attachments: attachments,
+	}, nil
+}
+
+func decodeOptionalTimestamp(raw json.RawMessage) (*int64, error) {
+	raw = bytes.TrimSpace(raw)
+	if bytes.Equal(raw, []byte("null")) {
+		return nil, nil
+	}
+	var value int64
+	if err := json.Unmarshal(raw, &value); err != nil || value < 0 {
+		return nil, errors.New("updated is not a timestamp")
+	}
+	return &value, nil
+}
+
+func decodeRequiredCommentText(raw json.RawMessage) (string, error) {
+	raw = bytes.TrimSpace(raw)
+	if bytes.Equal(raw, []byte("null")) {
+		return "", errors.New("comment text is null")
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return "", err
+	}
+	if err := validateOptionalText("comment text", text, maxCommentBytes); err != nil {
+		return "", err
+	}
+	return text, nil
+}
+
+func decodeCommentDeleteVisibility(raw json.RawMessage) (Visibility, error) {
+	raw = bytes.TrimSpace(raw)
+	if bytes.Equal(raw, []byte("null")) {
+		return Visibility{}, errors.New("comment visibility is null")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var response commentDeleteVisibilityResponse
+	if err := decoder.Decode(&response); err != nil {
+		return Visibility{}, errors.New("comment visibility is invalid")
+	}
+	groups, groupsPresent, err := decodeVisibilityPrincipals(response.PermittedGroups)
+	if err != nil {
+		return Visibility{}, err
+	}
+	users, usersPresent, err := decodeVisibilityPrincipals(response.PermittedUsers)
+	if err != nil {
+		return Visibility{}, err
+	}
+	switch response.Type {
+	case "UnlimitedVisibility":
+		if len(groups) != 0 || len(users) != 0 {
+			return Visibility{}, errors.New("unlimited comment visibility has principals")
+		}
+		if !groupsPresent {
+			groups = []Identity{}
+		}
+		if !usersPresent {
+			users = []Identity{}
+		}
+	case "LimitedVisibility":
+		if !groupsPresent || !usersPresent {
+			return Visibility{}, errors.New("limited comment visibility omits principals")
+		}
+	default:
+		return Visibility{}, errors.New("comment visibility type is invalid")
+	}
+	return Visibility{Type: response.Type, PermittedGroups: groups, PermittedUsers: users}, nil
+}
+
+func decodeVisibilityPrincipals(raw json.RawMessage) ([]Identity, bool, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return nil, false, nil
+	}
+	if bytes.Equal(raw, []byte("null")) {
+		return nil, false, errors.New("comment visibility principals are null")
+	}
+	var wire []commentDeleteIdentityResponse
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil || wire == nil {
+		return nil, false, errors.New("comment visibility principals are invalid")
+	}
+	principals := make([]Identity, 0, len(wire))
+	for _, principal := range wire {
+		if !validEntityID(principal.ID) {
+			return nil, false, errors.New("comment visibility principal is invalid")
+		}
+		principals = append(principals, Identity{ID: principal.ID, Name: principal.Name, Login: principal.Login})
+	}
+	return principals, true, nil
+}
+
+func decodeEmptyCommentAttachments(raw json.RawMessage) ([]string, error) {
+	raw = bytes.TrimSpace(raw)
+	if bytes.Equal(raw, []byte("null")) {
+		return nil, errors.New("comment attachments are null")
+	}
+	var attachments []string
+	if err := json.Unmarshal(raw, &attachments); err != nil || attachments == nil || len(attachments) != 0 {
+		return nil, errors.New("comment has attachments")
+	}
+	return attachments, nil
 }
 
 func validEntityID(value string) bool {

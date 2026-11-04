@@ -3,7 +3,13 @@
 // it does not prove human presence or resist a malicious process with the same UID.
 package operatorwrite
 
-import "time"
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"time"
+)
 
 const (
 	// Version remains the frozen snapshot and record version. Plan versions are
@@ -11,6 +17,7 @@ const (
 	Version            = 1
 	LegacyPlanVersion1 = 1
 	PlanVersion2       = 2
+	PlanVersion3       = 3
 	Lane               = "operator-write-v1"
 	ConfirmationMode   = "operator_confirmed"
 	Notifications      = "youtrack-default"
@@ -18,10 +25,11 @@ const (
 	SnapshotTTL        = 15 * time.Minute
 	LegacyPlanTTL      = 15 * time.Minute
 	// Caps apply to complete JSON inputs/records, including escaping and metadata.
-	MaxSnapshotBytes = 24 * 1024
-	MaxRequestBytes  = 256 * 1024
-	MaxPlanBytes     = 256 * 1024
-	MaxRecordBytes   = 512 * 1024
+	MaxSnapshotBytes              = 24 * 1024
+	MaxCommentDeleteSnapshotBytes = 64 * 1024
+	MaxRequestBytes               = 256 * 1024
+	MaxPlanBytes                  = 256 * 1024
+	MaxRecordBytes                = 512 * 1024
 	// MaxCommentBytes and MaxDescriptionBytes include the visible operator
 	// marker added by Prepare.
 	MaxCommentBytes     = 32 * 1024
@@ -42,7 +50,7 @@ func PlanLifetime(version int) string {
 	switch version {
 	case LegacyPlanVersion1:
 		return LegacyPlanLifetime
-	case PlanVersion2:
+	case PlanVersion2, PlanVersion3:
 		return CurrentPlanLifetime
 	default:
 		return ""
@@ -52,9 +60,10 @@ func PlanLifetime(version int) string {
 type Kind string
 
 const (
-	KindIssueCreate Kind = "issue.create"
-	KindIssueUpdate Kind = "issue.update"
-	KindCommentAdd  Kind = "comment.add"
+	KindIssueCreate   Kind = "issue.create"
+	KindIssueUpdate   Kind = "issue.update"
+	KindCommentAdd    Kind = "comment.add"
+	KindCommentDelete Kind = "comment.delete"
 )
 
 type Binding struct {
@@ -116,6 +125,74 @@ type Field struct {
 	TargetValue      Value  `json:"target_value"`
 }
 
+// CommentVisibility freezes immutable identities rather than mutable display
+// names in a comment's visibility rules.
+type CommentVisibility struct {
+	Type              string   `json:"type"`
+	PermittedGroupIDs []string `json:"permitted_group_ids"`
+	PermittedUserIDs  []string `json:"permitted_user_ids"`
+}
+
+// Comment is the complete frozen hard-delete target. RequiredServerPermission
+// is informational; it describes the right implied by the frozen author and
+// account identities rather than asserting an effective server permission.
+type Comment struct {
+	ID                       string            `json:"id"`
+	Text                     string            `json:"text"`
+	AuthorID                 string            `json:"author_id"`
+	AuthorLogin              string            `json:"author_login"`
+	Created                  int64             `json:"created"`
+	Updated                  *int64            `json:"updated"`
+	Deleted                  bool              `json:"deleted"`
+	Pinned                   bool              `json:"pinned"`
+	Visibility               CommentVisibility `json:"visibility"`
+	Attachments              []string          `json:"attachments"`
+	RequiredServerPermission string            `json:"required_server_permission"`
+}
+
+// UnmarshalJSON retains the distinction between a missing required field and
+// explicit false/null values in an untrusted deletion snapshot.
+func (comment *Comment) UnmarshalJSON(raw []byte) error {
+	type wire struct {
+		ID                       string            `json:"id"`
+		Text                     string            `json:"text"`
+		AuthorID                 string            `json:"author_id"`
+		AuthorLogin              string            `json:"author_login"`
+		Created                  int64             `json:"created"`
+		Updated                  json.RawMessage   `json:"updated"`
+		Deleted                  *bool             `json:"deleted"`
+		Pinned                   *bool             `json:"pinned"`
+		Visibility               CommentVisibility `json:"visibility"`
+		Attachments              []string          `json:"attachments"`
+		RequiredServerPermission string            `json:"required_server_permission"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var value wire
+	if err := decoder.Decode(&value); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	if len(value.Updated) == 0 || value.Deleted == nil || value.Pinned == nil {
+		return errors.New("comment requires updated, deleted, and pinned")
+	}
+	var updated *int64
+	if err := json.Unmarshal(value.Updated, &updated); err != nil {
+		return err
+	}
+	*comment = Comment{
+		ID: value.ID, Text: value.Text, AuthorID: value.AuthorID, AuthorLogin: value.AuthorLogin,
+		Created: value.Created, Updated: updated, Deleted: *value.Deleted, Pinned: *value.Pinned,
+		Visibility: value.Visibility, Attachments: value.Attachments, RequiredServerPermission: value.RequiredServerPermission,
+	}
+	return nil
+}
+
 type Snapshot struct {
 	Version int     `json:"version"`
 	Lane    string  `json:"lane"`
@@ -127,6 +204,7 @@ type Snapshot struct {
 	Project    *Project  `json:"project,omitempty"`
 	Field      *Field    `json:"field,omitempty"`
 	Fields     []Field   `json:"fields,omitempty"`
+	Comment    *Comment  `json:"comment,omitempty"`
 	CapturedAt time.Time `json:"captured_at"`
 }
 

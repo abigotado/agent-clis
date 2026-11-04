@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "checks": [
+    {
+      "name": "Repository pre-push quality gate",
+      "argv": [".githooks/pre-push"],
+      "cwd": ".",
+      "timeout_seconds": 1200
+    }
+  ]
+}

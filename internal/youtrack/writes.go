@@ -73,6 +73,13 @@ type AddCommentInput struct {
 	Text                string
 }
 
+// DeleteCommentInput binds one irreversible comment deletion to exact,
+// immutable issue and comment identifiers.
+type DeleteCommentInput struct {
+	IssueID   string
+	CommentID string
+}
+
 type addCommentPayload struct {
 	Text       string                  `json:"text"`
 	Visibility publicCommentVisibility `json:"visibility"`
@@ -197,6 +204,46 @@ func ValidateAddCommentInput(input AddCommentInput) error {
 		return err
 	}
 	return validateRequiredText("comment text", input.Text, maxCommentBytes)
+}
+
+// ValidateDeleteCommentInput validates immutable deletion identifiers before
+// the request reaches the transport.
+func ValidateDeleteCommentInput(input DeleteCommentInput) error {
+	if err := validateIdentifier("issue", input.IssueID); err != nil {
+		return err
+	}
+	return validateIdentifier("comment", input.CommentID)
+}
+
+// DeleteComment sends one exact, non-replayable DELETE request. This local
+// client recognizes only 204 or a whitespace-only 200 response as success;
+// every other result is deliberately ambiguous except the established typed
+// authentication, permission, and stale-target responses.
+func (client *Client) DeleteComment(ctx context.Context, input DeleteCommentInput) error {
+	if err := ValidateDeleteCommentInput(input); err != nil {
+		return err
+	}
+	response, err := client.send(ctx, request{
+		method: http.MethodDelete,
+		path:   "/issues/" + url.PathEscape(input.IssueID) + "/comments/" + url.PathEscape(input.CommentID),
+		body:   []byte{}, operation: "comment.delete", write: true,
+	})
+	if err != nil || response == nil || response.Body == nil {
+		return errx.WriteOutcomeUnknown("comment.delete")
+	}
+	defer closeAndDrain(response.Body)
+	if response.StatusCode != http.StatusNoContent && response.StatusCode != http.StatusOK {
+		return client.translateWriteStatus(response, "comment.delete")
+	}
+
+	body, tooLarge, readErr := readResponseBody(response)
+	if readErr != nil || tooLarge {
+		return errx.WriteOutcomeUnknown("comment.delete")
+	}
+	if (response.StatusCode == http.StatusNoContent || response.StatusCode == http.StatusOK) && len(bytes.TrimSpace(body)) == 0 {
+		return nil
+	}
+	return client.translateWriteStatus(response, "comment.delete")
 }
 
 // AddComment sends one non-replayable public comment mutation. A successful

@@ -39,10 +39,20 @@ environment variables, profile files, logs, receipts, or repository files. Do
 not inspect or print secret-store values.
 
 Operator-confirmed writes need `rest-best-effort` / `best-effort`, the requested
-`issue-create`, `issue-update` or `comment-add` capability, a bound credential generation and
+`issue-create`, `issue-update`, `comment-add` or `comment-delete` capability, a bound credential generation and
 a nonempty current project allowlist. Keep the existing read-only profile
 unchanged. A separate operator-approved `work-write` profile requires its own
 browser login and `auth allow-projects set --profile work-write --project ID:KEY`.
 Do not reuse another profile's credential metadata or silently expand its
 capabilities. `capabilities --profile NAME -o json` reports local readiness,
 not server rights. Native-presence approval is a different, unavailable mode.
+
+Capabilities use canonical order `read`, `issue-create`, `issue-update`,
+`comment-add`, `comment-delete`, omitting unneeded write kinds. Deletion is an
+explicit opt-in. Adding it changes profile identity and invalidates old
+credential/policy/default bindings; re-authenticate and explicitly re-establish
+the exact project allowlist and any stale saved selection with operator
+authorization. Do not edit capabilities or policy as part of an installation
+or silently repair them during a requested deletion. Server permission is
+separate: `Delete Comment` for the bound author's own comment, or
+`Delete Not Own Comment` for another author's comment.

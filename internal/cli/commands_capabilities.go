@@ -18,6 +18,7 @@ func (view capabilitiesView) Fields() []output.Field {
 		{Name: "confirmation_mode", Value: view.ConfirmationMode, Raw: view.ConfirmationMode, Always: true},
 		{Name: "plan_version", Value: strconv.Itoa(view.PlanVersion), Raw: view.PlanVersion},
 		{Name: "plan_lifetime", Value: view.PlanLifetime, Raw: view.PlanLifetime},
+		{Name: "plan_versions", Raw: view.PlanVersions},
 		{Name: "locally_ready", Value: strconv.FormatBool(view.LocallyReady), Raw: view.LocallyReady},
 		{Name: "credential_generation_configured", Value: strconv.FormatBool(view.CredentialGenerationConfigured), Raw: view.CredentialGenerationConfigured},
 		{Name: "project_policy_configured", Value: strconv.FormatBool(view.ProjectPolicyConfigured), Raw: view.ProjectPolicyConfigured},

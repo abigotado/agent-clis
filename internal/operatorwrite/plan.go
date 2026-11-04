@@ -57,7 +57,7 @@ func ValidateSnapshot(s Snapshot) error {
 	}
 	switch s.Kind {
 	case KindIssueCreate:
-		if s.Issue != (Issue{}) || s.Field != nil || s.Project == nil || !protocolvalue.IsIdentifier(s.Project.ID) ||
+		if s.Issue != (Issue{}) || s.Field != nil || s.Project == nil || s.Comment != nil || !protocolvalue.IsIdentifier(s.Project.ID) ||
 			!protocolvalue.IsProjectKey(s.Project.Key) || len(s.Fields) > MaxCreateFields {
 			return invalid()
 		}
@@ -73,22 +73,76 @@ func ValidateSnapshot(s Snapshot) error {
 		}
 	case KindIssueUpdate:
 		f := s.Field
-		if !validIssue(s.Issue) || s.Project != nil || s.Fields != nil || f == nil || !protocolvalue.IsIdentifier(f.IssueFieldID) || !validFieldSchema(*f) ||
+		if !validIssue(s.Issue) || s.Project != nil || s.Fields != nil || s.Comment != nil || f == nil || !protocolvalue.IsIdentifier(f.IssueFieldID) || !validFieldSchema(*f) ||
 			f.CurrentValue == nil && !f.CanBeEmpty || f.CurrentValue != nil && !validValue(*f.CurrentValue, f.Type) {
 			return invalid()
 		}
 	case KindCommentAdd:
-		if !validIssue(s.Issue) || s.Project != nil || s.Fields != nil || s.Field != nil {
+		if !validIssue(s.Issue) || s.Project != nil || s.Fields != nil || s.Field != nil || s.Comment != nil {
+			return invalid()
+		}
+	case KindCommentDelete:
+		if !validIssue(s.Issue) || s.Project != nil || s.Fields != nil || s.Field != nil || s.Comment == nil || !validComment(*s.Comment, s.Binding.AccountID) {
 			return invalid()
 		}
 	default:
 		return invalid()
 	}
 	raw, err := json.Marshal(s)
-	if err != nil || len(raw) > MaxSnapshotBytes {
+	if err != nil || len(raw) > snapshotLimit(s.Kind) {
 		return invalid()
 	}
 	return nil
+}
+
+func snapshotLimit(kind Kind) int {
+	if kind == KindCommentDelete {
+		return MaxCommentDeleteSnapshotBytes
+	}
+	return MaxSnapshotBytes
+}
+
+func validComment(comment Comment, accountID string) bool {
+	if !protocolvalue.IsIdentifier(comment.ID) || !validText(comment.Text, MaxCommentBytes, true) ||
+		!protocolvalue.IsIdentifier(comment.AuthorID) || !validText(comment.AuthorLogin, 256, true) ||
+		strings.ContainsAny(comment.AuthorLogin, " \t\r\n") || comment.Created <= 0 || comment.Deleted ||
+		comment.Updated != nil && *comment.Updated < 0 || !validCommentVisibility(comment.Visibility) ||
+		comment.Attachments == nil || len(comment.Attachments) != 0 ||
+		(comment.AuthorID == accountID && comment.RequiredServerPermission != "Delete Comment") ||
+		(comment.AuthorID != accountID && comment.RequiredServerPermission != "Delete Not Own Comment") {
+		return false
+	}
+	return true
+}
+
+func validCommentVisibility(visibility CommentVisibility) bool {
+	switch visibility.Type {
+	case "UnlimitedVisibility":
+		if visibility.PermittedGroupIDs == nil || visibility.PermittedUserIDs == nil || len(visibility.PermittedGroupIDs) != 0 || len(visibility.PermittedUserIDs) != 0 {
+			return false
+		}
+	case "LimitedVisibility":
+		if visibility.PermittedGroupIDs == nil || visibility.PermittedUserIDs == nil {
+			return false
+		}
+	default:
+		return false
+	}
+	previous := ""
+	for _, id := range visibility.PermittedGroupIDs {
+		if !protocolvalue.IsIdentifier(id) || id <= previous {
+			return false
+		}
+		previous = id
+	}
+	previous = ""
+	for _, id := range visibility.PermittedUserIDs {
+		if !protocolvalue.IsIdentifier(id) || id <= previous {
+			return false
+		}
+		previous = id
+	}
+	return true
 }
 
 func validIssue(i Issue) bool {
@@ -160,6 +214,8 @@ func validRequest(q Request) bool {
 		return q.CommentText == "" && q.Summary == "" && q.Description == ""
 	case KindCommentAdd:
 		return q.Summary == "" && q.Description == "" && validText(q.CommentText, MaxCommentBytes, true)
+	case KindCommentDelete:
+		return q.CommentText == "" && q.Summary == "" && q.Description == ""
 	default:
 		return false
 	}
@@ -196,6 +252,8 @@ func Prepare(snapshot Snapshot, request Request, now time.Time) (Plan, error) {
 		}
 	case KindIssueUpdate:
 		// The frozen snapshot is the complete update payload.
+	case KindCommentDelete:
+		// The frozen snapshot is the complete hard-delete target.
 	default:
 		return Plan{}, invalid()
 	}
@@ -208,7 +266,11 @@ func Prepare(snapshot Snapshot, request Request, now time.Time) (Plan, error) {
 	if err := json.Unmarshal(raw, &frozen); err != nil {
 		return Plan{}, invalid()
 	}
-	plan := Plan{Version: PlanVersion2, Lane: Lane, ID: id, ConfirmationMode: ConfirmationMode, Notifications: Notifications,
+	version := PlanVersion2
+	if request.Kind == KindCommentDelete {
+		version = PlanVersion3
+	}
+	plan := Plan{Version: version, Lane: Lane, ID: id, ConfirmationMode: ConfirmationMode, Notifications: Notifications,
 		Snapshot: frozen, Request: request, CreatedAt: now.UTC()}
 	plan.SHA256, err = digest(plan)
 	if err != nil {
@@ -235,11 +297,15 @@ func ValidatePlan(p Plan) error {
 	}
 	switch p.Version {
 	case LegacyPlanVersion1:
-		if p.ExpiresAt.IsZero() || p.ExpiresAt.Location() != time.UTC || p.ExpiresAt.Sub(p.CreatedAt) != LegacyPlanTTL {
+		if p.Snapshot.Kind == KindCommentDelete || p.ExpiresAt.IsZero() || p.ExpiresAt.Location() != time.UTC || p.ExpiresAt.Sub(p.CreatedAt) != LegacyPlanTTL {
 			return invalid()
 		}
 	case PlanVersion2:
-		if !p.ExpiresAt.IsZero() {
+		if p.Snapshot.Kind == KindCommentDelete || !p.ExpiresAt.IsZero() {
+			return invalid()
+		}
+	case PlanVersion3:
+		if p.Snapshot.Kind != KindCommentDelete || !p.ExpiresAt.IsZero() {
 			return invalid()
 		}
 	default:
@@ -263,6 +329,8 @@ func ValidatePlan(p Plan) error {
 		}
 	case KindIssueUpdate:
 		// validRequest already rejects any text for a frozen field update.
+	case KindCommentDelete:
+		// validRequest already rejects all mutable payload fields.
 	default:
 		return invalid()
 	}
@@ -356,7 +424,7 @@ func hasDuplicateKeys(raw []byte) bool {
 
 func DecodeSnapshot(r io.Reader) (Snapshot, error) {
 	var s Snapshot
-	if err := decode(r, MaxSnapshotBytes, &s); err != nil {
+	if err := decode(r, MaxCommentDeleteSnapshotBytes, &s); err != nil {
 		return Snapshot{}, err
 	}
 	if err := ValidateSnapshot(s); err != nil {

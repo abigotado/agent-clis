@@ -291,7 +291,7 @@ func compareProject(left, right Project) int {
 }
 
 func hasMutationCapability(value profile.Profile) bool {
-	return value.HasCapability(profile.CapabilityIssueCreate) || value.HasCapability(profile.CapabilityIssueUpdate) || value.HasCapability(profile.CapabilityCommentAdd)
+	return value.HasCapability(profile.CapabilityIssueCreate) || value.HasCapability(profile.CapabilityIssueUpdate) || value.HasCapability(profile.CapabilityCommentAdd) || value.HasCapability(profile.CapabilityCommentDelete)
 }
 
 func (r *Registry) mutate(ctx context.Context, change func(registryFile) (registryFile, error)) error {

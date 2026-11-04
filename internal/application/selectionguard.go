@@ -83,8 +83,7 @@ func supportsDefaultRole(value profile.Profile, role string) bool {
 	case "read":
 		return value.HasCapability(profile.CapabilityRead)
 	case "write":
-		return value.Executor == profile.ExecutorRESTBestEffort && value.Assurance == profile.AssuranceBestEffort &&
-			(value.HasCapability(profile.CapabilityIssueCreate) || value.HasCapability(profile.CapabilityIssueUpdate) || value.HasCapability(profile.CapabilityCommentAdd))
+		return value.Executor == profile.ExecutorRESTBestEffort && value.Assurance == profile.AssuranceBestEffort && hasWriteCapability(value)
 	default:
 		return false
 	}
