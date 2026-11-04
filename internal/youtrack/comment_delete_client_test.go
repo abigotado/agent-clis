@@ -190,6 +190,7 @@ func TestDeleteCommentClassifiesOneShotHTTPOutcomes(t *testing.T) {
 		status     int
 		body       string
 		gzip       bool
+		encoding   string
 		retryAfter string
 		wantCode   errx.Code
 		wantReason string
@@ -199,6 +200,9 @@ func TestDeleteCommentClassifiesOneShotHTTPOutcomes(t *testing.T) {
 		{name: "missing target rejection", status: http.StatusNotFound, body: "non-json upstream error", wantCode: errx.CodeConflict, wantReason: "TARGET_CHANGED"},
 		{name: "conflict rejection", status: http.StatusConflict, body: "non-json upstream error", wantCode: errx.CodeConflict, wantReason: "PRECONDITION_FAILED"},
 		{name: "precondition rejection", status: http.StatusPreconditionFailed, body: "non-json upstream error", wantCode: errx.CodeConflict, wantReason: "PRECONDITION_FAILED"},
+		{name: "malformed compressed permission rejection remains definitive", status: http.StatusForbidden, body: "not a gzip stream", encoding: "gzip", wantCode: errx.CodePermission, wantReason: "PERMISSION_DENIED"},
+		{name: "unsupported encoded missing-target rejection remains definitive", status: http.StatusNotFound, body: "opaque body", encoding: "br", wantCode: errx.CodeConflict, wantReason: "TARGET_CHANGED"},
+		{name: "oversized conflict rejection remains definitive", status: http.StatusConflict, body: strings.Repeat("x", maxResponseBodyBytes+1), wantCode: errx.CodeConflict, wantReason: "PRECONDITION_FAILED"},
 		{name: "rate limit without retry after is unknown", status: http.StatusTooManyRequests, wantCode: errx.CodeConflict, wantReason: "WRITE_OUTCOME_UNKNOWN"},
 		{name: "rate limit with retry after is unknown", status: http.StatusTooManyRequests, retryAfter: "1", wantCode: errx.CodeConflict, wantReason: "WRITE_OUTCOME_UNKNOWN"},
 		{name: "server failure is unknown", status: http.StatusServiceUnavailable, wantCode: errx.CodeConflict, wantReason: "WRITE_OUTCOME_UNKNOWN"},
@@ -217,7 +221,9 @@ func TestDeleteCommentClassifiesOneShotHTTPOutcomes(t *testing.T) {
 				if test.retryAfter != "" {
 					writer.Header().Set("Retry-After", test.retryAfter)
 				}
-				if test.gzip {
+				if test.encoding != "" {
+					writer.Header().Set("Content-Encoding", test.encoding)
+				} else if test.gzip {
 					writer.Header().Set("Content-Encoding", "gzip")
 				}
 				writer.WriteHeader(test.status)

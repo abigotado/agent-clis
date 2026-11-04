@@ -232,6 +232,9 @@ func (client *Client) DeleteComment(ctx context.Context, input DeleteCommentInpu
 		return errx.WriteOutcomeUnknown("comment.delete")
 	}
 	defer closeAndDrain(response.Body)
+	if response.StatusCode != http.StatusNoContent && response.StatusCode != http.StatusOK {
+		return client.translateWriteStatus(response, "comment.delete")
+	}
 
 	body, tooLarge, readErr := readResponseBody(response)
 	if readErr != nil || tooLarge {
