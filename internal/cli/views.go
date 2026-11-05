@@ -208,7 +208,7 @@ type issueView struct {
 // issueFieldSummary keeps a field's project-defined name beside its readable
 // values, because stage and assignee fields are named per project. Nil Values
 // means the value could not be read as expected, which differs from an empty
-// field; the unmodified value stays available through custom_fields.
+// field; the fetched value stays available through custom_fields.
 type issueFieldSummary struct {
 	Name   string   `json:"name"`
 	Values []string `json:"values"`

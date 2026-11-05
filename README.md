@@ -173,7 +173,8 @@ and `user_fields`, for example `{"name":"Stage","values":["In Progress"]}` and
 `{"name":"Assignee","values":["alice"]}`. Field names come from the project, so
 select by name rather than assuming `State` or `Assignee`. `values` lists state
 names or user logins, is empty for an empty field, and is `null` when the value
-could not be read; `--fields custom_fields` returns every field with its raw value.
+could not be read; `--fields custom_fields` returns every field with the value
+properties the CLI fetches.
 
 If MCP comments are unavailable, the standard CLI supports one bounded comments
 page for an exact issue:

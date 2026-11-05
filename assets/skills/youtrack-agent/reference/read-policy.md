@@ -46,12 +46,15 @@ default as `state_fields` and `user_fields`, each entry being
 `{"name":"Stage","values":["In Progress"]}`. Field names come from the project,
 so select by name rather than assuming `State` or `Assignee`. `values` lists state
 names or user logins, is empty for an empty field, and is `null` when the value
-could not be read; `--fields custom_fields` returns every field with its raw value.
+could not be read; `--fields custom_fields` returns every field with the value
+properties the CLI fetches.
 
 `LOCAL_STATE_ACCESS_DENIED` (exit 8) means the operating system or an agent sandbox
-denied the write access that a network command needs for its profile lock. It says
+denied the local access a read needs, usually writing its profile lock file. It says
 nothing about the YouTrack account: stop and ask the operator for access to the
 CLI's state directory rather than re-authenticating or changing a sandbox policy.
+`operator-write apply` and `reconcile` read their local ledger first and report the
+same denial there as a local storage failure; the plan is not consumed by it.
 
 If the profile is missing, the identity differs, or an unexpected tool is
 visible, stop before issuing the requested read. Do not probe another instance.

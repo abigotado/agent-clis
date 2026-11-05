@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -491,6 +492,7 @@ func TestRotatedRefreshSaveFailureRequiresOperatorRecovery(t *testing.T) {
 		{name: "deadline exceeded", saveErr: fmt.Errorf("%s: %w", private, context.DeadlineExceeded), category: "deadline_exceeded", action: "inspect timed-out credential-store save"},
 		{name: "keychain status", saveErr: fmt.Errorf("%s: %w", private, &auth.StatusError{Operation: "private-operation-sentinel", Status: -25293}), category: "keychain_status_failure", action: "inspect Keychain availability and permissions"},
 		{name: "other", saveErr: errors.New(private), category: "other", action: "inspect local credential-store save failure"},
+		{name: "permission denied", saveErr: fmt.Errorf("%s: %w", private, fs.ErrPermission), category: "other", action: "inspect local credential-store save failure"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			selected := oauthApplicationProfile(t, true)

@@ -3,6 +3,9 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -199,5 +202,52 @@ func TestInspectIssueExitsWithPermissionWhenProfileLockIsDenied(t *testing.T) {
 	}
 	if got := decode(t, stdout)["error"].(map[string]any)["code"]; got != "LOCAL_STATE_ACCESS_DENIED" {
 		t.Fatalf("error code=%v", got)
+	}
+}
+
+func TestInspectIssueReportsStageAndAssigneeFromTheServerResponse(t *testing.T) {
+	var requestedFields string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/users/me" {
+			_, _ = io.WriteString(w, `{"id":"1-2","login":"alice"}`)
+			return
+		}
+		requestedFields = r.URL.Query().Get("fields")
+		_, _ = io.WriteString(w, `{"id":"2-1","idReadable":"APP-1","summary":"S","description":null,"reporter":null,
+			"project":{"id":"0-1","shortName":"APP","name":"App","archived":false},"created":1,"updated":2,"commentsCount":0,
+			"customFields":[
+				{"id":"c-1","name":"Stage","$type":"StateIssueCustomField","value":{"id":"s-1","name":"In Progress","isResolved":false,"$type":"StateBundleElement"}},
+				{"id":"c-2","name":"Assignee","$type":"SingleUserIssueCustomField","value":{"id":"1-2","login":"alice","name":"Alice","fullName":"Alice","$type":"User"}},
+				{"id":"c-3","name":"Priority","$type":"SingleEnumIssueCustomField","value":{"id":"e-1","name":"Normal","$type":"EnumBundleElement"}}
+			]}`)
+	}))
+	defer server.Close()
+	app, _, _, _, stdout, stderr := testApp(t)
+	service, _ := commentsTestService(t, server)
+	app.service = service
+
+	code := runApp(app, "inspect", "issue", "--profile", "work", "--id", "APP-1", "-o", "json")
+
+	if code != errx.CodeOK {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	for _, property := range []string{"$type", "login", "name"} {
+		if !strings.Contains(requestedFields, property) {
+			t.Errorf("request fields %q omit %q", requestedFields, property)
+		}
+	}
+	data := decode(t, stdout)["data"].(map[string]any)
+	for field, want := range map[string]string{
+		"state_fields": `[{"name":"Stage","values":["In Progress"]}]`,
+		"user_fields":  `[{"name":"Assignee","values":["alice"]}]`,
+	} {
+		encoded, err := json.Marshal(data[field])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(encoded) != want {
+			t.Errorf("%s=%s, want %s", field, encoded, want)
+		}
 	}
 }
