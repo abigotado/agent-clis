@@ -53,8 +53,6 @@ properties the CLI fetches.
 denied the local access a read needs, usually writing its profile lock file. It says
 nothing about the YouTrack account: stop and ask the operator for access to the
 CLI's state directory rather than re-authenticating or changing a sandbox policy.
-`operator-write apply` and `reconcile` read their local ledger first and report the
-same denial there as a local storage failure; the plan is not consumed by it.
 
 If the profile is missing, the identity differs, or an unexpected tool is
 visible, stop before issuing the requested read. Do not probe another instance.

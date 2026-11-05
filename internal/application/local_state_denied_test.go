@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/abigotado/youtrack-agent-cli/internal/auth"
 	"github.com/abigotado/youtrack-agent-cli/internal/errx"
 	"github.com/abigotado/youtrack-agent-cli/internal/profile"
 	"github.com/abigotado/youtrack-agent-cli/internal/writepolicy"
@@ -44,6 +46,27 @@ func TestReadReportsDeniedProfileLockBeforeCredentialAccess(t *testing.T) {
 	}
 	if credentials.calls != 0 {
 		t.Errorf("credential store was called %d times", credentials.calls)
+	}
+}
+
+type typedFailureStore struct {
+	auth.CredentialAccessStore
+	err error
+}
+
+func (s typedFailureStore) Load(context.Context, string) (auth.Credential, error) {
+	return auth.Credential{}, s.err
+}
+
+func TestClientKeepsTypedErrorThatWrapsDenial(t *testing.T) {
+	service := oauthApplicationService(t, oauthApplicationProfile(t, true), &oauthCredentialStore{}, nil)
+	service.Credentials = typedFailureStore{err: errx.Conflict("TYPED_RECOVERY", "keeps its recovery").Wrap(fs.ErrPermission)}
+
+	_, _, err := service.InspectIssue(t.Context(), "work", "APP-1")
+
+	var typed *errx.Error
+	if !errors.As(TranslateError(err, "work"), &typed) || typed.Reason != "TYPED_RECOVERY" {
+		t.Fatalf("translated=%#v", typed)
 	}
 }
 

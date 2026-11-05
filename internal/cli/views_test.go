@@ -232,9 +232,16 @@ func TestInspectIssueReportsStageAndAssigneeFromTheServerResponse(t *testing.T) 
 	if code != errx.CodeOK {
 		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
-	for _, property := range []string{"$type", "login", "name"} {
-		if !strings.Contains(requestedFields, property) {
-			t.Errorf("request fields %q omit %q", requestedFields, property)
+	// Scoped because these property names also occur elsewhere in the query.
+	_, customFields, _ := strings.Cut(requestedFields, "customFields(")
+	fieldProperties, valueProperties, _ := strings.Cut(customFields, "value(")
+	valueProperties, _, _ = strings.Cut(valueProperties, ")")
+	if !strings.Contains(fieldProperties, "$type") {
+		t.Errorf("custom field properties %q omit $type", fieldProperties)
+	}
+	for _, property := range strings.Fields("login name") {
+		if !strings.Contains(valueProperties, property) {
+			t.Errorf("custom field value properties %q omit %q", valueProperties, property)
 		}
 	}
 	data := decode(t, stdout)["data"].(map[string]any)
