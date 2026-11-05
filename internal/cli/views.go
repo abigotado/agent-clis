@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"cmp"
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -199,7 +201,18 @@ type issueView struct {
 	Created       int64                              `json:"created"`
 	Updated       int64                              `json:"updated"`
 	CommentsCount int                                `json:"comments_count"`
+	StateFields   []issueFieldSummary                `json:"state_fields"`
+	UserFields    []issueFieldSummary                `json:"user_fields"`
 	CustomFields  []application.IssueCustomFieldInfo `json:"custom_fields,omitempty"`
+}
+
+// issueFieldSummary keeps a field's project-defined name beside its readable
+// values, because stage and assignee fields are named per project. Nil Values
+// means the value could not be read as expected, which differs from an empty
+// field; the unmodified value stays available through custom_fields.
+type issueFieldSummary struct {
+	Name   string   `json:"name"`
+	Values []string `json:"values"`
 }
 
 func newIssueView(value application.IssueInfo) issueView {
@@ -207,12 +220,57 @@ func newIssueView(value application.IssueInfo) issueView {
 		Trust: untrustedYouTrackContent, ID: value.ID, ReadableID: value.ReadableID, Summary: value.Summary, Description: value.Description,
 		Project: newProjectView(value.Project), Created: value.Created, Updated: value.Updated,
 		CommentsCount: value.CommentsCount, CustomFields: append([]application.IssueCustomFieldInfo(nil), value.CustomFields...),
+		StateFields: []issueFieldSummary{}, UserFields: []issueFieldSummary{},
+	}
+	for _, field := range value.CustomFields {
+		switch field.Type {
+		case "StateIssueCustomField", "StateMachineIssueCustomField":
+			view.StateFields = append(view.StateFields, issueFieldSummary{Name: field.Name, Values: customFieldLabels(field.Value)})
+		case "SingleUserIssueCustomField", "MultiUserIssueCustomField":
+			view.UserFields = append(view.UserFields, issueFieldSummary{Name: field.Name, Values: customFieldLabels(field.Value)})
+		}
 	}
 	if value.Reporter != nil {
 		reporter := newUserView(*value.Reporter)
 		view.Reporter = &reporter
 	}
 	return view
+}
+
+// customFieldLabels reads a single or multi-value state or user field. An
+// unexpected shape must neither fail the read nor look like an empty field.
+func customFieldLabels(raw json.RawMessage) []string {
+	type labeled struct {
+		Login string `json:"login"`
+		Name  string `json:"name"`
+	}
+	var values []labeled
+	if err := json.Unmarshal(raw, &values); err != nil {
+		var single labeled
+		if err := json.Unmarshal(raw, &single); err != nil {
+			return nil
+		}
+		values = []labeled{single}
+	}
+	labels := make([]string, 0, len(values))
+	for _, value := range values {
+		if label := cmp.Or(value.Login, value.Name); label != "" {
+			labels = append(labels, label)
+		}
+	}
+	return labels
+}
+
+func issueFieldsText(fields []issueFieldSummary) string {
+	parts := make([]string, len(fields))
+	for index, field := range fields {
+		values := strings.Join(field.Values, ",")
+		if field.Values == nil {
+			values = "?"
+		}
+		parts[index] = field.Name + "=" + values
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (view issueView) Fields() []output.Field {
@@ -229,6 +287,8 @@ func (view issueView) Fields() []output.Field {
 		{Name: "project_key", Value: view.Project.Key, Raw: view.Project.Key},
 		{Name: "updated", Value: strconv.FormatInt(view.Updated, 10), Raw: view.Updated},
 		{Name: "comments_count", Value: strconv.Itoa(view.CommentsCount), Raw: view.CommentsCount},
+		{Name: "state_fields", Value: issueFieldsText(view.StateFields), Raw: view.StateFields},
+		{Name: "user_fields", Value: issueFieldsText(view.UserFields), Raw: view.UserFields},
 		{Name: "description", Value: description, Raw: view.Description, OnRequest: true},
 		{Name: "reporter", Raw: view.Reporter, OnRequest: true},
 		{Name: "created", Value: strconv.FormatInt(view.Created, 10), Raw: view.Created, OnRequest: true},

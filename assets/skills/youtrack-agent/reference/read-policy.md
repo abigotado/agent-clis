@@ -41,5 +41,16 @@ currentness, a stable snapshot, complete history, nor reconciliation evidence.
 This fallback is unavailable in the portable and macOS identity editions, which
 remain Remote-MCP-only; it does not authorize use of a misconfigured MCP connection.
 
+In the standard CLI, `inspect issue` reports state and user custom fields by
+default as `state_fields` and `user_fields`, each entry being
+`{"name":"Stage","values":["In Progress"]}`. Field names come from the project,
+so select by name rather than assuming `State` or `Assignee`. `values` lists state
+names or user logins, is empty for an empty field, and is `null` when the value
+could not be read; `--fields custom_fields` returns every field with its raw value.
+
+`LOCAL_STATE_ACCESS_DENIED` (exit 8) means the operating system or an agent sandbox
+denied this process access to the CLI's local state directory. It says nothing
+about the YouTrack account: request that access instead of re-authenticating.
+
 If the profile is missing, the identity differs, or an unexpected tool is
 visible, stop before issuing the requested read. Do not probe another instance.
