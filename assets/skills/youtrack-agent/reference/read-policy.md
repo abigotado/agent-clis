@@ -47,7 +47,8 @@ properties the CLI fetches.
 denied the local access a read needs. It says nothing about the YouTrack account.
 `inspect` reads hold an existing profile lock file read-only, so they work in a
 sandbox that denies writes to the CLI's state directory, until an OAuth token needs
-renewal or that lock file is missing. In those two cases the hint names a command:
+renewal or that lock file is missing. Where the sandbox denies those writes with a
+permission error, the hint in those two cases names a command:
 ask the operator to run it outside the sandbox, then retry. Any other denial asks
 for access to the state directory. Never re-authenticate or change a sandbox policy.
 

@@ -85,9 +85,10 @@ func (r *Registry) WithProfileLock(ctx context.Context, name string, fn func() e
 	})
 }
 
-// WithExistingProfileLock takes the same lock as WithProfileLock through a
+// WithExistingProfileLock holds the profile's lock file shared through a
 // read-only descriptor and creates nothing, for callers that change no local
-// state. A missing lock file is reported as fs.ErrNotExist.
+// state. It excludes WithProfileLock holders but not other readers. A missing
+// lock file is reported as fs.ErrNotExist.
 func (r *Registry) WithExistingProfileLock(ctx context.Context, name string, fn func() error) error {
 	if err := RequireName(name); err != nil {
 		return err

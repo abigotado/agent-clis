@@ -165,8 +165,13 @@ func TestOperatorSnapshotStillNeedsTheWritableLock(t *testing.T) {
 	}
 	freezeState(t, filepath.Dir(lock))
 	requireFrozenLock(t, lock)
+	credentials, network := &trapCredentials{}, &trapTransport{}
+	fixture.service.Credentials, fixture.service.HTTP = credentials, network
 
 	_, err := fixture.service.SnapshotOperatorWrite(t.Context(), OperatorSnapshotInput{Profile: "work", Kind: "comment.delete", IssueID: "APP-12", CommentID: "4-1"})
 
 	requireTypedRecovery(t, err, localStateAccessDenied, errx.CodePermission)
+	if credentials.calls != 0 || network.calls != 0 {
+		t.Errorf("credentials=%d network=%d", credentials.calls, network.calls)
+	}
 }
