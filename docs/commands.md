@@ -2,7 +2,7 @@
 
 # Command reference
 
-JSON mode writes one stable envelope to stdout and is the default when stdout is not a TTY. Text, raw, and help output are explicitly selected exceptions. The four `inspect` commands use an explicit `--profile` or the saved read default; `operator-write snapshot`, `prepare`, `apply`, and `reconcile` use an explicit profile or the saved write default. Explicit flags override defaults; empty flags and stale saved identities fail closed. Auth, profile administration, project policy, and native mutation retain explicit-profile requirements. No-profile `capabilities` remains build-only; local operator status does not consult defaults. Configure selection with `profile defaults show|set|clear`. See `contract.md` for exit codes and envelopes.
+JSON mode writes one stable envelope to stdout and is the default when stdout is not a TTY. Text, raw, and help output are explicitly selected exceptions. The `inspect` commands use an explicit `--profile` or the saved read default; `operator-write snapshot`, `prepare`, `apply`, and `reconcile` use an explicit profile or the saved write default. Explicit flags override defaults; empty flags and stale saved identities fail closed. Auth, profile administration, project policy, and native mutation retain explicit-profile requirements. No-profile `capabilities` remains build-only; local operator status does not consult defaults. Configure selection with `profile defaults show|set|clear`. See `contract.md` for exit codes and envelopes.
 
 ## JSON response recovery
 
@@ -184,6 +184,16 @@ Read one exact issue through the narrow REST helper
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | `--id` | string |  | exact YouTrack issue database ID or readable ID |
+
+### `youtrack-agent-cli inspect issues`
+
+Search one bounded page of compact issue summaries
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--limit` | int | `10` | maximum issues in this page (1-50) |
+| `--offset` | int | `0` | explicit bounded page offset; pages are not a stable snapshot |
+| `--query` | string |  | one bounded YouTrack search query |
 
 ### `youtrack-agent-cli inspect project`
 

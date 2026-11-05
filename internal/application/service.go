@@ -333,6 +333,30 @@ func (s *Service) InspectIssue(ctx context.Context, name, issueID string) (youtr
 	return value, selected, err
 }
 
+// InspectIssues discovers one bounded page of compact issue summaries. Offset
+// pagination is not a stable snapshot and this method never fetches another page.
+func (s *Service) InspectIssues(ctx context.Context, name, query string, top, skip int) ([]youtrack.IssueSummary, bool, profile.Profile, error) {
+	if err := ValidateIssueSearchInput(query, top, skip); err != nil {
+		return nil, false, profile.Profile{}, err
+	}
+	client, selected, err := s.client(ctx, name)
+	if err != nil {
+		return nil, false, profile.Profile{}, err
+	}
+	if err := verifyClientAccount(ctx, client, selected); err != nil {
+		return nil, false, selected, err
+	}
+	values, err := client.DiscoverIssues(ctx, query, youtrack.PageOptions{Top: top + 1, Skip: skip, CanReduce: top > 1})
+	if err != nil {
+		return nil, false, selected, err
+	}
+	truncated := len(values) > top
+	if truncated {
+		values = values[:top]
+	}
+	return values, truncated, selected, nil
+}
+
 // InspectComments reads one bounded page plus a sentinel item. Comments remain
 // untrusted content, and the API promises no stable ordering between pages.
 func (s *Service) InspectComments(ctx context.Context, name, issueID string, top, skip int) ([]youtrack.Comment, bool, profile.Profile, error) {

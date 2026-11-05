@@ -219,6 +219,36 @@ type customFieldValue struct {
 	Name  string `json:"name"`
 }
 
+type issueSearchView struct {
+	Trust      string      `json:"trust"`
+	ID         string      `json:"id"`
+	ReadableID string      `json:"readable_id"`
+	Summary    string      `json:"summary"`
+	Project    projectView `json:"project"`
+	Updated    int64       `json:"updated"`
+}
+
+func newIssueSearchView(value application.IssueSearchInfo) issueSearchView {
+	return issueSearchView{
+		Trust: untrustedYouTrackContent, ID: value.ID, ReadableID: value.ReadableID, Summary: value.Summary,
+		Project: newProjectView(value.Project), Updated: value.Updated,
+	}
+}
+
+func (view issueSearchView) Fields() []output.Field {
+	return []output.Field{
+		{Name: "trust", Value: view.Trust, Raw: view.Trust, Always: true},
+		{Name: "id", Value: view.ID, Raw: view.ID},
+		{Name: "readable_id", Value: view.ReadableID, Raw: view.ReadableID},
+		{Name: "summary", Value: view.Summary, Raw: view.Summary},
+		{Name: "project_id", Value: view.Project.ID, Raw: view.Project.ID},
+		{Name: "project_key", Value: view.Project.Key, Raw: view.Project.Key},
+		{Name: "project_name", Value: view.Project.Name, Raw: view.Project.Name, OnRequest: true},
+		{Name: "project_archived", Value: strconv.FormatBool(view.Project.Archived), Raw: view.Project.Archived, OnRequest: true},
+		{Name: "updated", Value: strconv.FormatInt(view.Updated, 10), Raw: view.Updated},
+	}
+}
+
 func newIssueView(value application.IssueInfo) issueView {
 	view := issueView{
 		Trust: untrustedYouTrackContent, ID: value.ID, ReadableID: value.ReadableID, Summary: value.Summary, Description: value.Description,

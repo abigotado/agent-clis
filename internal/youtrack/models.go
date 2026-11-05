@@ -56,6 +56,16 @@ type Issue struct {
 	CustomFields  []IssueCustomField `json:"customFields"`
 }
 
+// IssueSummary is the deliberately small issue shape used for bounded
+// discovery. It must not grow into the detailed issue or reconciliation shape.
+type IssueSummary struct {
+	ID         string  `json:"id"`
+	IDReadable string  `json:"idReadable"`
+	Summary    string  `json:"summary"`
+	Project    Project `json:"project"`
+	Updated    int64   `json:"updated"`
+}
+
 // FieldType identifies the value type and cardinality of a project field.
 type FieldType struct {
 	ID           string `json:"id"`

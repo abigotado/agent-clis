@@ -17,7 +17,7 @@ once. Saving a default is a separate authorized local configuration change:
 youtrack-agent-cli profile defaults set --read work --write work-write --yes
 ```
 
-The four `inspect` commands resolve read defaults; `operator-write snapshot`,
+The five `inspect` commands resolve read defaults; `operator-write snapshot`,
 `prepare`, `apply`, and `reconcile` resolve write defaults. Explicit `--profile`
 wins, including when defaults are corrupt; an empty explicit flag is invalid.
 Auth, project policy, profile administration, and native mutation retain their

@@ -16,6 +16,7 @@ const (
 	currentUserFields   = "id,login,name,fullName,email"
 	projectFields       = "id,shortName,name,archived"
 	issueFields         = "id,idReadable,summary,description,project(id,shortName,name,archived),reporter(id,login,name,fullName),created,updated,commentsCount,customFields(id,name,$type,projectCustomField(id,field(id)),value(id,name,login,fullName,text,presentation,isResolved,$type))"
+	issueSummaryFields  = "id,idReadable,summary,project(id,shortName,name,archived),updated"
 	projectFieldFields  = "id,$type,field(id,name,fieldType(id,valueType,isMultiValue,$type)),canBeEmpty,isPublic,bundle(id,$type,values(id,name,localizedName,archived,$type),aggregatedUsers(id,login,name,fullName))"
 	commentFields       = "id,author(id,login,name,fullName),created,updated,deleted,text,visibility($type,permittedGroups(id,name),permittedUsers(id,name,login))"
 	commentDeleteFields = "id,issue(id),author(id,login),created,updated,deleted,pinned,text,visibility($type,permittedGroups(id,name),permittedUsers(id,name,login)),attachments(id)"
@@ -34,6 +35,21 @@ type commentDeleteResponse struct {
 	Text        json.RawMessage `json:"text"`
 	Visibility  json.RawMessage `json:"visibility"`
 	Attachments json.RawMessage `json:"attachments"`
+}
+
+type issueSummaryResponse struct {
+	ID         string                      `json:"id"`
+	IDReadable string                      `json:"idReadable"`
+	Summary    string                      `json:"summary"`
+	Project    issueSummaryProjectResponse `json:"project"`
+	Updated    *int64                      `json:"updated"`
+}
+
+type issueSummaryProjectResponse struct {
+	ID        string `json:"id"`
+	ShortName string `json:"shortName"`
+	Name      string `json:"name"`
+	Archived  *bool  `json:"archived"`
 }
 
 type commentDeleteVisibilityResponse struct {
@@ -278,7 +294,7 @@ func (client *Client) ListComments(ctx context.Context, issueID string, options 
 // SearchIssues runs one bounded YouTrack issue query and never fetches a
 // second page. It exists for reconciliation, not open-ended agent discovery.
 func (client *Client) SearchIssues(ctx context.Context, queryText string, options PageOptions) ([]Issue, error) {
-	if err := validateBoundedQuery(queryText); err != nil {
+	if err := ValidateIssueQuery(queryText); err != nil {
 		return nil, err
 	}
 	query, err := pageQuery(options, issueFields)
@@ -296,6 +312,38 @@ func (client *Client) SearchIssues(ctx context.Context, queryText string, option
 	for _, issue := range issues {
 		if err := validateIssueResponse(issue, ""); err != nil {
 			return nil, err
+		}
+	}
+	return issues, nil
+}
+
+// DiscoverIssues runs one bounded issue-discovery query with a compact fixed
+// response shape. It never follows or automatically requests another page.
+func (client *Client) DiscoverIssues(ctx context.Context, queryText string, options PageOptions) ([]IssueSummary, error) {
+	if err := ValidateIssueQuery(queryText); err != nil {
+		return nil, err
+	}
+	query, err := pageQuery(options, issueSummaryFields)
+	if err != nil {
+		return nil, err
+	}
+	query.Set("query", queryText)
+	var responses []issueSummaryResponse
+	if err := client.readJSON(ctx, request{path: "/issues", query: query, operation: "issues.discover", pageReducible: options.CanReduce}, &responses); err != nil {
+		return nil, err
+	}
+	if responses == nil {
+		return nil, invalidReadResponse()
+	}
+	issues := make([]IssueSummary, len(responses))
+	for index, response := range responses {
+		if err := validateIssueSummaryResponse(response); err != nil {
+			return nil, err
+		}
+		issues[index] = IssueSummary{
+			ID: response.ID, IDReadable: response.IDReadable, Summary: response.Summary,
+			Project: Project{ID: response.Project.ID, ShortName: response.Project.ShortName, Name: response.Project.Name, Archived: *response.Project.Archived},
+			Updated: *response.Updated,
 		}
 	}
 	return issues, nil
@@ -484,9 +532,19 @@ func validEntityID(value string) bool {
 	return true
 }
 
-func validateBoundedQuery(value string) error {
+// ValidateIssueQuery rejects malformed bounded search input without requiring
+// a client, credential, or network access.
+func ValidateIssueQuery(value string) error {
 	if strings.TrimSpace(value) == "" || len(value) > maxQueryBytes || strings.ContainsAny(value, "\x00\r\n") {
 		return errx.Usage("query must be one non-empty line no longer than %d bytes", maxQueryBytes)
+	}
+	return nil
+}
+
+func validateIssueSummaryResponse(issue issueSummaryResponse) error {
+	if !validEntityID(issue.ID) || !validEntityID(issue.IDReadable) || issue.Summary == "" || issue.Updated == nil || *issue.Updated < 0 ||
+		!validEntityID(issue.Project.ID) || strings.TrimSpace(issue.Project.ShortName) == "" || strings.TrimSpace(issue.Project.Name) == "" || issue.Project.Archived == nil {
+		return invalidReadResponse()
 	}
 	return nil
 }
