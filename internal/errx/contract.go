@@ -33,7 +33,8 @@ const (
 	CodeRetryable Code = 6
 	// CodeConfirm signals that a write requires explicit approval.
 	CodeConfirm Code = 7
-	// CodePermission signals a YouTrack permission or API-token scope denial.
+	// CodePermission signals a denied YouTrack permission, API-token scope, or
+	// local state access.
 	CodePermission Code = 8
 	// CodeConflict signals stale state or a write conflict.
 	CodeConflict Code = 9
@@ -56,7 +57,7 @@ var codes = []CodeInfo{
 	{CodeAuth, "AUTH", "missing, expired, or rejected credentials", "log in or rotate the API token"},
 	{CodeRetryable, "RETRYABLE", "rate limit or transient network failure", "back off and retry safely"},
 	{CodeConfirm, "CONFIRMATION_REQUIRED", "write was not confirmed", "obtain human confirmation using the operation's approval mode"},
-	{CodePermission, "PERMISSION_DENIED", "YouTrack permission or token scope denied", "request permission or scope; do not retry unchanged"},
+	{CodePermission, "PERMISSION_DENIED", "YouTrack permission, token scope, or local state access denied", "request the permission, scope, or local access; do not retry unchanged"},
 	{CodeConflict, "CONFLICT", "stale state or write conflict", "re-read the YouTrack resource before deciding"},
 }
 

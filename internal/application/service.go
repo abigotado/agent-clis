@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -596,6 +597,13 @@ func (s *Service) client(ctx context.Context, name string) (*youtrack.Client, pr
 		client, err = youtrack.New(youtrack.Config{RESTBaseURL: selected.RESTBaseURL}, youtrack.Credential{Token: token}, youtrack.WithHTTPClient(&http.Client{Transport: s.HTTP}), youtrack.WithLogger(s.Logger))
 		return err
 	})
+	// Mapped here rather than in TranslateError: nothing has been sent or
+	// committed yet, while a denial elsewhere can follow a committed change.
+	// A refresh that saved state returns a typed error and does not match.
+	if errors.Is(err, fs.ErrPermission) {
+		return nil, profile.Profile{}, errx.Permission("LOCAL_STATE_ACCESS_DENIED", "the operating system denied access to local youtrack-agent-cli state").
+			WithHint("stop and ask the operator to allow write access to the youtrack-agent-cli directory under the user config directory; do not change a sandbox policy yourself")
+	}
 	return client, selected, err
 }
 

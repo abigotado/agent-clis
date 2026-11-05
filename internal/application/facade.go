@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"io/fs"
 
 	"github.com/abigotado/youtrack-agent-cli/internal/auth"
 	"github.com/abigotado/youtrack-agent-cli/internal/endpoint"
@@ -587,9 +586,6 @@ func TranslateError(err error, name string) error {
 			WithHint("correct invalid local exchange input; if refresh was attempted, %s", descriptor.Hint)
 	case errors.Is(err, oauth.ErrInvalidConfig):
 		return errx.Usage("OAuth profile configuration is invalid")
-	case errors.Is(err, fs.ErrPermission):
-		return errx.Permission("LOCAL_STATE_ACCESS_DENIED", "the operating system denied access to local youtrack-agent-cli state").
-			WithHint("grant this process access to the youtrack-agent-cli directory under the user config directory, for example in the agent sandbox policy")
 	default:
 		return errx.Internal("operation failed without exposing sensitive details")
 	}

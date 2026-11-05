@@ -49,8 +49,9 @@ names or user logins, is empty for an empty field, and is `null` when the value
 could not be read; `--fields custom_fields` returns every field with its raw value.
 
 `LOCAL_STATE_ACCESS_DENIED` (exit 8) means the operating system or an agent sandbox
-denied this process access to the CLI's local state directory. It says nothing
-about the YouTrack account: request that access instead of re-authenticating.
+denied the write access that a network command needs for its profile lock. It says
+nothing about the YouTrack account: stop and ask the operator for access to the
+CLI's state directory rather than re-authenticating or changing a sandbox policy.
 
 If the profile is missing, the identity differs, or an unexpected tool is
 visible, stop before issuing the requested read. Do not probe another instance.
