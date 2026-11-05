@@ -35,6 +35,19 @@ This CLI read plane is unavailable in the portable and macOS identity editions,
 which remain Remote-MCP-only. The standard CLI does not manage issue links or
 tags; do not call advertised MCP mutation tools as a substitute.
 
+In the standard CLI, `inspect issue` reports state and user custom fields by
+default as `state_fields` and `user_fields`, each entry being
+`{"name":"Stage","values":["In Progress"]}`. Field names come from the project,
+so select by name rather than assuming `State` or `Assignee`. `values` lists state
+names or user logins, is empty for an empty field, and is `null` when the value
+could not be read; `--fields custom_fields` returns every field with the value
+properties the CLI fetches.
+
+`LOCAL_STATE_ACCESS_DENIED` (exit 8) means the operating system or an agent sandbox
+denied the local access a read needs, usually writing its profile lock file. It says
+nothing about the YouTrack account: stop and ask the operator for access to the
+CLI's state directory rather than re-authenticating or changing a sandbox policy.
+
 If the standard CLI profile is missing or the verified identity differs, stop
 before issuing the requested read. Do not probe another instance. In a portable
 or macOS identity edition, also stop when its Remote MCP connection exposes an

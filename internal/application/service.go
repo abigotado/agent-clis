@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -620,6 +621,14 @@ func (s *Service) client(ctx context.Context, name string) (*youtrack.Client, pr
 		client, err = youtrack.New(youtrack.Config{RESTBaseURL: selected.RESTBaseURL}, youtrack.Credential{Token: token}, youtrack.WithHTTPClient(&http.Client{Transport: s.HTTP}), youtrack.WithLogger(s.Logger))
 		return err
 	})
+	// Mapped here rather than in TranslateError, where a denial can follow a
+	// committed change. Refresh is the one step here that changes state, and its
+	// failures are typed without their cause; a typed error keeps its recovery.
+	var typed *errx.Error
+	if !errors.As(err, &typed) && errors.Is(err, fs.ErrPermission) {
+		return nil, profile.Profile{}, errx.Permission("LOCAL_STATE_ACCESS_DENIED", "the operating system denied access to local youtrack-agent-cli state").
+			WithHint("stop and ask the operator to allow access to the youtrack-agent-cli directory under the user config directory, including writing its lock files; do not change a sandbox policy yourself")
+	}
 	return client, selected, err
 }
 

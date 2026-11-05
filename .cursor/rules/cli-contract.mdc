@@ -99,7 +99,7 @@ new one is justified; if the caller's next move is the same, it is a new
 | 5 | auth | re-authenticate |
 | 6 | retryable (rate limit, network) | back off, retry |
 | 7 | confirmation required | obtain human confirmation using the operation's approval mode |
-| 8 | permission / scope denied | stop and request permission or scope |
+| 8 | permission, scope, or local state access denied | stop and request permission, scope, or local access |
 | 9 | conflict / stale state | re-read the YouTrack object before retrying |
 
 Two hazards that are easy to reintroduce:

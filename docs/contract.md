@@ -166,13 +166,17 @@ Each status maps to a distinct caller recovery action.
 | 5 | `AUTH` | missing, expired, or rejected credentials | log in or rotate the API token |
 | 6 | `RETRYABLE` | rate limit or transient network failure | back off and retry safely |
 | 7 | `CONFIRMATION_REQUIRED` | write was not confirmed | obtain human confirmation using the operation's approval mode |
-| 8 | `PERMISSION_DENIED` | YouTrack permission or token scope denied | request permission or scope; do not retry unchanged |
+| 8 | `PERMISSION_DENIED` | YouTrack permission, token scope, or local state access denied | request the permission, scope, or local access; do not retry unchanged |
 | 9 | `CONFLICT` | stale state or write conflict | re-read the YouTrack resource before deciding |
 
 ## Recovery rules
 
 - Treat `403` as permission/scope denial (exit 8), not authentication.
 - Treat `409` as stale state/conflict (exit 9); re-read before another write.
+- Treat `LOCAL_STATE_ACCESS_DENIED` (exit 8) as a local denial, not an account problem:
+  ask the operator for access to the CLI's state directory and do not re-authenticate.
+  `operator-write apply` and `reconcile` report a denied ledger read as `INTERNAL` (exit 1)
+  with a storage failure message instead.
 - Follow `next_cursor` only within the caller's explicit bound.
 - A compiled Go runtime can exit 2 after an unrecovered panic. The process entry
   must recover ordinary panics and report exit 1 so they are not mistaken for
