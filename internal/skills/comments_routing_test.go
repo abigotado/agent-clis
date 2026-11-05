@@ -19,7 +19,7 @@ func TestStandardSkillRoutesReadsToBoundedCLI(t *testing.T) {
 				required []string
 			}{
 				{"SKILL.md", []string{"Use the standard `youtrack-agent-cli` for bounded reads and guarded", "[read policy](reference/read-policy.md)"}},
-				{"reference/read-policy.md", []string{"youtrack-agent-cli inspect issues --query", "youtrack-agent-cli inspect comments --profile <name> --id <issue-ID> --limit 10 --offset 0 -o json", "This CLI read plane is unavailable in the portable and macOS identity editions"}},
+				{"reference/read-policy.md", []string{"youtrack-agent-cli inspect issues --query", "youtrack-agent-cli inspect comments --profile <name> --id <issue-ID> --limit 10 --offset 0 -o json", "This CLI read plane is unavailable in the portable and macOS identity editions", "stop before issuing the requested CLI read.", "A Remote MCP connection that also exposes write tools is no reason to refuse reads through it."}},
 			} {
 				text := strings.Join(strings.Fields(string(files[contract.file])), " ")
 				for _, required := range contract.required {

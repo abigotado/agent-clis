@@ -49,5 +49,5 @@ nothing about the YouTrack account: stop and ask the operator for access to the
 CLI's state directory rather than re-authenticating or changing a sandbox policy.
 
 If the standard CLI profile is missing or the verified identity differs, stop
-before issuing the requested read. Do not probe another instance. A Remote MCP
+before issuing the requested CLI read. Do not probe another instance. A Remote MCP
 connection that also exposes write tools is no reason to refuse reads through it.

@@ -181,8 +181,9 @@ Returned pages establish neither currentness, complete history, nor
 reconciliation evidence. Portable and macOS identity editions remain
 Remote-MCP-only.
 
-The standard CLI does not manage issue links or tags. The MCP connector's tools
-for them are outside this CLI's guarded write path and may be used instead.
+The standard CLI does not manage issue links or tags. The MCP connector's write
+tools are outside this CLI's guarded write path and may be used beside it, for
+example for links, tags or Assignee.
 
 ## Operator-confirmed writes
 

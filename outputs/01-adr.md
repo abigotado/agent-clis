@@ -4,6 +4,7 @@
 - Date: 2026-09-01
 - Decision owner: Operator
 - Applies to: YouTrack Cloud/Server 2026.2, Codex, Claude Code
+- Update: the standard edition now permits YouTrack MCP write tools beside the CLI; the read-only editions keep the six-tool allowlist.
 
 ## Context
 
