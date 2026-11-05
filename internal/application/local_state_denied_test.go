@@ -18,19 +18,21 @@ import (
 )
 
 func TestReadReportsDeniedProfileLockBeforeCredentialAccess(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores the file mode that denies the lock")
-	}
+	skipWithoutEnforcedModes(t)
 	directory := filepath.Join(t.TempDir(), "private-path-sentinel")
 	if err := os.Mkdir(directory, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	registryPath := filepath.Join(directory, "profiles.json")
-	if err := os.WriteFile(registryPath+".profile-work.lock", nil, 0o400); err != nil {
+	if err := os.WriteFile(registryPath+".profile-work.lock", nil, 0o000); err != nil {
 		t.Fatal(err)
 	}
 	credentials := &trapCredentials{}
-	service := &Service{Profiles: profile.NewRegistry(registryPath), Credentials: credentials}
+	registry := profile.NewRegistry(registryPath)
+	if err := registry.Add(t.Context(), oauthApplicationProfile(t, true)); err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{Profiles: registry, Credentials: credentials}
 
 	_, _, err := service.InspectIssue(t.Context(), "work", "APP-1")
 

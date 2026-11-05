@@ -133,7 +133,7 @@ func TestOldMtimeCannotStealLiveAdvisoryLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = acquire(file, path+".lock", 20*time.Millisecond)
+	err = acquire(file, path+".lock", false, 20*time.Millisecond)
 	var timeout *TimeoutError
 	if !errors.As(err, &timeout) {
 		t.Fatalf("acquire error = %v, want TimeoutError", err)
@@ -154,5 +154,53 @@ func TestOldMtimeCannotStealLiveAdvisoryLock(t *testing.T) {
 func TestWithRejectsNilCallback(t *testing.T) {
 	if err := With(filepath.Join(t.TempDir(), "x"), nil); err == nil {
 		t.Error("nil callback was accepted")
+	}
+}
+
+func TestWithExistingRunsWithoutCreatingAndExcludesWith(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.json")
+	lock := path + ".lock"
+	err := WithExisting(path, func() error {
+		t.Error("callback ran without a lock file")
+		return nil
+	})
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing lock: %v", err)
+	}
+	if _, err := os.Lstat(lock); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("WithExisting created the lock: %v", err)
+	}
+	if err := With(path, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+
+	var timedOut *TimeoutError
+	err = With(path, func() error {
+		return WithExisting(path, func() error {
+			t.Error("WithExisting entered while With held the lock")
+			return nil
+		})
+	})
+	if !errors.As(err, &timedOut) {
+		t.Errorf("WithExisting inside With: %v", err)
+	}
+	err = WithExisting(path, func() error {
+		return With(path, func() error {
+			t.Error("With entered while WithExisting held the lock")
+			return nil
+		})
+	})
+	if !errors.As(err, &timedOut) {
+		t.Errorf("With inside WithExisting: %v", err)
+	}
+	entered := false
+	err = WithExisting(path, func() error {
+		return WithExisting(path, func() error {
+			entered = true
+			return nil
+		})
+	})
+	if err != nil || !entered {
+		t.Errorf("readers excluded each other: entered=%t err=%v", entered, err)
 	}
 }

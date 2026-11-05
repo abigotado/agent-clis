@@ -12,9 +12,9 @@ import (
 )
 
 func openLockNoFollow(directory, name string) (*os.File, error) {
-	directoryFD, err := unix.Open(directory, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	directoryFD, err := openLockDirectory(directory)
 	if err != nil {
-		return nil, fmt.Errorf("open lock directory without symlinks: %w", err)
+		return nil, err
 	}
 	defer unix.Close(directoryFD)
 
@@ -27,6 +27,34 @@ func openLockNoFollow(directory, name string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	return verifiedLock(directoryFD, fd, name, created)
+}
+
+func openExistingLockNoFollow(directory, name string) (*os.File, error) {
+	directoryFD, err := openLockDirectory(directory)
+	if err != nil {
+		return nil, err
+	}
+	defer unix.Close(directoryFD)
+
+	// O_NONBLOCK keeps a FIFO at this path from blocking the read-only open; the
+	// regular-file check then refuses it.
+	fd, err := unix.Openat(directoryFD, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	return verifiedLock(directoryFD, fd, name, false)
+}
+
+func openLockDirectory(directory string) (int, error) {
+	directoryFD, err := unix.Open(directory, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return -1, fmt.Errorf("open lock directory without symlinks: %w", err)
+	}
+	return directoryFD, nil
+}
+
+func verifiedLock(directoryFD, fd int, name string, created bool) (*os.File, error) {
 	file := os.NewFile(uintptr(fd), name)
 	if file == nil {
 		_ = unix.Close(fd)

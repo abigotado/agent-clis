@@ -85,6 +85,38 @@ func (r *Registry) WithProfileLock(ctx context.Context, name string, fn func() e
 	})
 }
 
+// WithExistingProfileLock holds the profile's lock file shared through a
+// read-only descriptor and creates nothing, for callers that change no local
+// state. It excludes WithProfileLock holders but not other readers. A missing
+// lock file is reported as fs.ErrNotExist.
+func (r *Registry) WithExistingProfileLock(ctx context.Context, name string, fn func() error) error {
+	if err := RequireName(name); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if r == nil || r.path == "" {
+		return errors.New("profile registry path is empty")
+	}
+	if err := validateRegistryDir(filepath.Dir(r.path)); err != nil {
+		return err
+	}
+	return lockfile.WithExisting(r.path+".profile-"+name, func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return fn()
+	})
+}
+
+// IsLockTimeout reports that a live process held a profile lock for the whole
+// wait budget, which another attempt at the same lock would only repeat.
+func IsLockTimeout(err error) bool {
+	var timedOut *lockfile.TimeoutError
+	return errors.As(err, &timedOut)
+}
+
 // List returns all registered profiles sorted by name.
 func (r *Registry) List(ctx context.Context) ([]Profile, error) {
 	if err := ctx.Err(); err != nil {
