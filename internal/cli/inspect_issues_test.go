@@ -241,3 +241,47 @@ func TestInspectIssuesTextShowsQuotedStageAndAssignee(t *testing.T) {
 		}
 	}
 }
+
+func TestInspectIssuesSelectsAndRendersStageAndAssigneeFields(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		want []string
+		not  []string
+	}{
+		{"selected alone", []string{"-o", "json", "--fields", "state_fields,user_fields"}, []string{`"state_fields":[{"name":"Stage","values":["Open"]}]`, `"user_fields":[{"name":"Assignee","values":["alice"]}]`}, []string{"summary", "custom_fields"}},
+		{"raw carries them", []string{"-o", "raw"}, []string{`"state_fields":[{"name":"Stage","values":["Open"]}]`}, []string{`"ok"`, "custom_fields"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/users/me" {
+					_, _ = io.WriteString(w, `{"id":"1-2","login":"alice"}`)
+					return
+				}
+				_, _ = io.WriteString(w, `[{"id":"2-1","idReadable":"APP-1","summary":"S","project":{"id":"0-1","shortName":"APP","name":"App","archived":false},"updated":2,
+					"customFields":[{"name":"Stage","$type":"StateIssueCustomField","value":{"name":"Open"}},
+						{"name":"Assignee","$type":"SingleUserIssueCustomField","value":{"login":"alice","name":"Alice"}}]}]`)
+			}))
+			defer server.Close()
+			app, _, _, _, stdout, stderr := testApp(t)
+			app.service, _ = commentsTestService(t, server)
+
+			code := runApp(app, append([]string{"inspect", "issues", "--profile", "work", "--query", "project: APP"}, test.args...)...)
+
+			if code != errx.CodeOK {
+				t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout, stderr)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(stdout.String(), want) {
+					t.Errorf("output omits %q: %s", want, stdout)
+				}
+			}
+			for _, unwanted := range test.not {
+				if strings.Contains(stdout.String(), unwanted) {
+					t.Errorf("output contains %q: %s", unwanted, stdout)
+				}
+			}
+		})
+	}
+}

@@ -43,8 +43,8 @@ type issueSummaryResponse struct {
 	Summary    string                      `json:"summary"`
 	Project    issueSummaryProjectResponse `json:"project"`
 	Updated    *int64                      `json:"updated"`
-	// CustomFields carries only name, type and the label properties of the
-	// value, which is all the compact stage and owner summary reads.
+	// CustomFields holds what the query requests: name, type and the name and
+	// login of the value. The summary keeps only those, never a field identity.
 	CustomFields []IssueCustomField `json:"customFields"`
 }
 
@@ -346,10 +346,29 @@ func (client *Client) DiscoverIssues(ctx context.Context, queryText string, opti
 		issues[index] = IssueSummary{
 			ID: response.ID, IDReadable: response.IDReadable, Summary: response.Summary,
 			Project: Project{ID: response.Project.ID, ShortName: response.Project.ShortName, Name: response.Project.Name, Archived: *response.Project.Archived},
-			Updated: *response.Updated, CustomFields: response.CustomFields,
+			Updated: *response.Updated, CustomFields: summaryCustomFields(response.CustomFields),
 		}
 	}
 	return issues, nil
+}
+
+// summaryCustomFields keeps only what the compact query asked for, so a server
+// that returns field identities cannot widen the discovery shape. One odd field
+// must not fail a whole search page: an unclassifiable field is dropped and an
+// oversized value is withheld, which the summary reports as unreadable.
+func summaryCustomFields(fields []IssueCustomField) []IssueCustomField {
+	result := make([]IssueCustomField, 0, len(fields))
+	for _, field := range fields {
+		if field.Name == "" || field.Type == "" {
+			continue
+		}
+		value := field.Value
+		if len(value) > maxCustomFieldValueSize {
+			value = nil
+		}
+		result = append(result, IssueCustomField{Name: field.Name, Type: field.Type, Value: value})
+	}
+	return result
 }
 
 func fieldsQuery(fields string) url.Values {
@@ -548,11 +567,6 @@ func validateIssueSummaryResponse(issue issueSummaryResponse) error {
 	if !validEntityID(issue.ID) || !validEntityID(issue.IDReadable) || issue.Summary == "" || issue.Updated == nil || *issue.Updated < 0 ||
 		!validEntityID(issue.Project.ID) || strings.TrimSpace(issue.Project.ShortName) == "" || strings.TrimSpace(issue.Project.Name) == "" || issue.Project.Archived == nil {
 		return invalidReadResponse()
-	}
-	for _, field := range issue.CustomFields {
-		if field.Name == "" || field.Type == "" || len(field.Value) > maxCustomFieldValueSize {
-			return invalidReadResponse()
-		}
 	}
 	return nil
 }

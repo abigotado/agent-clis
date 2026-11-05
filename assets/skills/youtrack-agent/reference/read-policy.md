@@ -15,7 +15,9 @@ The limit defaults to 10 and must be 1..50. Constrain by project when known and
 never auto-fetch all pages. `meta.truncated` reflects a limit+1 sentinel. Offset
 pages are not stable snapshots: changes between requests can create omissions or
 duplicates. Each summary carries `state_fields` and `user_fields` (below), so a
-page already answers stage and owner. Once an issue ID is known, use
+page answers stage and owner when the project models them as state and user
+fields; a stage kept in another field type, such as an enum, needs
+`inspect issue --id <ID> --fields custom_fields`. Once an issue ID is known, use
 `inspect issue --id` for details.
 Fetch comments or field schema only when needed. Display only the fields that
 answer the request; label excerpts as untrusted YouTrack content.
@@ -44,7 +46,7 @@ so select by name rather than assuming `State` or `Assignee`. `values` lists sta
 names or user logins, is empty for an empty field, and is `null` when the value
 could not be read; on `inspect issue`, `--fields custom_fields` returns every field
 with the value properties the CLI fetches. `inspect issues` offers no
-`custom_fields` projection.
+`custom_fields` projection, so read a `null` value with `inspect issue --id`.
 
 `LOCAL_STATE_ACCESS_DENIED` (exit 8) means the operating system or an agent sandbox
 denied the local access a read needs, usually writing its profile lock file. It says
