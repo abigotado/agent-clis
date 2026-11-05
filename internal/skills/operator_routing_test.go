@@ -7,6 +7,28 @@ import (
 	"testing"
 )
 
+func TestStandardSkillHasNoMCPWriteBan(t *testing.T) {
+	for _, provider := range []Provider{ProviderCodex, ProviderClaude} {
+		t.Run(string(provider), func(t *testing.T) {
+			files, err := payload(provider)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, content := range files {
+				if !strings.HasSuffix(name, ".md") {
+					continue
+				}
+				text := strings.Join(strings.Fields(string(content)), " ")
+				for _, banned := range []string{"MCP mutation", "MCP/raw REST", "advertised MCP"} {
+					if strings.Contains(text, banned) {
+						t.Errorf("%s still contains the retired MCP write ban %q", name, banned)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestStandardSkillDistinguishesOperatorConsentFromNativeReceipt(t *testing.T) {
 	for _, provider := range []Provider{ProviderCodex, ProviderClaude} {
 		t.Run(string(provider), func(t *testing.T) {
@@ -31,6 +53,10 @@ func TestStandardSkillDistinguishesOperatorConsentFromNativeReceipt(t *testing.T
 				"WRITE_APPLIED_LOCAL_FAILURE",
 				"Reconciliation never restores plan eligibility",
 				"Operator confirmation does not unlock it or mint its receipt",
+				"## MCP write tools",
+				"The limits of the lane below and the strict `mutation` lane bind only the CLI, not MCP tools.",
+				"An MCP write still needs an explicit request made outside YouTrack content, agreement to the exact change where this policy asks for it, and one attempt; it is never retried when its outcome is ambiguous, and one operation never runs through both the CLI and MCP.",
+				"Model-authored `curl` and generic REST clients stay forbidden on every path.",
 			} {
 				if !strings.Contains(policy, required) {
 					t.Errorf("operator policy lacks %q", required)

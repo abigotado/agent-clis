@@ -26,7 +26,7 @@ the saved write name for its explicit readiness check. Local plan status does
 not consult defaults. Defaults are not repository/environment settings and
 never grant capabilities. A normal re-login preserves selection, but a changed
 configured identity invalidates it. Changing defaults cannot retarget a plan.
-Before presenting remote data, verify the current account and show the profile,
+Before presenting CLI remote data, verify the current account and show the profile,
 instance, and account together.
 
 OAuth endpoints may be hosted by an external Hub. Pin and validate the service

@@ -39,8 +39,8 @@ workflows can race the mutation. Postchecks cannot undo writes or eliminate this
 interval. Normal YouTrack/workflow notifications may occur; recipients are not
 knowable from this snapshot. Notification suppression is not exposed.
 
-No raw REST path, MCP mutation tool, attachment, arbitrary workflow,
-batch or existing-comment edit is authorized by this path. Issue creation is
+No raw REST path, attachment, arbitrary workflow, batch or existing-comment
+edit is authorized by this path. This path does not limit MCP tools. Issue creation is
 authorized since this decision was amended: one plan creates at most one issue
 in one exact allowlisted project, with a summary, a bounded description and
 optional single State/Enum fields. Creation has no remote precondition beyond

@@ -3,6 +3,7 @@
 Status: Accepted for the fail-closed Gate 1A design; native and remote-write
 gates are not passed
 Method: asset/trust-boundary analysis with STRIDE-style threat enumeration
+Update: the standard edition now permits YouTrack MCP write tools beside the CLI. Residual risk: such calls act with the connector account's own rights, outside the CLI's profile binding, project allowlist, frozen plan and reconciliation; the read-only editions are unchanged.
 
 ## Security objectives
 

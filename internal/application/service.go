@@ -542,7 +542,7 @@ func (s *Service) ApplyMutation(ctx context.Context, profileName, planID string)
 	if err := requireMutationProfile(record, profileName); err != nil {
 		return err
 	}
-	return &errx.Error{Code: errx.CodeConfirm, Reason: "USER_PRESENCE_UNAVAILABLE", Message: "guarded mutation apply is disabled because Gate 1A has not passed", Hint: "use prepare/status only; do not bypass approval through MCP or raw REST"}
+	return &errx.Error{Code: errx.CodeConfirm, Reason: "USER_PRESENCE_UNAVAILABLE", Message: "guarded mutation apply is disabled because Gate 1A has not passed", Hint: "use prepare/status only; do not bypass approval through raw REST"}
 }
 
 // ReconcileMutation refuses to invent evidence before an audited executor has
