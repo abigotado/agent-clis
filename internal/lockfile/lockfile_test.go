@@ -133,7 +133,7 @@ func TestOldMtimeCannotStealLiveAdvisoryLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = acquire(file, path+".lock", 20*time.Millisecond)
+	err = acquire(file, path+".lock", false, 20*time.Millisecond)
 	var timeout *TimeoutError
 	if !errors.As(err, &timeout) {
 		t.Fatalf("acquire error = %v, want TimeoutError", err)
@@ -192,5 +192,15 @@ func TestWithExistingRunsWithoutCreatingAndExcludesWith(t *testing.T) {
 	})
 	if !errors.As(err, &timedOut) {
 		t.Errorf("With inside WithExisting: %v", err)
+	}
+	entered := false
+	err = WithExisting(path, func() error {
+		return WithExisting(path, func() error {
+			entered = true
+			return nil
+		})
+	})
+	if err != nil || !entered {
+		t.Errorf("readers excluded each other: entered=%t err=%v", entered, err)
 	}
 }

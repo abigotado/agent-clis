@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -163,7 +164,22 @@ func requireTypedRecovery(t *testing.T, err error, reason string, code errx.Code
 	if typed.Reason != reason || typed.Code != code {
 		t.Fatalf("reason=%q code=%d, want %q %d (%v)", typed.Reason, typed.Code, reason, code, err)
 	}
+	text := typed.Message + typed.Hint
+	for _, secret := range []string{"stored-access", "stored-refresh", ".lock"} {
+		if strings.Contains(text, secret) {
+			t.Errorf("error exposes %q: %q", secret, text)
+		}
+	}
 	return typed
+}
+
+// skipWithoutEnforcedModes covers root, which ignores file modes, and Windows,
+// where a mode only toggles the read-only attribute.
+func skipWithoutEnforcedModes(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("file modes do not deny the lock here")
+	}
 }
 
 func TestReadWithExistingLockChangesNoLocalState(t *testing.T) {
@@ -200,6 +216,20 @@ func TestReadWaitsForTheWritableLockHolder(t *testing.T) {
 	}
 	if fixture.store.loads != 0 {
 		t.Errorf("credential loaded %d times while the lock was held", fixture.store.loads)
+	}
+}
+
+// A timeout is about the lock, so a lookup must not answer in its place.
+func TestLockTimeoutIsReportedBeforeAnyProfileLookup(t *testing.T) {
+	fixture := newReadLockFixture(t, false)
+	fixture.writeLock(t, 0o600)
+	err := fixture.service.Profiles.WithProfileLock(t.Context(), "work", func() error {
+		_, _, readErr := fixture.service.InspectIssue(t.Context(), "work", "APP-1")
+		return readErr
+	})
+	var timedOut *lockfile.TimeoutError
+	if !errors.As(err, &timedOut) {
+		t.Fatalf("err=%v, want a lock timeout, not a lookup result", err)
 	}
 }
 
@@ -292,9 +322,7 @@ func TestMissingLockIsCreatedOnlyForARegisteredProfile(t *testing.T) {
 }
 
 func TestUnusableLockKeepsAnswersTheRegistryCanGive(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores the file mode that denies the lock")
-	}
+	skipWithoutEnforcedModes(t)
 	t.Run("unknown profile keeps not found", func(t *testing.T) {
 		fixture := newReadLockFixture(t, false)
 		fixture.writeLock(t, 0o000)
@@ -378,6 +406,16 @@ func TestErrorsUnderTheReadLockKeepTheirRecovery(t *testing.T) {
 			}
 		})
 	}
+	t.Run("replaced saved default", func(t *testing.T) {
+		fixture := newReadLockFixture(t, true)
+		fixture.writeLock(t, 0o600)
+		ctx := context.WithValue(t.Context(), selectionGuardKey{}, selectionGuard{name: "work", identity: "another-identity"})
+		_, _, err := fixture.service.InspectIssue(ctx, "work", "APP-1")
+		requireTypedRecovery(t, err, "PROFILE_DEFAULT_STALE", errx.CodeConflict)
+		if fixture.store.loads != 0 {
+			t.Errorf("credential loaded %d times", fixture.store.loads)
+		}
+	})
 	t.Run("binding mismatch", func(t *testing.T) {
 		fixture := newReadLockFixture(t, true)
 		fixture.writeLock(t, 0o600)

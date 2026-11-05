@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -184,8 +185,8 @@ func TestIssueFieldTextCannotForgeAnotherField(t *testing.T) {
 }
 
 func TestInspectIssueExitsWithPermissionWhenProfileLockIsDenied(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores the file mode that denies the lock")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("file modes do not deny the lock here")
 	}
 	app, registry, stdout, stderr := defaultsCLIApp(t)
 	// The nil store panics into a failing INTERNAL if the lock stops being first.

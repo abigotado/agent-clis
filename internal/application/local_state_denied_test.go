@@ -18,9 +18,7 @@ import (
 )
 
 func TestReadReportsDeniedProfileLockBeforeCredentialAccess(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores the file mode that denies the lock")
-	}
+	skipWithoutEnforcedModes(t)
 	directory := filepath.Join(t.TempDir(), "private-path-sentinel")
 	if err := os.Mkdir(directory, 0o700); err != nil {
 		t.Fatal(err)

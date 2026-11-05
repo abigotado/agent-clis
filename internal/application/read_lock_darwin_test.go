@@ -62,7 +62,7 @@ func requireFrozenLock(t *testing.T, lock string) {
 			t.Error(err)
 		}
 	}()
-	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_SH|unix.LOCK_NB); err != nil {
 		t.Fatalf("stand-in refused flock on a read-only descriptor: %v", err)
 	}
 	if err := unix.Flock(int(file.Fd()), unix.LOCK_UN); err != nil {
@@ -153,4 +153,20 @@ func TestAuthStatusCheckStillNeedsTheWritableLock(t *testing.T) {
 	if fixture.store.loads != 0 {
 		t.Errorf("credential loaded %d times", fixture.store.loads)
 	}
+}
+
+// A snapshot belongs to the write path, whose local state must stay writable.
+func TestOperatorSnapshotStillNeedsTheWritableLock(t *testing.T) {
+	fixture := newOperatorFixture(t)
+	enableCommentDelete(t, fixture)
+	lock := fixture.service.Profiles.Path() + ".profile-work.lock"
+	if err := os.WriteFile(lock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	freezeState(t, filepath.Dir(lock))
+	requireFrozenLock(t, lock)
+
+	_, err := fixture.service.SnapshotOperatorWrite(t.Context(), OperatorSnapshotInput{Profile: "work", Kind: "comment.delete", IssueID: "APP-12", CommentID: "4-1"})
+
+	requireTypedRecovery(t, err, localStateAccessDenied, errx.CodePermission)
 }

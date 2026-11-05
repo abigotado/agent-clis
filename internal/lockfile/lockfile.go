@@ -30,17 +30,18 @@ func (e *TimeoutError) Error() string {
 // With runs fn while holding an exclusive advisory lock beside path, creating
 // the lock file when it is missing.
 func With(path string, fn func() error) error {
-	return withOpened(path, openLockNoFollow, fn)
+	return withOpened(path, openLockNoFollow, false, fn)
 }
 
-// WithExisting takes the same exclusive lock as With through a read-only
+// WithExisting holds a shared lock on the same file through a read-only
 // descriptor. It never creates the lock file, so a caller allowed to read but
-// not to write beside path still excludes every With holder.
+// not to write beside path still excludes every With holder. Shared because
+// NFS emulation of flock grants an exclusive lock only to a writable descriptor.
 func WithExisting(path string, fn func() error) error {
-	return withOpened(path, openExistingLockNoFollow, fn)
+	return withOpened(path, openExistingLockNoFollow, true, fn)
 }
 
-func withOpened(path string, open func(directory, name string) (*os.File, error), fn func() error) (err error) {
+func withOpened(path string, open func(directory, name string) (*os.File, error), shared bool, fn func() error) (err error) {
 	if fn == nil {
 		return errors.New("lockfile: nil callback")
 	}
@@ -54,7 +55,7 @@ func withOpened(path string, open func(directory, name string) (*os.File, error)
 			err = errors.Join(err, fmt.Errorf("close lock %s: %w", lock, closeErr))
 		}
 	}()
-	if err := acquire(file, lock, defaultTimeout); err != nil {
+	if err := acquire(file, lock, shared, defaultTimeout); err != nil {
 		return err
 	}
 	defer func() {
@@ -65,10 +66,10 @@ func withOpened(path string, open func(directory, name string) (*os.File, error)
 	return fn()
 }
 
-func acquire(file *os.File, path string, timeout time.Duration) error {
+func acquire(file *os.File, path string, shared bool, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		acquired, err := tryAdvisoryLock(file)
+		acquired, err := tryAdvisoryLock(file, shared)
 		if err == nil && acquired {
 			return nil
 		}

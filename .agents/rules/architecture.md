@@ -30,8 +30,8 @@ operator-saved role default on supported commands. Defaults live beside the
 user profile registry, never in repository state. Application methods still
 take explicit names; saved selection carries an identity guard through context
 and rechecks it under the client profile lock before credentials. `inspect` reads
-hold that lock through a read-only descriptor and take the writable one only to
-refresh or create it. Reads are bounded. Preparation is
+hold that lock shared through a read-only descriptor and take the writable one
+only when that cannot serve them, as for a refresh. Reads are bounded. Preparation is
 network-free. Native `mutation` requires trusted user presence and remains
 closed until its authority gates pass. Separate `operator-write` binds declared
 operator confirmation to the exact stored plan, not independently verified

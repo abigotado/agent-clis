@@ -174,9 +174,9 @@ Each status maps to a distinct caller recovery action.
 - Treat `403` as permission/scope denial (exit 8), not authentication.
 - Treat `409` as stale state/conflict (exit 9); re-read before another write.
 - Treat `LOCAL_STATE_ACCESS_DENIED` (exit 8) as a local denial, not an account problem:
-  do not re-authenticate. `inspect` reads need only read access to an existing profile lock file,
-  so for them it means that lock file is missing or an OAuth token needs renewal, and the hint names
-  the command to ask the operator to run. Elsewhere ask for access to the CLI's state directory.
+  do not re-authenticate. `inspect` reads hold an existing profile lock file read-only, so for them
+  a denial while that file is missing or an OAuth token needs renewal has a hint naming the command
+  to ask the operator to run. Any other denial asks for access to the CLI's state directory.
   `operator-write apply` and `reconcile` report a denied ledger read as `INTERNAL` (exit 1)
   with a storage failure message instead.
 - Follow `next_cursor` only within the caller's explicit bound.
