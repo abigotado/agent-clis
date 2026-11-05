@@ -27,7 +27,7 @@ func TestDiscoverIssuesPinsCompactFieldsAndBounds(t *testing.T) {
 				if r.URL.Query().Get("query") != test.query || r.URL.Query().Get("$top") != test.top || r.URL.Query().Get("$skip") != test.skip {
 					t.Errorf("query=%s", r.URL.RawQuery)
 				}
-				if got, want := r.URL.Query().Get("fields"), "id,idReadable,summary,project(id,shortName,name,archived),updated"; got != want {
+				if got, want := r.URL.Query().Get("fields"), "id,idReadable,summary,project(id,shortName,name,archived),updated,customFields(name,$type,value(name,login))"; got != want {
 					t.Errorf("fields=%q want %q", got, want)
 				}
 				w.Header().Set("Content-Type", "application/json")
@@ -51,6 +51,8 @@ func TestDiscoverIssuesRejectsMalformedResults(t *testing.T) {
 		{"missing project archived", `[{"id":"2-12","idReadable":"APP-12","summary":"New summary","project":{"id":"0-3","shortName":"APP","name":"Application"},"updated":2}]`},
 		{"null project archived", `[{"id":"2-12","idReadable":"APP-12","summary":"New summary","project":{"id":"0-3","shortName":"APP","name":"Application","archived":null},"updated":2}]`},
 		{"missing updated timestamp", `[{"id":"2-12","idReadable":"APP-12","summary":"New summary","project":{"id":"0-3","shortName":"APP","name":"Application"}}]`},
+		{"nameless custom field", `[{"id":"2-12","idReadable":"APP-12","summary":"S","project":{"id":"0-3","shortName":"APP","name":"Application","archived":false},"updated":2,"customFields":[{"$type":"StateIssueCustomField","value":null}]}]`},
+		{"typeless custom field", `[{"id":"2-12","idReadable":"APP-12","summary":"S","project":{"id":"0-3","shortName":"APP","name":"Application","archived":false},"updated":2,"customFields":[{"name":"Stage","value":null}]}]`},
 		{"negative updated", `[{"id":"2-12","idReadable":"APP-12","summary":"New summary","project":{"id":"0-3","shortName":"APP","name":"Application"},"updated":-1}]`},
 	} {
 		t.Run(test.name, func(t *testing.T) {

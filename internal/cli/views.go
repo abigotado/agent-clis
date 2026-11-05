@@ -220,18 +220,21 @@ type customFieldValue struct {
 }
 
 type issueSearchView struct {
-	Trust      string      `json:"trust"`
-	ID         string      `json:"id"`
-	ReadableID string      `json:"readable_id"`
-	Summary    string      `json:"summary"`
-	Project    projectView `json:"project"`
-	Updated    int64       `json:"updated"`
+	Trust       string              `json:"trust"`
+	ID          string              `json:"id"`
+	ReadableID  string              `json:"readable_id"`
+	Summary     string              `json:"summary"`
+	Project     projectView         `json:"project"`
+	Updated     int64               `json:"updated"`
+	StateFields []issueFieldSummary `json:"state_fields"`
+	UserFields  []issueFieldSummary `json:"user_fields"`
 }
 
 func newIssueSearchView(value application.IssueSearchInfo) issueSearchView {
+	stateFields, userFields := issueFieldSummaries(value.CustomFields)
 	return issueSearchView{
 		Trust: untrustedYouTrackContent, ID: value.ID, ReadableID: value.ReadableID, Summary: value.Summary,
-		Project: newProjectView(value.Project), Updated: value.Updated,
+		Project: newProjectView(value.Project), Updated: value.Updated, StateFields: stateFields, UserFields: userFields,
 	}
 }
 
@@ -246,6 +249,8 @@ func (view issueSearchView) Fields() []output.Field {
 		{Name: "project_name", Value: view.Project.Name, Raw: view.Project.Name, OnRequest: true},
 		{Name: "project_archived", Value: strconv.FormatBool(view.Project.Archived), Raw: view.Project.Archived, OnRequest: true},
 		{Name: "updated", Value: strconv.FormatInt(view.Updated, 10), Raw: view.Updated},
+		{Name: "state_fields", Value: issueFieldsText(view.StateFields), Raw: view.StateFields},
+		{Name: "user_fields", Value: issueFieldsText(view.UserFields), Raw: view.UserFields},
 	}
 }
 
@@ -254,21 +259,28 @@ func newIssueView(value application.IssueInfo) issueView {
 		Trust: untrustedYouTrackContent, ID: value.ID, ReadableID: value.ReadableID, Summary: value.Summary, Description: value.Description,
 		Project: newProjectView(value.Project), Created: value.Created, Updated: value.Updated,
 		CommentsCount: value.CommentsCount, CustomFields: append([]application.IssueCustomFieldInfo(nil), value.CustomFields...),
-		StateFields: []issueFieldSummary{}, UserFields: []issueFieldSummary{},
 	}
-	for _, field := range value.CustomFields {
-		switch field.Type {
-		case "StateIssueCustomField", "StateMachineIssueCustomField":
-			view.StateFields = append(view.StateFields, issueFieldSummary{Name: field.Name, Values: customFieldLabels(field.Value, func(value customFieldValue) string { return value.Name })})
-		case "SingleUserIssueCustomField", "MultiUserIssueCustomField":
-			view.UserFields = append(view.UserFields, issueFieldSummary{Name: field.Name, Values: customFieldLabels(field.Value, func(value customFieldValue) string { return value.Login })})
-		}
-	}
+	view.StateFields, view.UserFields = issueFieldSummaries(value.CustomFields)
 	if value.Reporter != nil {
 		reporter := newUserView(*value.Reporter)
 		view.Reporter = &reporter
 	}
 	return view
+}
+
+// issueFieldSummaries selects state and user fields by their exact YouTrack
+// type, since their names differ per project. Both results are non-nil.
+func issueFieldSummaries(fields []application.IssueCustomFieldInfo) (state, user []issueFieldSummary) {
+	state, user = []issueFieldSummary{}, []issueFieldSummary{}
+	for _, field := range fields {
+		switch field.Type {
+		case "StateIssueCustomField", "StateMachineIssueCustomField":
+			state = append(state, issueFieldSummary{Name: field.Name, Values: customFieldLabels(field.Value, func(value customFieldValue) string { return value.Name })})
+		case "SingleUserIssueCustomField", "MultiUserIssueCustomField":
+			user = append(user, issueFieldSummary{Name: field.Name, Values: customFieldLabels(field.Value, func(value customFieldValue) string { return value.Login })})
+		}
+	}
+	return state, user
 }
 
 // customFieldLabels reads a single or multi-value state or user field. An
