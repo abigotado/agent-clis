@@ -27,13 +27,25 @@ func (e *TimeoutError) Error() string {
 	return fmt.Sprintf("acquire lock %s: timed out after %s", e.Path, e.Timeout)
 }
 
-// With runs fn while holding an exclusive advisory lock beside path.
-func With(path string, fn func() error) (err error) {
+// With runs fn while holding an exclusive advisory lock beside path, creating
+// the lock file when it is missing.
+func With(path string, fn func() error) error {
+	return withOpened(path, openLockNoFollow, fn)
+}
+
+// WithExisting takes the same exclusive lock as With through a read-only
+// descriptor. It never creates the lock file, so a caller allowed to read but
+// not to write beside path still excludes every With holder.
+func WithExisting(path string, fn func() error) error {
+	return withOpened(path, openExistingLockNoFollow, fn)
+}
+
+func withOpened(path string, open func(directory, name string) (*os.File, error), fn func() error) (err error) {
 	if fn == nil {
 		return errors.New("lockfile: nil callback")
 	}
 	lock := path + ".lock"
-	file, err := openLockNoFollow(filepath.Dir(lock), filepath.Base(lock))
+	file, err := open(filepath.Dir(lock), filepath.Base(lock))
 	if err != nil {
 		return fmt.Errorf("open lock %s: %w", lock, err)
 	}

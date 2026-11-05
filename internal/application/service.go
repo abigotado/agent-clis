@@ -33,6 +33,8 @@ import (
 
 const refreshSkew = 30 * time.Second
 
+const localStateAccessDenied = "LOCAL_STATE_ACCESS_DENIED"
+
 const (
 	refreshRepairBindingMismatch   = "inspect and repair local profile/credential binding"
 	refreshRepairInvalidCredential = "inspect local token validation and OAuth client configuration"
@@ -322,7 +324,7 @@ func (s *Service) ClearPolicy(ctx context.Context, name string) error {
 
 // InspectIssue reads one exact issue using a field-minimal fixed REST shape.
 func (s *Service) InspectIssue(ctx context.Context, name, issueID string) (youtrack.Issue, profile.Profile, error) {
-	client, selected, err := s.client(ctx, name)
+	client, selected, err := s.readClient(ctx, name)
 	if err != nil {
 		return youtrack.Issue{}, profile.Profile{}, err
 	}
@@ -339,7 +341,7 @@ func (s *Service) InspectIssues(ctx context.Context, name, query string, top, sk
 	if err := ValidateIssueSearchInput(query, top, skip); err != nil {
 		return nil, false, profile.Profile{}, err
 	}
-	client, selected, err := s.client(ctx, name)
+	client, selected, err := s.readClient(ctx, name)
 	if err != nil {
 		return nil, false, profile.Profile{}, err
 	}
@@ -363,7 +365,7 @@ func (s *Service) InspectComments(ctx context.Context, name, issueID string, top
 	if top < 1 || top > 100 || skip < 0 {
 		return nil, false, profile.Profile{}, errx.Usage("--limit must be 1-100 and --offset must be nonnegative")
 	}
-	client, selected, err := s.client(ctx, name)
+	client, selected, err := s.readClient(ctx, name)
 	if err != nil {
 		return nil, false, profile.Profile{}, err
 	}
@@ -383,7 +385,7 @@ func (s *Service) InspectComments(ctx context.Context, name, issueID string, top
 
 // InspectProject reads one exact project.
 func (s *Service) InspectProject(ctx context.Context, name, projectID string) (youtrack.Project, profile.Profile, error) {
-	client, selected, err := s.client(ctx, name)
+	client, selected, err := s.readClient(ctx, name)
 	if err != nil {
 		return youtrack.Project{}, profile.Profile{}, err
 	}
@@ -397,7 +399,7 @@ func (s *Service) InspectProject(ctx context.Context, name, projectID string) (y
 // InspectSchema reads one bounded page plus one sentinel item so truncation is
 // based on evidence rather than equality with the caller's requested limit.
 func (s *Service) InspectSchema(ctx context.Context, name, projectID string, top, skip int) ([]youtrack.ProjectField, bool, profile.Profile, error) {
-	client, selected, err := s.client(ctx, name)
+	client, selected, err := s.readClient(ctx, name)
 	if err != nil {
 		return nil, false, profile.Profile{}, err
 	}
@@ -595,45 +597,121 @@ func (s *Service) client(ctx context.Context, name string) (*youtrack.Client, pr
 	var selected profile.Profile
 	var client *youtrack.Client
 	err := s.Profiles.WithProfileLock(ctx, name, func() error {
+		var credential auth.Credential
 		var err error
-		selected, err = s.Profiles.Get(ctx, name)
+		selected, credential, err = s.loadBoundCredential(ctx, name)
 		if err != nil {
-			return checkSelectionLookupError(ctx, name, err)
-		}
-		if err := s.checkSelectionGuard(ctx, selected); err != nil {
-			return err
-		}
-		credential, err := s.Credentials.Load(ctx, name)
-		if err != nil {
-			return err
-		}
-		if err := auth.ValidateCredentialBinding(credential, selected); err != nil {
 			return err
 		}
 		credential, err = s.refreshIfNeeded(ctx, selected, credential)
 		if err != nil {
 			return err
 		}
-		token, err := credential.BearerToken(s.currentTime())
+		client, err = s.newClient(selected, credential)
+		return err
+	})
+	return client, selected, mapLocalDenial(err)
+}
+
+// readClient holds the profile lock through a read-only descriptor, so a caller
+// allowed to read but not write the state directory still excludes credential
+// transactions. Whatever must change local state goes through client, whose
+// writable lock serializes refresh and which reloads the credential under it.
+func (s *Service) readClient(ctx context.Context, name string) (*youtrack.Client, profile.Profile, error) {
+	if s == nil || s.Profiles == nil || s.Credentials == nil {
+		return nil, profile.Profile{}, errx.Internal("profile or credential store is unavailable")
+	}
+	var selected profile.Profile
+	var client *youtrack.Client
+	entered, refresh := false, false
+	err := s.Profiles.WithExistingProfileLock(ctx, name, func() error {
+		entered = true
+		var credential auth.Credential
+		var err error
+		selected, credential, err = s.loadBoundCredential(ctx, name)
 		if err != nil {
 			return err
 		}
-		client, err = youtrack.New(youtrack.Config{RESTBaseURL: selected.RESTBaseURL}, youtrack.Credential{Token: token}, youtrack.WithHTTPClient(&http.Client{Transport: s.HTTP}), youtrack.WithLogger(s.Logger))
+		if refresh = s.refreshDue(credential); refresh {
+			return nil
+		}
+		client, err = s.newClient(selected, credential)
 		return err
 	})
-	// Mapped here rather than in TranslateError, where a denial can follow a
-	// committed change. Refresh is the one step here that changes state, and its
-	// failures are typed without their cause; a typed error keeps its recovery.
+	switch {
+	case err == nil && refresh:
+		return s.clientWithRenewalHint(ctx, name)
+	case entered || profile.IsLockTimeout(err):
+		return client, selected, mapLocalDenial(err)
+	}
+	// The lock was not entered, which says nothing yet about the profile. An
+	// answer the registry can give keeps its own recovery in a sandbox too.
+	_, lookupErr := s.GetProfile(ctx, name)
 	var typed *errx.Error
-	if !errors.As(err, &typed) && errors.Is(err, fs.ErrPermission) {
-		return nil, profile.Profile{}, errx.Permission("LOCAL_STATE_ACCESS_DENIED", "the operating system denied access to local youtrack-agent-cli state").
-			WithHint("stop and ask the operator to allow access to the youtrack-agent-cli directory under the user config directory, including writing its lock files; do not change a sandbox policy yourself")
+	switch {
+	case errors.Is(lookupErr, profile.ErrNotFound), errors.As(lookupErr, &typed):
+		return nil, profile.Profile{}, lookupErr
+	case lookupErr == nil && errors.Is(err, fs.ErrNotExist):
+		return s.clientWithRenewalHint(ctx, name)
+	default:
+		return s.client(ctx, name)
+	}
+}
+
+// clientWithRenewalHint covers the two read cases that need the writable lock
+// once: a due refresh and a lock file not created yet. The same command fixes
+// both from outside a sandbox.
+func (s *Service) clientWithRenewalHint(ctx context.Context, name string) (*youtrack.Client, profile.Profile, error) {
+	client, selected, err := s.client(ctx, name)
+	var typed *errx.Error
+	if errors.As(err, &typed) && typed.Reason == localStateAccessDenied {
+		return nil, profile.Profile{}, typed.WithHint("ask the operator to run youtrack-agent-cli auth status --profile %s --check outside the sandbox, then retry; do not change a sandbox policy yourself", name)
 	}
 	return client, selected, err
 }
 
+func (s *Service) loadBoundCredential(ctx context.Context, name string) (profile.Profile, auth.Credential, error) {
+	selected, err := s.GetProfile(ctx, name)
+	if err != nil {
+		return profile.Profile{}, auth.Credential{}, err
+	}
+	credential, err := s.Credentials.Load(ctx, name)
+	if err != nil {
+		return profile.Profile{}, auth.Credential{}, err
+	}
+	if err := auth.ValidateCredentialBinding(credential, selected); err != nil {
+		return profile.Profile{}, auth.Credential{}, err
+	}
+	return selected, credential, nil
+}
+
+func (s *Service) newClient(selected profile.Profile, credential auth.Credential) (*youtrack.Client, error) {
+	token, err := credential.BearerToken(s.currentTime())
+	if err != nil {
+		return nil, err
+	}
+	return youtrack.New(youtrack.Config{RESTBaseURL: selected.RESTBaseURL}, youtrack.Credential{Token: token}, youtrack.WithHTTPClient(&http.Client{Transport: s.HTTP}), youtrack.WithLogger(s.Logger))
+}
+
+// mapLocalDenial is applied here rather than in TranslateError, where a denial
+// can follow a committed change. Refresh is the one step under the profile lock
+// that changes state, and its failures are typed without their cause; a typed
+// error keeps its recovery.
+func mapLocalDenial(err error) error {
+	var typed *errx.Error
+	if !errors.As(err, &typed) && errors.Is(err, fs.ErrPermission) {
+		return errx.Permission(localStateAccessDenied, "the operating system denied access to local youtrack-agent-cli state").
+			WithHint("stop and ask the operator to allow access to the youtrack-agent-cli directory under the user config directory, including writing its lock files; do not change a sandbox policy yourself")
+	}
+	return err
+}
+
+func (s *Service) refreshDue(credential auth.Credential) bool {
+	return credential.Kind == auth.CredentialOAuth && !s.currentTime().Add(refreshSkew).Before(credential.AccessTokenExpiresAt)
+}
+
 func (s *Service) refreshIfNeeded(ctx context.Context, selected profile.Profile, credential auth.Credential) (auth.Credential, error) {
-	if credential.Kind != auth.CredentialOAuth || s.currentTime().Add(refreshSkew).Before(credential.AccessTokenExpiresAt) {
+	if !s.refreshDue(credential) {
 		return credential, nil
 	}
 	client, err := oauth.NewClient(oauthConfig(selected), s.HTTP)

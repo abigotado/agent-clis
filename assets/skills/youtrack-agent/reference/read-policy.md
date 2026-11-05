@@ -44,9 +44,12 @@ could not be read; `--fields custom_fields` returns every field with the value
 properties the CLI fetches.
 
 `LOCAL_STATE_ACCESS_DENIED` (exit 8) means the operating system or an agent sandbox
-denied the local access a read needs, usually writing its profile lock file. It says
-nothing about the YouTrack account: stop and ask the operator for access to the
-CLI's state directory rather than re-authenticating or changing a sandbox policy.
+denied the local access a read needs. It says nothing about the YouTrack account.
+`inspect` reads need only read access to an existing profile lock file, so they work
+in a sandbox that cannot write the CLI's state directory until an OAuth token needs
+renewal or the lock file is missing. Follow the hint: ask the operator to run the
+named command outside the sandbox, then retry. Do not re-authenticate or change a
+sandbox policy.
 
 If the standard CLI profile is missing or the verified identity differs, stop
 before issuing the requested read. Do not probe another instance. In a portable

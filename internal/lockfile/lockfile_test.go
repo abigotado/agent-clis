@@ -156,3 +156,41 @@ func TestWithRejectsNilCallback(t *testing.T) {
 		t.Error("nil callback was accepted")
 	}
 }
+
+func TestWithExistingRunsWithoutCreatingAndExcludesWith(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.json")
+	lock := path + ".lock"
+	err := WithExisting(path, func() error {
+		t.Error("callback ran without a lock file")
+		return nil
+	})
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing lock: %v", err)
+	}
+	if _, err := os.Lstat(lock); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("WithExisting created the lock: %v", err)
+	}
+	if err := With(path, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+
+	var timedOut *TimeoutError
+	err = With(path, func() error {
+		return WithExisting(path, func() error {
+			t.Error("WithExisting entered while With held the lock")
+			return nil
+		})
+	})
+	if !errors.As(err, &timedOut) {
+		t.Errorf("WithExisting inside With: %v", err)
+	}
+	err = WithExisting(path, func() error {
+		return With(path, func() error {
+			t.Error("With entered while WithExisting held the lock")
+			return nil
+		})
+	})
+	if !errors.As(err, &timedOut) {
+		t.Errorf("With inside WithExisting: %v", err)
+	}
+}

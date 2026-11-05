@@ -9,7 +9,14 @@ import (
 )
 
 func openLockNoFollow(directory, name string) (*os.File, error) {
-	path := filepath.Join(directory, name)
+	return openVerifiedLock(filepath.Join(directory, name), os.O_CREATE|os.O_RDWR, 0o600)
+}
+
+func openExistingLockNoFollow(directory, name string) (*os.File, error) {
+	return openVerifiedLock(filepath.Join(directory, name), os.O_RDONLY, 0)
+}
+
+func openVerifiedLock(path string, flags int, mode os.FileMode) (*os.File, error) {
 	before, statErr := os.Lstat(path)
 	if statErr == nil && before.Mode()&os.ModeSymlink != 0 {
 		return nil, errors.New("lock path is a symlink")
@@ -17,7 +24,7 @@ func openLockNoFollow(directory, name string) (*os.File, error) {
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		return nil, statErr
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := os.OpenFile(path, flags, mode)
 	if err != nil {
 		return nil, err
 	}
