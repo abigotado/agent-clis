@@ -87,8 +87,8 @@ It should not trigger for:
 
 These rules are normative:
 
-1. **Explicit profile:** Every remote operation names one profile. When missing and more than one profile is possible, stop before network access and request selection.
-2. **Identity display:** Report profile, normalized instance, and expected/current account with every result set and mutation plan.
+1. **Explicit profile:** Every CLI remote operation names one profile. When missing and more than one profile is possible, stop before network access and request selection.
+2. **Identity display:** Report profile, normalized instance, and expected/current account with every result set and mutation plan. A connector call reports its instance and account instead of a profile.
 3. **Read boundaries:** Prefer MCP reads using the six baseline tools. A connection that also exposes mutation tools is no reason to refuse reads through it; the portable and macOS identity editions still pin the six-tool allowlist. The skill does not claim to block hidden direct protocol calls; that is an installer/runtime/permission boundary. When MCP comments are unavailable, only the standard CLI's bounded exact-comments fallback is permitted; the portable and macOS identity editions remain MCP-only.
 4. **Bounded discovery:** Default issue search limit 10 and hard maximum 50. Never auto-fetch all pages.
 5. **Exact read:** Once an issue ID is known, use `get_issue`; do not rediscover it through a broad search.

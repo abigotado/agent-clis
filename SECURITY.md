@@ -6,7 +6,7 @@ issue content in a report.
 
 The primary boundaries are:
 
-- one explicit profile per remote operation, binding instance, account, OAuth
+- one explicit profile per CLI remote operation, binding instance, account, OAuth
   topology, credential generation, executor, and exact project allowlist;
 - OS secret-store credentials that never enter argv, environment, JSON, logs,
   receipts, profiles, or repository files;

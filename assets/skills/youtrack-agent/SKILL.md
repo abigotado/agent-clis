@@ -69,4 +69,4 @@ mutation or run one operation through both the CLI and MCP. See the write policy
 for capability and release checks.
 
 An MCP call acts as the connector's own account: report its instance and
-account, and never infer them from a CLI profile.
+account before any write, and never infer them from a CLI profile.
