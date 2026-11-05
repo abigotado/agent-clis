@@ -181,8 +181,8 @@ Returned pages establish neither currentness, complete history, nor
 reconciliation evidence. Portable and macOS identity editions remain
 Remote-MCP-only.
 
-The standard CLI does not manage issue links or tags. Their advertised MCP
-mutation tools remain outside this CLI's guarded write path.
+The standard CLI does not manage issue links or tags. The MCP connector's tools
+for them are outside this CLI's guarded write path and may be used instead.
 
 ## Operator-confirmed writes
 
@@ -225,8 +225,8 @@ and network-free `mutation prepare` surfaces. It does **not** unlock the separat
 native-presence lane: `mutation confirm`, `mutation apply`, and
 `mutation reconcile` fail closed until Gate 1A and Gate 1B have passed and a
 separately authorized write-capable channel is released. This applies equally
-to source builds and the Formula; no agent may bypass it through MCP or raw
-REST.
+to source builds and the Formula; no agent may bypass it through raw REST. The
+lane limits only the CLI, not MCP tools.
 
 The signed identity-only Cask and the Gate 1A write-capable Cask remain
 separate proposed future channels. They have different trust requirements from

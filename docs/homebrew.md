@@ -122,7 +122,7 @@ The Formula does not activate native-presence YouTrack writes. `mutation prepare
 remains a network-free local planning operation, while `mutation confirm`,
 `mutation apply`, and `mutation reconcile` fail closed until Gate 1A and Gate
 1B have passed and a separately authorized write-capable release exists. Do
-not use raw REST or MCP mutation tools as a workaround.
+not use raw REST as a workaround; the lane does not limit MCP tools.
 
 Formula support therefore does not claim a signed native approval helper,
 confirmation receipt, or mutation authority. The existing dependency manifest
