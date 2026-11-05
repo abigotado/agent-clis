@@ -175,8 +175,8 @@ Each status maps to a distinct caller recovery action.
 - Treat `409` as stale state/conflict (exit 9); re-read before another write.
 - Treat `LOCAL_STATE_ACCESS_DENIED` (exit 8) as a local denial, not an account problem:
   ask the operator for access to the CLI's state directory and do not re-authenticate.
-  `operator-write apply` and `reconcile` report a denied ledger as `INTERNAL` (exit 1) with a
-  storage failure message instead; that denial does not consume the plan.
+  `operator-write apply` and `reconcile` report a denied ledger read as `INTERNAL` (exit 1)
+  with a storage failure message instead.
 - Follow `next_cursor` only within the caller's explicit bound.
 - A compiled Go runtime can exit 2 after an unrecovered panic. The process entry
   must recover ordinary panics and report exit 1 so they are not mistaken for
