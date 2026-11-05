@@ -27,7 +27,7 @@ func TestDiscoverIssuesPinsCompactFieldsAndBounds(t *testing.T) {
 				if r.URL.Query().Get("query") != test.query || r.URL.Query().Get("$top") != test.top || r.URL.Query().Get("$skip") != test.skip {
 					t.Errorf("query=%s", r.URL.RawQuery)
 				}
-				if got, want := r.URL.Query().Get("fields"), "id,idReadable,summary,project(id,shortName,name,archived),updated"; got != want {
+				if got, want := r.URL.Query().Get("fields"), "id,idReadable,summary,project(id,shortName,name,archived),updated,customFields(name,$type,value(name,login))"; got != want {
 					t.Errorf("fields=%q want %q", got, want)
 				}
 				w.Header().Set("Content-Type", "application/json")
@@ -50,8 +50,8 @@ func TestDiscoverIssuesRejectsMalformedResults(t *testing.T) {
 		{"missing project name", `[{"id":"2-12","idReadable":"APP-12","summary":"New summary","project":{"id":"0-3","shortName":"APP"},"updated":2}]`},
 		{"missing project archived", `[{"id":"2-12","idReadable":"APP-12","summary":"New summary","project":{"id":"0-3","shortName":"APP","name":"Application"},"updated":2}]`},
 		{"null project archived", `[{"id":"2-12","idReadable":"APP-12","summary":"New summary","project":{"id":"0-3","shortName":"APP","name":"Application","archived":null},"updated":2}]`},
-		{"missing updated timestamp", `[{"id":"2-12","idReadable":"APP-12","summary":"New summary","project":{"id":"0-3","shortName":"APP","name":"Application"}}]`},
-		{"negative updated", `[{"id":"2-12","idReadable":"APP-12","summary":"New summary","project":{"id":"0-3","shortName":"APP","name":"Application"},"updated":-1}]`},
+		{"missing updated timestamp", `[{"id":"2-12","idReadable":"APP-12","summary":"New summary","project":{"id":"0-3","shortName":"APP","name":"Application","archived":false}}]`},
+		{"negative updated", `[{"id":"2-12","idReadable":"APP-12","summary":"New summary","project":{"id":"0-3","shortName":"APP","name":"Application","archived":false},"updated":-1}]`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -65,5 +65,47 @@ func TestDiscoverIssuesRejectsMalformedResults(t *testing.T) {
 				t.Fatalf("error=%v", err)
 			}
 		})
+	}
+}
+
+func TestDiscoverIssuesKeepsOnlyRequestedCustomFieldProperties(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"id":"2-12","idReadable":"APP-12","summary":"S","project":{"id":"0-3","shortName":"APP","name":"Application","archived":false},"updated":2,
+			"customFields":[{"id":"c-1","name":"Stage","$type":"StateIssueCustomField","projectCustomField":{"id":"p-1","field":{"id":"f-1"}},"value":{"name":"Open"}}]}]`)
+	}))
+	defer server.Close()
+
+	values, err := newTestClient(t, server).DiscoverIssues(context.Background(), "project: APP", PageOptions{Top: 1})
+
+	if err != nil || len(values) != 1 || len(values[0].CustomFields) != 1 {
+		t.Fatalf("values=%#v error=%v", values, err)
+	}
+	field := values[0].CustomFields[0]
+	if field.ID != "" || field.ProjectCustomField != nil || field.Name != "Stage" || field.Type != "StateIssueCustomField" || string(field.Value) != `{"name":"Open"}` {
+		t.Fatalf("field=%#v", field)
+	}
+}
+
+func TestDiscoverIssuesToleratesOddCustomFields(t *testing.T) {
+	huge := strings.Repeat("x", maxCustomFieldValueSize)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"id":"2-12","idReadable":"APP-12","summary":"S","project":{"id":"0-3","shortName":"APP","name":"Application","archived":false},"updated":2,
+			"customFields":[{"$type":"StateIssueCustomField","value":{"name":"Open"}},{"name":"NoType","value":null},
+				{"name":"Notes","$type":"SimpleIssueCustomField","value":"`+huge+`"},{"name":"Stage","$type":"StateIssueCustomField","value":{"name":"Open"}}]}]`)
+	}))
+	defer server.Close()
+
+	values, err := newTestClient(t, server).DiscoverIssues(context.Background(), "project: APP", PageOptions{Top: 1})
+
+	if err != nil || len(values) != 1 || len(values[0].CustomFields) != 2 {
+		t.Fatalf("values=%#v error=%v", values, err)
+	}
+	if notes := values[0].CustomFields[0]; notes.Name != "Notes" || notes.Value != nil {
+		t.Errorf("oversized value was kept: name=%q len=%d", notes.Name, len(notes.Value))
+	}
+	if stage := values[0].CustomFields[1]; stage.Name != "Stage" || string(stage.Value) != `{"name":"Open"}` {
+		t.Errorf("stage=%#v", stage)
 	}
 }

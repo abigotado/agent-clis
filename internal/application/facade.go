@@ -106,11 +106,12 @@ type IssueInfo struct {
 // IssueSearchInfo is the compact issue projection returned for discovery.
 // Detailed issue fields require an exact inspect issue read.
 type IssueSearchInfo struct {
-	ID         string      `json:"id"`
-	ReadableID string      `json:"readable_id"`
-	Summary    string      `json:"summary"`
-	Project    ProjectInfo `json:"project"`
-	Updated    int64       `json:"updated"`
+	ID           string                 `json:"id"`
+	ReadableID   string                 `json:"readable_id"`
+	Summary      string                 `json:"summary"`
+	Project      ProjectInfo            `json:"project"`
+	Updated      int64                  `json:"updated"`
+	CustomFields []IssueCustomFieldInfo `json:"custom_fields,omitempty"`
 }
 
 type IdentityInfo struct {
@@ -668,15 +669,23 @@ func issueInfo(value youtrack.Issue) IssueInfo {
 		reporter := userInfo(*value.Reporter)
 		result.Reporter = &reporter
 	}
-	result.CustomFields = make([]IssueCustomFieldInfo, len(value.CustomFields))
-	for index, field := range value.CustomFields {
-		result.CustomFields[index] = IssueCustomFieldInfo{ID: field.ID, Name: field.Name, Type: field.Type, Value: append(json.RawMessage(nil), field.Value...)}
+	result.CustomFields = customFieldInfos(value.CustomFields)
+	return result
+}
+
+func customFieldInfos(fields []youtrack.IssueCustomField) []IssueCustomFieldInfo {
+	result := make([]IssueCustomFieldInfo, len(fields))
+	for index, field := range fields {
+		result[index] = IssueCustomFieldInfo{ID: field.ID, Name: field.Name, Type: field.Type, Value: append(json.RawMessage(nil), field.Value...)}
 	}
 	return result
 }
 
 func issueSearchInfo(value youtrack.IssueSummary) IssueSearchInfo {
-	return IssueSearchInfo{ID: value.ID, ReadableID: value.IDReadable, Summary: value.Summary, Project: projectInfo(value.Project), Updated: value.Updated}
+	return IssueSearchInfo{
+		ID: value.ID, ReadableID: value.IDReadable, Summary: value.Summary, Project: projectInfo(value.Project), Updated: value.Updated,
+		CustomFields: customFieldInfos(value.CustomFields),
+	}
 }
 
 func commentInfo(value youtrack.Comment) CommentInfo {

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/abigotado/youtrack-agent-cli/internal/errx"
@@ -141,6 +142,145 @@ func TestInspectIssuesRendersCompactTrustAndProjection(t *testing.T) {
 			}
 			if len(rows[0]) != 3 || rows[0]["id"] != "2-12" || rows[0]["project_name"] != "Application" {
 				t.Fatalf("projected rows=%#v", rows)
+			}
+		})
+	}
+}
+
+func TestInspectIssuesReportsStageAndAssigneeFromTheServerResponse(t *testing.T) {
+	var requestedFields string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/users/me" {
+			_, _ = io.WriteString(w, `{"id":"1-2","login":"alice"}`)
+			return
+		}
+		requestedFields = r.URL.Query().Get("fields")
+		_, _ = io.WriteString(w, `[
+			{"id":"2-1","idReadable":"APP-1","summary":"S","project":{"id":"0-1","shortName":"APP","name":"App","archived":false},"updated":2,
+			 "customFields":[
+				{"name":"Stage","$type":"StateIssueCustomField","value":{"name":"In Progress","$type":"StateBundleElement"}},
+				{"name":"Assignee","$type":"SingleUserIssueCustomField","value":{"login":"alice","name":"Alice","$type":"User"}},
+				{"name":"Priority","$type":"SingleEnumIssueCustomField","value":{"name":"Normal","$type":"EnumBundleElement"}}]},
+			{"id":"2-2","idReadable":"APP-2","summary":"T","project":{"id":"0-1","shortName":"APP","name":"App","archived":false},"updated":3,
+			 "customFields":[
+				{"name":"State","$type":"StateMachineIssueCustomField","value":{"name":"Open","$type":"StateMachineEventElement"}},
+				{"name":"Reviewers","$type":"MultiUserIssueCustomField","value":[{"login":"bob","$type":"User"},{"login":"carol","$type":"User"}]},
+				{"name":"Owner","$type":"SingleUserIssueCustomField","value":null}]},
+			{"id":"2-3","idReadable":"APP-3","summary":"U","project":{"id":"0-1","shortName":"APP","name":"App","archived":false},"updated":4}]`)
+	}))
+	defer server.Close()
+	app, _, _, _, stdout, stderr := testApp(t)
+	service, _ := commentsTestService(t, server)
+	app.service = service
+
+	code := runApp(app, "inspect", "issues", "--profile", "work", "--query", "project: APP", "-o", "json")
+
+	if code != errx.CodeOK {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	// Scoped because these property names also occur elsewhere in the query.
+	_, customFields, _ := strings.Cut(requestedFields, "customFields(")
+	fieldProperties, valueProperties, _ := strings.Cut(customFields, "value(")
+	valueProperties, _, _ = strings.Cut(valueProperties, ")")
+	if !strings.Contains(fieldProperties, "$type") || !strings.Contains(fieldProperties, "name") {
+		t.Errorf("custom field properties %q omit $type or name", fieldProperties)
+	}
+	for _, property := range strings.Fields("login name") {
+		if !strings.Contains(valueProperties, property) {
+			t.Errorf("custom field value properties %q omit %q", valueProperties, property)
+		}
+	}
+	encoded, err := json.Marshal(decode(t, stdout)["data"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &rows); err != nil || len(rows) != 3 {
+		t.Fatalf("rows=%s error=%v", encoded, err)
+	}
+	for index, want := range []map[string]string{
+		{"state_fields": `[{"name":"Stage","values":["In Progress"]}]`, "user_fields": `[{"name":"Assignee","values":["alice"]}]`},
+		{"state_fields": `[{"name":"State","values":["Open"]}]`, "user_fields": `[{"name":"Reviewers","values":["bob","carol"]},{"name":"Owner","values":[]}]`},
+		{"state_fields": `[]`, "user_fields": `[]`},
+	} {
+		for field, value := range want {
+			if got := string(rows[index][field]); got != value {
+				t.Errorf("row %d %s=%s, want %s", index, field, got, value)
+			}
+		}
+		if _, ok := rows[index]["custom_fields"]; ok {
+			t.Errorf("row %d leaks custom_fields: %s", index, encoded)
+		}
+	}
+}
+
+func TestInspectIssuesTextShowsQuotedStageAndAssignee(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/users/me" {
+			_, _ = io.WriteString(w, `{"id":"1-2","login":"alice"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `[{"id":"2-1","idReadable":"APP-1","summary":"S","project":{"id":"0-1","shortName":"APP","name":"App","archived":false},"updated":2,
+			"customFields":[{"name":"Stage","$type":"StateIssueCustomField","value":{"name":"A\"; user_fields=\"x","$type":"StateBundleElement"}},
+				{"name":"Assignee","$type":"SingleUserIssueCustomField","value":{"login":"alice","$type":"User"}}]}]`)
+	}))
+	defer server.Close()
+	app, _, _, _, stdout, stderr := testApp(t)
+	app.service, _ = commentsTestService(t, server)
+
+	code := runApp(app, "inspect", "issues", "--profile", "work", "--query", "project: APP", "-o", "text")
+
+	if code != errx.CodeOK {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	for _, want := range []string{`"Stage"="A\"; user_fields=\"x"`, `"Assignee"="alice"`} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("text output %q omits %s", stdout.String(), want)
+		}
+	}
+}
+
+func TestInspectIssuesSelectsAndRendersStageAndAssigneeFields(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		want []string
+		not  []string
+	}{
+		{"selected alone", []string{"-o", "json", "--fields", "state_fields,user_fields"}, []string{`"state_fields":[{"name":"Stage","values":["Open"]}]`, `"user_fields":[{"name":"Assignee","values":["alice"]}]`}, []string{"summary", "custom_fields"}},
+		{"raw carries them", []string{"-o", "raw"}, []string{`"state_fields":[{"name":"Stage","values":["Open"]}]`}, []string{`"ok"`, "custom_fields"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/users/me" {
+					_, _ = io.WriteString(w, `{"id":"1-2","login":"alice"}`)
+					return
+				}
+				_, _ = io.WriteString(w, `[{"id":"2-1","idReadable":"APP-1","summary":"S","project":{"id":"0-1","shortName":"APP","name":"App","archived":false},"updated":2,
+					"customFields":[{"name":"Stage","$type":"StateIssueCustomField","value":{"name":"Open"}},
+						{"name":"Assignee","$type":"SingleUserIssueCustomField","value":{"login":"alice","name":"Alice"}}]}]`)
+			}))
+			defer server.Close()
+			app, _, _, _, stdout, stderr := testApp(t)
+			app.service, _ = commentsTestService(t, server)
+
+			code := runApp(app, append([]string{"inspect", "issues", "--profile", "work", "--query", "project: APP"}, test.args...)...)
+
+			if code != errx.CodeOK {
+				t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout, stderr)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(stdout.String(), want) {
+					t.Errorf("output omits %q: %s", want, stdout)
+				}
+			}
+			for _, unwanted := range test.not {
+				if strings.Contains(stdout.String(), unwanted) {
+					t.Errorf("output contains %q: %s", unwanted, stdout)
+				}
 			}
 		})
 	}

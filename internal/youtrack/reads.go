@@ -16,7 +16,7 @@ const (
 	currentUserFields   = "id,login,name,fullName,email"
 	projectFields       = "id,shortName,name,archived"
 	issueFields         = "id,idReadable,summary,description,project(id,shortName,name,archived),reporter(id,login,name,fullName),created,updated,commentsCount,customFields(id,name,$type,projectCustomField(id,field(id)),value(id,name,login,fullName,text,presentation,isResolved,$type))"
-	issueSummaryFields  = "id,idReadable,summary,project(id,shortName,name,archived),updated"
+	issueSummaryFields  = "id,idReadable,summary,project(id,shortName,name,archived),updated,customFields(name,$type,value(name,login))"
 	projectFieldFields  = "id,$type,field(id,name,fieldType(id,valueType,isMultiValue,$type)),canBeEmpty,isPublic,bundle(id,$type,values(id,name,localizedName,archived,$type),aggregatedUsers(id,login,name,fullName))"
 	commentFields       = "id,author(id,login,name,fullName),created,updated,deleted,text,visibility($type,permittedGroups(id,name),permittedUsers(id,name,login))"
 	commentDeleteFields = "id,issue(id),author(id,login),created,updated,deleted,pinned,text,visibility($type,permittedGroups(id,name),permittedUsers(id,name,login)),attachments(id)"
@@ -43,6 +43,9 @@ type issueSummaryResponse struct {
 	Summary    string                      `json:"summary"`
 	Project    issueSummaryProjectResponse `json:"project"`
 	Updated    *int64                      `json:"updated"`
+	// CustomFields holds what the query requests: name, type and the name and
+	// login of the value. The summary keeps only those, never a field identity.
+	CustomFields []IssueCustomField `json:"customFields"`
 }
 
 type issueSummaryProjectResponse struct {
@@ -343,10 +346,29 @@ func (client *Client) DiscoverIssues(ctx context.Context, queryText string, opti
 		issues[index] = IssueSummary{
 			ID: response.ID, IDReadable: response.IDReadable, Summary: response.Summary,
 			Project: Project{ID: response.Project.ID, ShortName: response.Project.ShortName, Name: response.Project.Name, Archived: *response.Project.Archived},
-			Updated: *response.Updated,
+			Updated: *response.Updated, CustomFields: summaryCustomFields(response.CustomFields),
 		}
 	}
 	return issues, nil
+}
+
+// summaryCustomFields keeps only what the compact query asked for, so a server
+// that returns field identities cannot widen the discovery shape. One odd field
+// must not fail a whole search page: an unclassifiable field is dropped and an
+// oversized value is withheld, which the summary reports as unreadable.
+func summaryCustomFields(fields []IssueCustomField) []IssueCustomField {
+	result := make([]IssueCustomField, 0, len(fields))
+	for _, field := range fields {
+		if field.Name == "" || field.Type == "" {
+			continue
+		}
+		value := field.Value
+		if len(value) > maxCustomFieldValueSize {
+			value = nil
+		}
+		result = append(result, IssueCustomField{Name: field.Name, Type: field.Type, Value: value})
+	}
+	return result
 }
 
 func fieldsQuery(fields string) url.Values {
