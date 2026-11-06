@@ -1,5 +1,12 @@
 # youtrack-agent-cli
 
+> **Moving.** `v0.9.1` is the last release under the module path
+> `github.com/abigotado/youtrack-agent-cli`. This repository is becoming the
+> `abigotado/agent-clis` monorepo. Later releases use the module path
+> `github.com/abigotado/agent-clis/youtrack-agent-cli` and the tags
+> `youtrack-agent-cli/vX.Y.Z`. Until that move lands, install with the
+> Homebrew Formula below.
+
 Agent-first JetBrains YouTrack integration with two deliberately separate
 distribution channels:
 
