@@ -18,7 +18,9 @@ Write it in the imperative: "Stop auth list reading the keychain".
 
 <!-- Check only what you actually ran. -->
 
-- [ ] `gofmt -l .` prints nothing
+<!-- Go commands run inside each changed module, with GOWORK=off. -->
+
+- [ ] `gofmt -l $(git ls-files '*.go')` prints nothing
 - [ ] `go vet ./...`
 - [ ] `go test -race ./...`
 - [ ] `go generate ./...` ran and the result is committed — or this change touches

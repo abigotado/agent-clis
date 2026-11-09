@@ -1,11 +1,10 @@
 # youtrack-agent-cli
 
-> **Moving.** `v0.9.1` is the last release under the module path
-> `github.com/abigotado/youtrack-agent-cli`. This repository is becoming the
-> `abigotado/agent-clis` monorepo. Later releases use the module path
-> `github.com/abigotado/agent-clis/youtrack-agent-cli` and the tags
-> `youtrack-agent-cli/vX.Y.Z`. Until that move lands, install with the
-> Homebrew Formula below.
+> **Moved.** This CLI lives in the `abigotado/agent-clis` monorepo. Its module
+> path is `github.com/abigotado/agent-clis/youtrack-agent-cli` and its releases
+> use the tags `youtrack-agent-cli/vX.Y.Z`. The old path
+> `github.com/abigotado/youtrack-agent-cli` stays frozen at `v0.9.1`. Install
+> with the Homebrew Formula below.
 
 Agent-first JetBrains YouTrack integration with two deliberately separate
 distribution channels:
@@ -262,14 +261,22 @@ symlink-safe, idempotent, and never configures MCP, OAuth, or credentials.
 
 ## Development
 
+In this directory:
+
 ```bash
-gofmt -l .
+export GOWORK=off
+gofmt -l $(git ls-files '*.go')
 go vet ./...
 go test -race ./...
 swift test --package-path native/macos/ApprovalProtocol
+```
+
+At the repository root:
+
+```bash
 python3 ~/.agents/compiler.py --source .agents --root . --scope project --check
 python3 .agents/scripts/sync-rules.py --check
 python3 -m unittest discover -s .agents/tests -p 'test_*.py'
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](../CONTRIBUTING.md) and [SECURITY.md](../SECURITY.md).

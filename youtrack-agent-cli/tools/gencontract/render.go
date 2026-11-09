@@ -75,7 +75,7 @@ func renderMarkdown(contract errx.Contract) string {
 	output.WriteString("agents must not add `--yes` automatically. A durable cross-process refresh fence\n")
 	output.WriteString("is deferred. OAuth token errors do not publish `error.retry_after`;\n")
 	output.WriteString("for endpoint unavailability, use caller-bounded backoff and a fresh login.\n")
-	output.WriteString("See the [detailed OAuth recovery guide](https://github.com/abigotado/youtrack-agent-cli/blob/main/docs/oauth-errors.md).\n\n")
+	output.WriteString("See the [detailed OAuth recovery guide](https://github.com/abigotado/agent-clis/blob/main/youtrack-agent-cli/docs/oauth-errors.md).\n\n")
 	output.WriteString("## JSON response recovery\n\n")
 	output.WriteString("Apply this grammar in order:\n\n")
 	output.WriteString("1. A v1 envelope is exactly one complete top-level JSON object followed only by\n")

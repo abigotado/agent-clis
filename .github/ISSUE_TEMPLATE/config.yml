@@ -4,8 +4,8 @@ blank_issues_enabled: false
 
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/abigotado/youtrack-agent-cli/security/advisories/new
+    url: https://github.com/abigotado/agent-clis/security/advisories/new
     about: Report privately. This binary holds live YouTrack credentials — never in a public issue.
   - name: Command and contract reference
-    url: https://github.com/abigotado/youtrack-agent-cli/blob/main/docs/commands.md
+    url: https://github.com/abigotado/agent-clis/blob/main/youtrack-agent-cli/docs/commands.md
     about: Every command, flag, exit code, and envelope field, generated from the binary.

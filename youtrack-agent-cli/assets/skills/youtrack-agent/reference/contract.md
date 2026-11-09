@@ -73,7 +73,7 @@ replacement if the old credential remains (`auth login --profile NAME --yes`);
 agents must not add `--yes` automatically. A durable cross-process refresh fence
 is deferred. OAuth token errors do not publish `error.retry_after`;
 for endpoint unavailability, use caller-bounded backoff and a fresh login.
-See the [detailed OAuth recovery guide](https://github.com/abigotado/youtrack-agent-cli/blob/main/docs/oauth-errors.md).
+See the [detailed OAuth recovery guide](https://github.com/abigotado/agent-clis/blob/main/youtrack-agent-cli/docs/oauth-errors.md).
 
 ## JSON response recovery
 

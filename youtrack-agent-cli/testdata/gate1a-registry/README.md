@@ -254,7 +254,7 @@ The control remains bounded to two calls using the same key, message and native
 backend, and changed-input refusals remain mandatory.
 
 The Go checks require at least Go 1.25.13, as declared in
-[`go.mod`](../../go.mod). [CI](../../.github/workflows/go.yaml) reads that same
+[`go.mod`](../../go.mod). [CI](../../../.github/workflows/ci.yaml) reads that same
 version through `go-version-file`.
 
 From the repository root:

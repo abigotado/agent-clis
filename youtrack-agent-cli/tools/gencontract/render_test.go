@@ -28,6 +28,13 @@ func TestGeneratedContractIsCurrent(t *testing.T) {
 	}
 }
 
+func TestContractLinksOAuthGuideInsideTheModule(t *testing.T) {
+	const want = "(https://github.com/abigotado/agent-clis/blob/main/youtrack-agent-cli/docs/oauth-errors.md)"
+	if got := renderMarkdown(errx.Describe()); !strings.Contains(got, want) {
+		t.Fatalf("contract is missing the OAuth guide link %q", want)
+	}
+}
+
 func TestContractRequiresReconciliationInsteadOfReplay(t *testing.T) {
 	got := renderMarkdown(errx.Describe())
 	for _, phrase := range []string{

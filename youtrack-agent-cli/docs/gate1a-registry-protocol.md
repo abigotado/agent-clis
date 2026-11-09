@@ -1231,7 +1231,7 @@ both `docs/contract.md` and
 only the two commands above; the existing `tools/gencommands` path must then
 update `docs/commands.md` and
 `assets/skills/youtrack-agent/reference/commands.md`. The authoritative
-`.agents/rules/cli-contract.md` must be updated in that implementation change,
+`youtrack-agent-cli/rules/cli-contract.md` must be updated in that implementation change,
 its tracked `.cursor/rules` compatibility mirror must be regenerated through
 `.agents/scripts/sync-rules.py`, and both the sync check and the machine-local
 provider compiler `--check` gate must pass. The embedded skill's

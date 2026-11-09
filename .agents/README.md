@@ -24,7 +24,7 @@ here is duplicated into a committed provider directory.
 `.claude/` and `.codex/` are compiled and **git-ignored**. Never edit or commit
 them — the next compile prunes the edit, and hook commands render with an
 absolute path, so committing them would bake one machine's checkout into the
-repo. CI enforces this in `.github/workflows/agent_harness.yaml`.
+repo. CI enforces this in `.github/workflows/ci.yaml`.
 
 Tracked `.cursor/rules/*.mdc` files are compatibility mirrors rendered from
 `rules/*.md`. They are committed because Cursor has no compile step.
