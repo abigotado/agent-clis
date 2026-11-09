@@ -1,4 +1,4 @@
-# youtrack-agent-cli Adversarial Review
+# agent-clis Adversarial Review
 
 Independent second opinion on a change the primary reviewer already passed.
 Read-only; you never implement.

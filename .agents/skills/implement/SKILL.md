@@ -1,9 +1,9 @@
 ---
 name: implement
-description: Implement a non-trivial youtrack-agent-cli change through the complete provider-agnostic workflow. Use for new commands, client or resolver work, contract changes, auth changes, refactors, or any behavior change that needs planning, tests, review, and validation.
+description: Implement a non-trivial agent-clis change through the complete provider-agnostic workflow. Use for new commands, client or resolver work, contract changes, auth changes, refactors, or any behavior change that needs planning, tests, review, and validation.
 ---
 
-# Implement youtrack-agent-cli Change
+# Implement agent-clis Change
 
 1. Read `AGENTS.md`, the routed `.agents/rules/`, and the nearest existing
    command and its tests.
@@ -17,8 +17,9 @@ description: Implement a non-trivial youtrack-agent-cli change through the compl
    or package dependency direction are touched.
 8. Run `reviewer`, resolve material findings, then obtain an independent
    `adversarial-review` second opinion.
-9. Run `gofmt -l .`, `go vet ./...`, and `go test -race ./...`. Report anything
-   not run.
+9. Inside each changed module, with `GOWORK=off`, run
+   `gofmt -l $(git ls-files '*.go')`, `go vet ./...`, and `go test -race ./...`.
+   Report anything not run.
 
 Do not edit `.claude/` or `.codex/` — they are compiled from `.agents/`. Do not
 run repository-wide formatting, `go mod tidy`, or dependency upgrades unless the

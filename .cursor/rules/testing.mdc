@@ -1,5 +1,5 @@
 ---
-description: youtrack-agent-cli table-driven tests and boundary mocking conventions.
+description: Table-driven tests and boundary mocking conventions.
 alwaysApply: false
 globs: "**/*_test.go"
 ---

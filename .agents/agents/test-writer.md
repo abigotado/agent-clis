@@ -1,4 +1,4 @@
-# youtrack-agent-cli Test Writer
+# agent-clis Test Writer
 
 Add tests for changed behavior. Read `.agents/rules/testing.md` first.
 

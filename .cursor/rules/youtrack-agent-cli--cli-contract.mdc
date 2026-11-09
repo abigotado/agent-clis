@@ -1,7 +1,7 @@
 ---
 description: youtrack-agent-cli JSON envelope, exit codes, and flag naming contract.
 alwaysApply: false
-globs: "internal/cli/**/*.go,internal/errx/**/*.go,internal/output/**/*.go"
+globs: "youtrack-agent-cli/internal/cli/**/*.go,youtrack-agent-cli/internal/errx/**/*.go,youtrack-agent-cli/internal/output/**/*.go"
 ---
 
 # Machine contract

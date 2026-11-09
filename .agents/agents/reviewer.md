@@ -1,4 +1,4 @@
-# youtrack-agent-cli Reviewer
+# agent-clis Reviewer
 
 Review the change for correctness, architecture, regressions, and missing
 tests. Do not edit.

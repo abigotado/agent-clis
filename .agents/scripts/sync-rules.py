@@ -11,41 +11,58 @@ from pathlib import Path
 
 RULES = {
     "architecture": {
-        "description": "youtrack-agent-cli package boundaries and dependency direction.",
+        "description": "Monorepo layout, module boundaries, and tag conventions.",
         "always_apply": True,
         "globs": None,
     },
-    # The machine contract is the project's public API. Scoped to the packages
-    # that define and render it, not to every .go file, so unrelated work does
-    # not pull the whole contract into context.
-    "cli-contract": {
-        "description": "youtrack-agent-cli JSON envelope, exit codes, and flag naming contract.",
-        "always_apply": False,
-        "globs": "internal/cli/**/*.go,internal/errx/**/*.go,internal/output/**/*.go",
-    },
     "go-style": {
-        "description": "youtrack-agent-cli Go conventions: errors, context, resources, naming.",
+        "description": "Go conventions: errors, context, resources, naming.",
         "always_apply": False,
         "globs": "**/*.go",
     },
     "testing": {
-        "description": "youtrack-agent-cli table-driven tests and boundary mocking conventions.",
+        "description": "Table-driven tests and boundary mocking conventions.",
         "always_apply": False,
         "globs": "**/*_test.go",
     },
     # Always applied: credential handling is a property of the whole binary,
     # and the failure mode is leaking a token, not a localized bug.
     "secrets": {
-        "description": "youtrack-agent-cli credential storage, redaction, and logging rules.",
+        "description": "Credential storage, redaction, and logging rules.",
         "always_apply": True,
         "globs": None,
     },
     # Always applied: the gate is a property of pushing any change, so there is
     # no file glob that usefully scopes it.
     "quality-gates": {
-        "description": "youtrack-agent-cli Git hook installation and the pre-push quality gate.",
+        "description": "Git hook installation, the pre-push gate, and CI.",
         "always_apply": True,
         "globs": None,
+    },
+}
+
+# Per-CLI rules live in <cli>/rules/, outside .agents/, because the provider
+# compiler loads everything under .agents/rules/ in every session. Globs are
+# repository-relative and comma-joined, since a mirror holds one list.
+CLI_RULES = {
+    "youtrack-agent-cli": {
+        "architecture": {
+            "description": "youtrack-agent-cli package boundaries and dependency direction.",
+            "always_apply": False,
+            "globs": "youtrack-agent-cli/**",
+        },
+        # The machine contract is the CLI's public API. Scoped to the packages
+        # that define and render it, not to every .go file, so unrelated work
+        # does not pull the whole contract into context.
+        "cli-contract": {
+            "description": "youtrack-agent-cli JSON envelope, exit codes, and flag naming contract.",
+            "always_apply": False,
+            "globs": (
+                "youtrack-agent-cli/internal/cli/**/*.go,"
+                "youtrack-agent-cli/internal/errx/**/*.go,"
+                "youtrack-agent-cli/internal/output/**/*.go"
+            ),
+        },
     },
 }
 
@@ -107,6 +124,36 @@ def _validate_tree(root: Path, *, label: str) -> tuple[Path, ...]:
     return tuple(files)
 
 
+def _check_inventory(root: Path, names: dict[str, object], repo: Path) -> None:
+    """Fail unless root holds exactly the declared rules, none of them nested."""
+    _assert_real_directory(root, label="canonical rules")
+    expected = {root / f"{name}.md" for name in names}
+    actual = set(root.rglob("*.md"))
+    details = [
+        *(f"unexpected canonical rule: {path.relative_to(repo)}" for path in sorted(actual - expected)),
+        *(f"missing canonical rule: {path.relative_to(repo)}" for path in sorted(expected - actual)),
+    ]
+    if details:
+        raise RuleSyncError("\n".join(details))
+    for path in sorted(expected):
+        if path.is_symlink() or not path.is_file():
+            raise RuleSyncError(f"missing real canonical rule: {path}")
+        _assert_contained(path, root.resolve(), label="canonical rule")
+
+
+def _declared_rules(repo: Path) -> dict[str, tuple[Path, dict[str, object]]]:
+    """Map each mirror name to its validated canonical source and metadata."""
+    canonical_root = repo / ".agents" / "rules"
+    _check_inventory(canonical_root, RULES, repo)
+    declared = {name: (canonical_root / f"{name}.md", metadata) for name, metadata in RULES.items()}
+    for cli, rules in CLI_RULES.items():
+        rules_root = repo / cli / "rules"
+        _check_inventory(rules_root, rules, repo)
+        for name, metadata in rules.items():
+            declared[f"{cli}--{name}"] = (rules_root / f"{name}.md", metadata)
+    return declared
+
+
 def synchronize(repo: Path, *, check: bool) -> SyncResult:
     """Check or update the exact declared Cursor mirror inventory."""
     repo = repo.resolve()
@@ -115,31 +162,13 @@ def synchronize(repo: Path, *, check: bool) -> SyncResult:
     _assert_real_directory(agents_root, label=".agents")
     _assert_real_directory(cursor_parent, label=".cursor")
 
-    canonical_root = agents_root / "rules"
     cursor_root = cursor_parent / "rules"
-    _assert_real_directory(canonical_root, label="canonical rules")
     existing_cursor_files = _validate_tree(cursor_root, label="Cursor rules")
 
-    expected_canonical = {
-        canonical_root / f"{name}.md" for name in RULES
+    expected = {
+        cursor_root / f"{name}.mdc": _render(source, metadata)
+        for name, (source, metadata) in _declared_rules(repo).items()
     }
-    actual_canonical = set(canonical_root.glob("*.md"))
-    unexpected_canonical = sorted(actual_canonical - expected_canonical)
-    missing_canonical = sorted(expected_canonical - actual_canonical)
-    if unexpected_canonical or missing_canonical:
-        details = [
-            *(f"unexpected canonical rule: {path.relative_to(repo)}" for path in unexpected_canonical),
-            *(f"missing canonical rule: {path.relative_to(repo)}" for path in missing_canonical),
-        ]
-        raise RuleSyncError("\n".join(details))
-
-    expected: dict[Path, str] = {}
-    for name, metadata in RULES.items():
-        source = canonical_root / f"{name}.md"
-        if source.is_symlink() or not source.is_file():
-            raise RuleSyncError(f"missing real canonical rule: {source}")
-        _assert_contained(source, canonical_root.resolve(), label="canonical rule")
-        expected[cursor_root / f"{name}.mdc"] = _render(source, metadata)
 
     existing = set(existing_cursor_files)
     expected_paths = set(expected)
@@ -196,7 +225,8 @@ def main() -> int:
         return 2
 
     if args.check:
-        print(f"Cursor rule mirrors are in sync ({len(RULES)} files).")
+        mirrors = len(RULES) + sum(len(rules) for rules in CLI_RULES.values())
+        print(f"Cursor rule mirrors are in sync ({mirrors} files).")
     else:
         for path in result.removed:
             print(f"Removed stale Cursor rule: {path.relative_to(repo)}")

@@ -1,9 +1,9 @@
 ---
 name: review
-description: Review completed youtrack-agent-cli changes for correctness, architecture, regressions, contract breakage, leaked credentials, and missing tests. Use before merging, or when asked to check work that is already written.
+description: Review completed agent-clis changes for correctness, architecture, regressions, contract breakage, leaked credentials, and missing tests. Use before merging, or when asked to check work that is already written.
 ---
 
-# Review youtrack-agent-cli Change
+# Review agent-clis Change
 
 1. Read `AGENTS.md` and the rules routed for the touched paths, then the diff,
    then the surrounding code the diff assumes.

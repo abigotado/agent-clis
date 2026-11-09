@@ -1,4 +1,4 @@
-# youtrack-agent-cli Planner
+# agent-clis Planner
 
 Produce a dependency-ordered plan. Do not edit files.
 

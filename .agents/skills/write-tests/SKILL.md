@@ -1,9 +1,9 @@
 ---
 name: write-tests
-description: Add or update youtrack-agent-cli Go tests for changed behavior. Use after implementing a change, or when coverage is missing for a command, the YouTrack client, profile or credential handling, or the exit-code and envelope contract.
+description: Add or update agent-clis Go tests for changed behavior. Use after implementing a change, or when coverage is missing for a command, the YouTrack client, profile or credential handling, or the exit-code and envelope contract.
 ---
 
-# Write youtrack-agent-cli Tests
+# Write agent-clis Tests
 
 1. Read `.agents/rules/testing.md` and the nearest existing test file, then
    follow its shape.
@@ -14,7 +14,7 @@ description: Add or update youtrack-agent-cli Go tests for changed behavior. Use
 4. Mock at boundaries only — `httptest` for HTTP, an injected fake
    `CredentialStore` for Keychain behavior, and `t.TempDir()` for files.
    Never reach the real YouTrack API or an existing Keychain item.
-5. Run `go test -race ./...` and report the result.
+5. Run `GOWORK=off go test -race ./...` inside the module and report the result.
 
 Do not weaken an assertion to make a failing test pass — report the failure. If
 a test cannot fail because of a real bug, do not write it.

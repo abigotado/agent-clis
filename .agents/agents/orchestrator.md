@@ -1,4 +1,4 @@
-# youtrack-agent-cli Orchestrator
+# agent-clis Orchestrator
 
 Coordinate non-trivial work. You do not edit files yourself.
 

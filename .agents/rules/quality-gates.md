@@ -2,9 +2,11 @@
 
 ## Pre-push hook
 
-`.githooks/pre-push` runs, in order: `gofmt -l` (must be empty), `go vet ./...`,
-`go build ./...`, `go test ./...`. It is the last check before a change leaves
-the machine.
+`.githooks/pre-push` runs, for every tracked `go.mod`: `gofmt -l` over the
+module's tracked `.go` files (must be empty), then `go vet ./...`,
+`go build ./...` and `go test -race ./...` with `GOWORK=off`. A checkout with no
+tracked module fails. After that it runs the agent-harness checks. It is the
+last check before a change leaves the machine.
 
 Install it once per clone:
 
@@ -16,6 +18,11 @@ This sets `core.hooksPath`. Installing and uninstalling mutate local Git config
 and are the developer's decision, never the agent's — which is why they sit in
 `ask`, not `allow`, in `.agents/permissions.toml`.
 
+A worktree whose config carries an inherited `core.hooksPath` needs
+`git config --worktree core.hooksPath .githooks`: `.githooks/install` uses
+`--local`, which the worktree value overrides. Without it the worktree can run
+another checkout's hook.
+
 `git push --no-verify` and `git config --local core.hooksPath` are denied. The
 `pre_push_guard` hook in `.agents/hooks.toml` is the real enforcement: prefix
 rules cannot cover every spelling, so the guard parses the command. Do not work
@@ -23,16 +30,33 @@ around it — if the gate is wrong, fix the gate.
 
 ## Before finishing any change
 
-Run the smallest validation that actually covers the touched surface:
+Run the smallest validation that actually covers the touched surface, inside
+each changed module:
 
 ```bash
-gofmt -l .
+export GOWORK=off
+gofmt -l $(git ls-files '*.go')
 go vet ./...
 go test -race ./...
 ```
 
-Report what you ran and what you did not. Never describe an untouched surface
-as green.
+A CLI's `AGENTS.md` lists its additional gates. Report what you ran and what you
+did not. Never describe an untouched surface as green.
+
+## CI
+
+`.github/workflows/ci.yaml` runs a `changes` job that selects the affected
+modules, an always-on `repo` job, and one job per CLI. The single required check
+is `ci-ok`, which needs every other job and fails on any failure or
+cancellation, so a skipped module job cannot pass by accident.
+
+`.github/scripts/verify-portable-release-policy.rb` takes two required arguments,
+the GoReleaser config and the repository root, because a default root once let
+it pass while scanning nothing:
+
+```bash
+ruby .github/scripts/verify-portable-release-policy.rb youtrack-agent-cli/.goreleaser.yaml .
+```
 
 ## Harness
 
@@ -50,15 +74,16 @@ python3 .agents/scripts/sync-rules.py --check
 python3 -m unittest discover -s .agents/tests -p 'test_*.py'
 ```
 
-After changing anything under `.agents/`, run the compiler and the rule sync,
-then confirm `git status --porcelain` is clean and `git ls-files .claude .codex`
-is empty.
+After changing anything under `.agents/` or a `<cli>/rules/` file, run the
+compiler and the rule sync, then confirm `git status --porcelain` is clean and
+`git ls-files .claude .codex` is empty.
 
 CI cannot run the compiler — a runner has no `~/.agents`. It enforces what it
 can: that the generated mirrors stay untracked, that the Cursor mirrors are in
 sync, and that the harness tests pass. Compile determinism is a local check, so
 run it before pushing a change to `.agents/`.
 
-Every canonical rule file must be registered in the `RULES` dict in
-`.agents/scripts/sync-rules.py`. The script globs `.agents/rules/*.md`
-non-recursively and treats an unregistered or nested rule as a hard error.
+Every canonical rule file must be registered: shared rules in the `RULES` dict
+and per-CLI rules in the `CLI_RULES` dict of `.agents/scripts/sync-rules.py`. An
+unregistered or nested rule is a hard error. Per-CLI rules stay out of
+`.agents/rules/`, because the compiler loads everything there in every session.

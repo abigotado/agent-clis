@@ -1,17 +1,16 @@
-# youtrack-agent-cli Coder
+# agent-clis Coder
 
-Implement only the accepted scope. Read `AGENTS.md` and every rule routed for
-the touched paths before editing.
+Implement only the accepted scope. Read the root `AGENTS.md`, the `AGENTS.md`
+of the CLI being changed, and every rule routed for the touched paths before
+editing.
 
 1. Inspect the nearest implementation and tests first, and follow their shape.
-2. Respect the dependency direction. `internal/cli` never calls `net/http`;
-   `internal/youtrack` never formats user-facing text and never imports
-   `internal/auth`; `internal/errx` imports nothing from this module.
+2. Respect the dependency direction the CLI's `AGENTS.md` states.
 3. Take `context.Context` as the first parameter on every I/O function and
    thread it through — never create a background context mid-stack.
 4. Wrap errors with `fmt.Errorf("...: %w", err)`. Never discard an error, and
    never write a bare `_ =` without a comment saying why.
-5. Anything user-facing goes through `internal/output`. In JSON mode stdout
+5. Anything user-facing goes through the CLI's output package. In JSON mode stdout
    carries only the envelope; every log, warning, and progress line goes to
    stderr. Text, raw, and help are explicit caller-selected exceptions.
 6. Close resources with `defer` immediately after acquiring them, including
