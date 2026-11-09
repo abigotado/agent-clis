@@ -6,7 +6,8 @@
 .codex/
 
 # Go build output
-/youtrack-agent-cli
+/youtrack-agent-cli/youtrack-agent-cli
+/youtrack-agent-cli/dist/
 /bin/
 /dist/
 *.test
@@ -18,6 +19,10 @@ coverage.out
 /reports/.artifacts/
 /reports/.history/
 /reports/security_audit.json
+
+# A workspace is local: every module builds with GOWORK=off.
+/go.work
+/go.work.sum
 
 # Harness script bytecode
 __pycache__/
