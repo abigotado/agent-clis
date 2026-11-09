@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/auth"
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/oauth"
-	"github.com/abigotado/youtrack-agent-cli/internal/profile"
-	"github.com/abigotado/youtrack-agent-cli/internal/youtrack"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/auth"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/oauth"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/youtrack"
 )
 
 // Browser opens one public authorization URL without receiving credentials.

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/cli"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/cli"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )

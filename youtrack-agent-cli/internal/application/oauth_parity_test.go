@@ -10,9 +10,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/auth"
-	"github.com/abigotado/youtrack-agent-cli/internal/endpoint"
-	"github.com/abigotado/youtrack-agent-cli/internal/oauth"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/auth"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/endpoint"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/oauth"
 )
 
 func TestTokenResponseValidationMatchesCredentialStoreForBothFields(t *testing.T) {

@@ -217,7 +217,7 @@ import (
 	"fmt"
 	"unsafe"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/profile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile"
 )
 
 const (

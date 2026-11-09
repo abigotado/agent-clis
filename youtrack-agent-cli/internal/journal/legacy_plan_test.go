@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/intent"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/intent"
 )
 
 // These complete records are frozen independently of the current Plan type.

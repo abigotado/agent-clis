@@ -18,7 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/endpoint"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/endpoint"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

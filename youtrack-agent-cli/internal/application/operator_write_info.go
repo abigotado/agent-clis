@@ -3,7 +3,7 @@ package application
 import (
 	"time"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/operatorwrite"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/operatorwrite"
 )
 
 const (

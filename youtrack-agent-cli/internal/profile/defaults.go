@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/lockfile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/lockfile"
 )
 
 const (

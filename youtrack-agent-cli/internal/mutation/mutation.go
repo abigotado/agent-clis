@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/intent"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/intent"
 )
 
 // Executor performs read-only preflight and exactly one typed mutation.

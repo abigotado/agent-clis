@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 const publicCommentJSON = `{"id":"4-1","author":{"id":"1-2","login":"alice"},"text":"Final text [plan-marker]","deleted":false,"visibility":{"$type":"UnlimitedVisibility"}}`

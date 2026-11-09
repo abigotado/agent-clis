@@ -2,7 +2,7 @@
 
 package skills
 
-import "github.com/abigotado/youtrack-agent-cli/internal/errx"
+import "github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 
 func requireSkillMutationSupported() error {
 	return &errx.Error{

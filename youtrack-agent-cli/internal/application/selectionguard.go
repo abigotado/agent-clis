@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/profile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile"
 )
 
 type selectionGuardKey struct{}

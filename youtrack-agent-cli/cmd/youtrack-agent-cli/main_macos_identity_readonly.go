@@ -8,9 +8,9 @@ import (
 	"io"
 	"os"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/output"
-	"github.com/abigotado/youtrack-agent-cli/internal/readonlycli"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/output"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/readonlycli"
 )
 
 func main() {

@@ -2,7 +2,7 @@
 
 package readonlycli
 
-import "github.com/abigotado/youtrack-agent-cli/internal/profile"
+import "github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile"
 
 func editionPolicy() EditionPolicy {
 	return EditionPolicy{

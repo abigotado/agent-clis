@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/application"
-	"github.com/abigotado/youtrack-agent-cli/internal/auth"
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/output"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/application"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/auth"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/output"
 )
 
 func TestRemoteViewsAlwaysExposeUntrustedMarker(t *testing.T) {

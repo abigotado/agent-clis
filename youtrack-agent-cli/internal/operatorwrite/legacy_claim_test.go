@@ -8,7 +8,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 func TestLegacyPlansKeepExpiryAndClaimsAcrossReopen(t *testing.T) {

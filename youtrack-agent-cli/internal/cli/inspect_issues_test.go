@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 const cliIssueSummaryJSON = `{"id":"2-12","idReadable":"APP-12","summary":"New summary","project":{"id":"0-3","shortName":"APP","name":"Application","archived":false},"updated":2}`

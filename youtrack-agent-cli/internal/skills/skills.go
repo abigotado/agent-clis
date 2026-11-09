@@ -20,9 +20,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/abigotado/youtrack-agent-cli/assets"
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/lockfile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/assets"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/lockfile"
 )
 
 const (

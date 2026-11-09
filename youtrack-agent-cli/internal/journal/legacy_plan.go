@@ -12,7 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/intent"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/intent"
 )
 
 // All values in this file describe the journal-v1 plan as it existed when

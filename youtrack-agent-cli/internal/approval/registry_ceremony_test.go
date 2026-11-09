@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 const ceremonyTestRequestFields = "schema_version message_type transition_kind recovery_mode challenge expected_registry_revision previous_record_sha256 artifact_descriptor_sha256 target_generation new_generation requested_at expires_at"

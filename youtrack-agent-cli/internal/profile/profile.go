@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/endpoint"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/endpoint"
 )
 
 const (

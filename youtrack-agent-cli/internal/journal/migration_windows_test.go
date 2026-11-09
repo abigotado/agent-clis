@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 func TestStoreMigratePreparedV1WindowsDoesNotCreateDirectory(t *testing.T) {

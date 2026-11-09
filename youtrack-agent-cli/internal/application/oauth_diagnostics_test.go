@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/endpoint"
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/oauth"
-	"github.com/abigotado/youtrack-agent-cli/internal/oauthrecovery"
-	"github.com/abigotado/youtrack-agent-cli/internal/output"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/endpoint"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/oauth"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/oauthrecovery"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/output"
 )
 
 type oauthDiagnosticTransport func(*http.Request) (*http.Response, error)

@@ -19,12 +19,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/auth"
-	"github.com/abigotado/youtrack-agent-cli/internal/endpoint"
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/operatorwrite"
-	"github.com/abigotado/youtrack-agent-cli/internal/profile"
-	"github.com/abigotado/youtrack-agent-cli/internal/writepolicy"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/auth"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/endpoint"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/operatorwrite"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/writepolicy"
 )
 
 const (

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 var codecTime = time.Date(2026, 9, 28, 15, 0, 0, 0, time.UTC)

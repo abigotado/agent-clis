@@ -13,8 +13,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/auth"
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/auth"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 // freezeState stands in for an agent sandbox: the immutable flag keeps every

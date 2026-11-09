@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 // Independent fixture construction only: neither the production decoder nor

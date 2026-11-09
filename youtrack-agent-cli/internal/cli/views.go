@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/application"
-	"github.com/abigotado/youtrack-agent-cli/internal/output"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/application"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/output"
 )
 
 const untrustedYouTrackContent = "untrusted_youtrack_content"

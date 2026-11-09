@@ -5,7 +5,7 @@ package journal
 import (
 	"time"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/intent"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/intent"
 )
 
 const recordVersion = 1 // historical v1 only

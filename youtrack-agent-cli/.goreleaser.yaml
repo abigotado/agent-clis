@@ -23,9 +23,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/abigotado/youtrack-agent-cli/internal/readonlycli.releaseVersion={{ .Version }}
-      - -X github.com/abigotado/youtrack-agent-cli/internal/readonlycli.releaseCommit={{ .FullCommit }}
-      - -X github.com/abigotado/youtrack-agent-cli/internal/readonlycli.releaseCommitTime={{ .CommitDate }}
+      - -X github.com/abigotado/agent-clis/youtrack-agent-cli/internal/readonlycli.releaseVersion={{ .Version }}
+      - -X github.com/abigotado/agent-clis/youtrack-agent-cli/internal/readonlycli.releaseCommit={{ .FullCommit }}
+      - -X github.com/abigotado/agent-clis/youtrack-agent-cli/internal/readonlycli.releaseCommitTime={{ .CommitDate }}
 
 archives:
   - id: portable-readonly

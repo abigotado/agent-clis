@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 func migrationFixture(t *testing.T, raw []byte) (Store, string, string) {

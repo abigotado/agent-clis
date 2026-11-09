@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/protocolvalue"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/protocolvalue"
 )
 
 func TestIPCRequestSnapshotOwnsBytesAndParsesOnce(t *testing.T) {

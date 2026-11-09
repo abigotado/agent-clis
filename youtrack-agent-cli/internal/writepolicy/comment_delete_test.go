@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/profile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile"
 )
 
 func TestDeletionOnlyProfileBindsExactWritePolicy(t *testing.T) {

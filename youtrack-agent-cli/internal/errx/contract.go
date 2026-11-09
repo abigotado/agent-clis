@@ -2,7 +2,7 @@ package errx
 
 // docs/contract.md is generated from this table, so an exit status cannot be
 // renumbered here and left stale in the agent-facing contract.
-//go:generate go run github.com/abigotado/youtrack-agent-cli/tools/gencontract
+//go:generate go run github.com/abigotado/agent-clis/youtrack-agent-cli/tools/gencontract
 
 // EnvelopeVersion is the `v` field of every response envelope.
 //

@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/operatorwrite"
-	"github.com/abigotado/youtrack-agent-cli/internal/profile"
-	"github.com/abigotado/youtrack-agent-cli/internal/writepolicy"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/operatorwrite"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/writepolicy"
 )
 
 // CapabilitiesInfo describes local configuration, never server permissions or

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/endpoint"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/endpoint"
 )
 
 func testSnapshot(t *testing.T, kind Kind) Snapshot {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/gatecontract"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/gatecontract"
 )
 
 type bindingPositive struct {

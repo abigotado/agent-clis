@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/profile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile"
 )
 
 const identityProfileJSON = `{"name":"work","service_url":"https://example.youtrack.cloud","rest_base_url":"https://example.youtrack.cloud/api","mcp_url":"https://example.youtrack.cloud/mcp?tools=get_current_user,search_issues,get_issue,get_issue_comments,get_project,get_issue_fields_schema&enableToolOutputSchema=true","oauth":{"issuer_url":"https://hub.example.test","authorization_url":"https://hub.example.test/api/rest/oauth2/auth","token_url":"https://hub.example.test/api/rest/oauth2/token","client_id":"client","scopes":["YouTrack"],"redirect_uri":"http://127.0.0.1:18987/oauth/callback"},"expected_account_id":"1-2","expected_login":"alice","capabilities":["read"],"executor":"rest-best-effort","assurance":"best-effort"}`

@@ -5,7 +5,7 @@ package journal
 import (
 	"os"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 // Windows has no reviewed implementation of the anchored no-follow,

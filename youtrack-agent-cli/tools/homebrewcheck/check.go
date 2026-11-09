@@ -668,9 +668,9 @@ func rehearseBuild(ctx context.Context, commandRunner runner, buildRoot, tempDir
 	env = replaceEnv(env, "GOFLAGS", "-mod=vendor -trimpath")
 	output := filepath.Join(tempDir, "youtrack-agent-cli")
 	ldflags := strings.Join([]string{
-		"-X", "github.com/abigotado/youtrack-agent-cli/internal/cli.releaseVersion=" + rehearsalVersion,
-		"-X", "github.com/abigotado/youtrack-agent-cli/internal/cli.releaseCommit=" + rehearsalCommit,
-		"-X", "github.com/abigotado/youtrack-agent-cli/internal/cli.releaseCommitTime=" + rehearsalCommitTime,
+		"-X", "github.com/abigotado/agent-clis/youtrack-agent-cli/internal/cli.releaseVersion=" + rehearsalVersion,
+		"-X", "github.com/abigotado/agent-clis/youtrack-agent-cli/internal/cli.releaseCommit=" + rehearsalCommit,
+		"-X", "github.com/abigotado/agent-clis/youtrack-agent-cli/internal/cli.releaseCommitTime=" + rehearsalCommitTime,
 	}, " ")
 	if err := commandRunner.Run(ctx, buildRoot, env, "go", "build", "-ldflags", ldflags, "-o", output, "./cmd/youtrack-agent-cli"); err != nil {
 		return fmt.Errorf("rehearse offline Homebrew build: %w", err)

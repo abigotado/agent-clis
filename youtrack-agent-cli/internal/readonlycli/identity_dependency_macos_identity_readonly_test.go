@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-const identityModule = "github.com/abigotado/youtrack-agent-cli"
+const identityModule = "github.com/abigotado/agent-clis/youtrack-agent-cli"
 
 var identityOwnedClosure = map[string]bool{
 	identityModule + "/assets":                 true,

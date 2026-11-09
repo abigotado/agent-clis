@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/endpoint"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/endpoint"
 )
 
 func testProfile(name string) Profile {

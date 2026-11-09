@@ -9,11 +9,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/auth"
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/operatorwrite"
-	"github.com/abigotado/youtrack-agent-cli/internal/profile"
-	"github.com/abigotado/youtrack-agent-cli/internal/writepolicy"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/auth"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/operatorwrite"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/writepolicy"
 )
 
 const deleteCommentFixture = `{"id":"4-1","issue":{"id":"2-12"},"author":{"id":"1-2","login":"alice"},"created":10,"updated":null,"deleted":false,"pinned":false,"text":"Delete this complete comment","visibility":{"$type":"UnlimitedVisibility","permittedGroups":[],"permittedUsers":[]},"attachments":[]}`

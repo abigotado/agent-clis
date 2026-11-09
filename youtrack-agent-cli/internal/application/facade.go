@@ -6,17 +6,17 @@ import (
 	"errors"
 	"io"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/auth"
-	"github.com/abigotado/youtrack-agent-cli/internal/endpoint"
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/intent"
-	"github.com/abigotado/youtrack-agent-cli/internal/journal"
-	"github.com/abigotado/youtrack-agent-cli/internal/oauth"
-	"github.com/abigotado/youtrack-agent-cli/internal/oauthrecovery"
-	"github.com/abigotado/youtrack-agent-cli/internal/profile"
-	"github.com/abigotado/youtrack-agent-cli/internal/skills"
-	"github.com/abigotado/youtrack-agent-cli/internal/writepolicy"
-	"github.com/abigotado/youtrack-agent-cli/internal/youtrack"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/auth"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/endpoint"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/intent"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/journal"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/oauth"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/oauthrecovery"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/skills"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/writepolicy"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/youtrack"
 )
 
 const (

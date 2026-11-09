@@ -14,8 +14,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/lockfile"
-	"github.com/abigotado/youtrack-agent-cli/internal/profile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/lockfile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile"
 )
 
 const (

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 func assertReason(t *testing.T, err error, want string) {

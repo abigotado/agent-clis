@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/protocolvalue"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/protocolvalue"
 )
 
 // MaxSegmentContractBytes bounds input before JSON decoding or field allocation.

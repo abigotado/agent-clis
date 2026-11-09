@@ -4,7 +4,7 @@ import (
 	"runtime/debug"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 func TestBuildVersionPrecedenceAndVCSStamp(t *testing.T) {

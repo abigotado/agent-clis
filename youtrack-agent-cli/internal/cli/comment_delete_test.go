@@ -10,13 +10,13 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/application"
-	"github.com/abigotado/youtrack-agent-cli/internal/auth"
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/operatorwrite"
-	"github.com/abigotado/youtrack-agent-cli/internal/output"
-	"github.com/abigotado/youtrack-agent-cli/internal/profile"
-	"github.com/abigotado/youtrack-agent-cli/internal/writepolicy"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/application"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/auth"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/operatorwrite"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/output"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/writepolicy"
 )
 
 func enableCLICommentDelete(t *testing.T, service *application.Service, credentials *commentsCredentials) {

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/intent"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/intent"
 )
 
 func expectedReceiptBindingForTest(t *testing.T) *ExpectedReceiptBinding {

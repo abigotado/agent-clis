@@ -13,9 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/application"
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/output"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/application"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -48,7 +48,7 @@ func NewApp() *App {
 	return &App{stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr}
 }
 
-//go:generate go run github.com/abigotado/youtrack-agent-cli/tools/gencommands
+//go:generate go run github.com/abigotado/agent-clis/youtrack-agent-cli/tools/gencommands
 
 // NewRootCommand assembles the public command surface.
 func (a *App) NewRootCommand() *cobra.Command {

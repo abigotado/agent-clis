@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/protocolvalue"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/protocolvalue"
 )
 
 const (

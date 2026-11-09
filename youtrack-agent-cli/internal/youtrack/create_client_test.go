@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 const createdIssueJSON = `{"id":"2-40","idReadable":"TAC-7","summary":"Harness MR","description":"Body\n\n[marker]","project":{"id":"0-1","shortName":"TAC","name":"Tackroom","archived":false},"reporter":{"id":"2-1","login":"admin"},"created":1,"updated":1,"commentsCount":0,"customFields":[{"id":"189-8","name":"Stage","$type":"StateIssueCustomField","value":{"id":"20-2","name":"In Progress","$type":"StateBundleElement"},"projectCustomField":{"id":"189-8","field":{"id":"58-1"}}}]}`

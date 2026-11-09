@@ -2,7 +2,7 @@
 
 package skills
 
-import "github.com/abigotado/youtrack-agent-cli/internal/errx"
+import "github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 
 // Windows lacks the descriptor-relative detach-and-unlink primitive used by
 // Unix builds. Fail closed instead of deleting a pathname after a hash TOCTOU.

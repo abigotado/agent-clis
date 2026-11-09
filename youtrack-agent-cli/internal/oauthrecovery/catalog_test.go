@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/oauth"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/oauth"
 )
 
 func TestCatalogCoversEveryTokenFailureCategoryExactlyOnce(t *testing.T) {

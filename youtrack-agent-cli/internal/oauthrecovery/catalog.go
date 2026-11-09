@@ -3,8 +3,8 @@
 package oauthrecovery
 
 import (
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
-	"github.com/abigotado/youtrack-agent-cli/internal/oauth"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/oauth"
 )
 
 // Descriptor contains only fixed public recovery data. Category zero is the

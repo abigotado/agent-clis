@@ -1,5 +1,4 @@
-// Deprecated: moved; see the README at https://github.com/abigotado/youtrack-agent-cli
-module github.com/abigotado/youtrack-agent-cli
+module github.com/abigotado/agent-clis/youtrack-agent-cli
 
 go 1.27.3
 

@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 // SuppliedRegistryCeremony contains exact supplied transcript bytes, not live

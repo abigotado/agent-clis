@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/profile"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile"
 )
 
 const compensationTimeout = 3 * time.Second

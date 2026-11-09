@@ -17,7 +17,7 @@ import (
 	"unicode/utf8"
 )
 
-const module = "github.com/abigotado/youtrack-agent-cli"
+const module = "github.com/abigotado/agent-clis/youtrack-agent-cli"
 
 type packageInfo struct {
 	ImportPath string

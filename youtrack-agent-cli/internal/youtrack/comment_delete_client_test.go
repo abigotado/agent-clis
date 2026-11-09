@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/abigotado/youtrack-agent-cli/internal/errx"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
 const validCommentDeleteJSON = `{"id":"4-1","issue":{"id":"2-12"},"author":{"id":"1-2","login":"alice"},"created":1,"updated":null,"deleted":false,"pinned":false,"text":"active text","visibility":{"$type":"UnlimitedVisibility","permittedGroups":[],"permittedUsers":[]},"attachments":[]}`
