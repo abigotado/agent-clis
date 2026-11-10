@@ -240,6 +240,11 @@ surface.each do |candidate|
   content = File.binread(candidate).force_encoding(Encoding::UTF_8).scrub
   errors << "#{relative} contains a Homebrew or quarantine bypass" if content.match?(/(?:\bbrew\s+(?:tap|tap-new|create|bump)|\bxattr\b|com\.apple\.quarantine|spctl\s+--master-disable)/i)
   errors << "#{relative} contains a publication action" if content.match?(/(?:\bgoreleaser\s+release\b|\bgh\s+(?:api|release)\b|action-gh-release|\/upload-artifact@)/i)
+  # Without --config, GoReleaser prefers .config/goreleaser.y*ml or .goreleaser.yml
+  # over the checked config if one appears.
+  content.scan(/(?:^|[;&|(]|\brun:)[ \t]*goreleaser[ \t]+(?:check|build|release)\b[^\n]*/i).each do |call|
+    errors << "#{relative} runs GoReleaser without --config .goreleaser.yaml: #{call.strip}" unless call.include?("--config .goreleaser.yaml")
+  end
 end
 
 workflows = Dir.glob(File.join(root, ".github/workflows/*.{yaml,yml}"))

@@ -132,6 +132,22 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
     assert_includes stderr, "must equal the approved publisher"
   end
 
+  def test_rejects_goreleaser_without_the_config_flag_in_any_workflow
+    real_ci = File.read(File.join(ROOT, ".github/workflows/ci.yaml"))
+    assert_includes real_ci, "goreleaser build --config .goreleaser.yaml"
+    ["goreleaser check", "(cd x && goreleaser build --snapshot --clean)"].each do |call|
+      changed = MINIMAL_CI.sub("- run: \"true\"\n", "- run: \"true\"\n      - run: #{call}\n")
+      refute_equal MINIMAL_CI, changed
+      success, stderr = verify(CONFIG, {}, ci: changed)
+      refute success, call
+      assert_includes stderr, "without --config .goreleaser.yaml"
+    end
+    with_flag = MINIMAL_CI.sub("- run: \"true\"\n", "- run: \"true\"\n      - name: GoReleaser check\n        run: goreleaser check --config .goreleaser.yaml\n")
+    refute_equal MINIMAL_CI, with_flag
+    success, stderr = verify(CONFIG, {}, ci: with_flag)
+    assert success, stderr
+  end
+
   def test_rejects_a_release_workflow_that_restores_the_go_cache
     changed = RELEASE.gsub("cache: false", "cache: true")
     refute_equal RELEASE, changed

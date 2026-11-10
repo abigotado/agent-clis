@@ -392,31 +392,14 @@ jobs:
               exit 1
               ;;
           esac
-          # An empty or malformed context would make the loop below vacuous.
-          if ! jq -e 'type == "object" and .changes.result == "success" and .repo.result == "success"' <<<"${NEEDS}" >/dev/null; then
-            echo "::error::needs context is missing the always-on jobs"
+          # The context must list exactly the jobs in needs above; a missing
+          # job would otherwise drop out of the check below. Every selection
+          # runs every CLI job, so each one must have succeeded.
+          if ! jq -e 'type == "object" and (keys == ["changes", "repo", "youtrack", "youtrack-windows"])' <<<"${NEEDS}" >/dev/null; then
+            echo "::error::needs context does not list exactly changes, repo, youtrack, youtrack-windows"
             exit 1
           fi
-          cli_selected=false
-          if [ "${YOUTRACK_SELECTED}" = true ] || [ "${ALL_SELECTED}" = true ]; then
-            cli_selected=true
-          fi
-          # Every needed job must have succeeded. The CLI jobs may be skipped
-          # only when the change selection left them out.
-          failures="$(jq -r --arg selected "${cli_selected}" '
-            to_entries[]
-            | select(
-                .value.result != "success"
-                and (
-                  (
-                    .value.result == "skipped"
-                    and $selected == "false"
-                    and (.key == "youtrack" or .key == "youtrack-windows")
-                  ) | not
-                )
-              )
-            | "\(.key)=\(.value.result)"
-          ' <<<"${NEEDS}")"
+          failures="$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"' <<<"${NEEDS}")"
           if [ -n "${failures}" ]; then
             echo "::error::jobs did not succeed: ${failures//$'\n'/, }"
             exit 1
