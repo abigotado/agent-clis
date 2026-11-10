@@ -3,74 +3,135 @@
 #
 # Install with `.githooks/install`, remove with `.githooks/uninstall`.
 # Do not bypass with `git push --no-verify` — if the gate is wrong, fix the gate.
+#
+# The gate validates the commits being pushed, not the working tree: each pushed
+# tip is checked out into a temporary worktree and gated there. Anything the
+# hook cannot resolve fails closed.
 set -euo pipefail
-
-repo_root=$(git rev-parse --show-toplevel)
-cd "$repo_root"
 
 fail() {
   echo "pre-push: $1" >&2
   exit 1
 }
 
-if ! command -v go >/dev/null 2>&1; then
-  fail "go is not on PATH"
-fi
+# Git hands a hook its own repository through the environment; the temporary
+# worktrees must resolve their own.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
 
-# Every tracked Go module is gated. No tracked module at all means the checkout
-# is wrong, so it fails instead of skipping the Go gate.
-modules=$(git -c core.quotePath=false ls-files -- go.mod '*/go.mod')
-if [ -z "$modules" ]; then
-  fail "no tracked Go module"
-fi
+repo_root=$(git rev-parse --show-toplevel) || fail "not inside a git checkout"
+cd "$repo_root"
 
-while IFS= read -r module; do
-  dir=$(dirname "$module")
-  echo "pre-push: $dir: gofmt"
-  # Tracked files only: a filesystem walk would descend into nested worktrees.
-  unformatted=$(git ls-files -z -- "$dir/*.go" | xargs -0 gofmt -l) \
-    || fail "$dir: gofmt failed"
-  if [ -n "$unformatted" ]; then
-    echo "$unformatted" >&2
-    fail "$dir: the files above are not gofmt-clean"
+command -v go >/dev/null 2>&1 || fail "go is not on PATH"
+
+# Gate one checked-out tree. The caller runs it in a subshell with its working
+# directory at that tree's root and stdin closed.
+gate_tree() {
+  local label=$1 modules module dir unformatted
+
+  # Every tracked Go module is gated. No tracked module at all means the
+  # checkout is wrong, so it fails instead of skipping the Go gate.
+  modules=$(git -c core.quotePath=false ls-files -- go.mod '*/go.mod')
+  [ -n "$modules" ] || fail "$label: no tracked Go module"
+
+  # Modules are read on fd 3 so a command in the body that reads stdin cannot
+  # swallow the modules that follow.
+  while IFS= read -r -u 3 module; do
+    dir=$(dirname "$module")
+    echo "pre-push: $label: $dir: gofmt"
+    # Tracked files only: a filesystem walk would descend into nested worktrees.
+    unformatted=$(git ls-files -z -- "$dir/*.go" | xargs -0 gofmt -l) \
+      || fail "$dir: gofmt failed"
+    if [ -n "$unformatted" ]; then
+      echo "$unformatted" >&2
+      fail "$dir: the files above are not gofmt-clean"
+    fi
+
+    echo "pre-push: $label: $dir: go vet"
+    GOWORK=off go -C "$dir" vet ./... || fail "$dir: go vet failed"
+
+    echo "pre-push: $label: $dir: go build"
+    GOWORK=off go -C "$dir" build ./... || fail "$dir: go build failed"
+
+    echo "pre-push: $label: $dir: go test"
+    GOWORK=off go -C "$dir" test -race ./... || fail "$dir: go test failed"
+  done 3<<<"$modules"
+
+  # The agent harness is compiled, not hand-written. A drifted mirror means the
+  # canonical .agents/ inputs changed without recompiling.
+  local python_bin="${AGENT_HARNESS_PYTHON:-python3}"
+  if [ -d .agents ] && "$python_bin" -c 'pass' >/dev/null 2>&1; then
+    echo "pre-push: $label: agent harness"
+    "$python_bin" .agents/scripts/sync-rules.py --check || fail "Cursor rule mirrors are out of sync"
+    "$python_bin" -m unittest discover -s .agents/tests -p 'test_*.py' -q \
+      || fail "harness unit tests failed"
+
+    local tracked
+    tracked=$(git ls-files .claude .codex)
+    if [ -n "$tracked" ]; then
+      echo "$tracked" >&2
+      fail "generated provider mirrors are committed; remove them"
+    fi
   fi
+}
 
-  echo "pre-push: $dir: go vet"
-  GOWORK=off go -C "$dir" vet ./... || fail "$dir: go vet failed"
-
-  echo "pre-push: $dir: go build"
-  GOWORK=off go -C "$dir" build ./... || fail "$dir: go build failed"
-
-  echo "pre-push: $dir: go test"
-  GOWORK=off go -C "$dir" test -race ./... || fail "$dir: go test failed"
-done <<<"$modules"
-
-# The agent harness is compiled, not hand-written. A drifted mirror means the
-# canonical .agents/ inputs changed without recompiling.
-python_bin="${AGENT_HARNESS_PYTHON:-python3}"
-if [ -d .agents ] && "$python_bin" -c 'pass' >/dev/null 2>&1; then
-  echo "pre-push: agent harness"
-  "$python_bin" .agents/scripts/sync-rules.py --check || fail "Cursor rule mirrors are out of sync"
-  "$python_bin" -m unittest discover -s .agents/tests -p 'test_*.py' -q \
-    || fail "harness unit tests failed"
-
-  tracked=$(git ls-files .claude .codex)
-  if [ -n "$tracked" ]; then
-    echo "$tracked" >&2
-    fail "generated provider mirrors are committed; remove them"
-  fi
-
-  # The provider compiler is the machine-local global harness, so CI cannot run
-  # it. This is the only place compile drift gets caught — but a contributor
-  # without the global harness must still be able to push, so a missing
-  # compiler warns rather than fails.
-  global_compiler="${HOME}/.agents/compiler.py"
+# The provider compiler is the machine-local global harness, so CI cannot run
+# it. Its mirrors are git-ignored, so they exist only in the real checkout and
+# only describe the commit checked out there.
+check_provider_mirrors() {
+  local python_bin="${AGENT_HARNESS_PYTHON:-python3}"
+  [ -d .agents ] && "$python_bin" -c 'pass' >/dev/null 2>&1 || return 0
+  local global_compiler="${HOME}/.agents/compiler.py"
   if [ -f "$global_compiler" ]; then
     "$python_bin" "$global_compiler" --source .agents --root . --scope project --check \
       || fail "provider mirrors are out of date; recompile before pushing"
   else
     echo "pre-push: WARN: $global_compiler not found; skipped provider mirror check" >&2
   fi
-fi
+}
 
-echo "pre-push: ok"
+# Read every pushed ref before running anything that could consume stdin.
+refs=$(cat)
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/pre-push.XXXXXX") || fail "cannot create a temporary directory"
+cleanup() {
+  local worktree
+  for worktree in "$tmp"/wt-*; do
+    [ -e "$worktree" ] && git worktree remove --force "$worktree" >/dev/null 2>&1
+  done
+  rm -rf "$tmp"
+  git worktree prune >/dev/null 2>&1
+  return 0
+}
+trap cleanup EXIT
+
+head_commit=$(git rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)
+seen=" "
+gated=0
+mirrors_checked=0
+while IFS=' ' read -r -u 3 local_ref local_sha remote_ref remote_sha _extra; do
+  [ -n "${local_ref}${local_sha}" ] || continue
+  [ -n "$local_ref" ] && [ -n "$local_sha" ] && [ -n "$remote_ref" ] && [ -n "$remote_sha" ] \
+    || fail "cannot parse the pushed ref line: ${local_ref} ${local_sha} ${remote_ref}"
+  # Deleting a ref pushes nothing to validate.
+  if [[ "$local_sha" =~ ^0+$ ]]; then
+    echo "pre-push: $remote_ref: delete, nothing to validate"
+    continue
+  fi
+  commit=$(git rev-parse --verify "${local_sha}^{commit}" 2>/dev/null) \
+    || fail "$local_ref: $local_sha does not resolve to a commit"
+  case "$seen" in *" $commit "*) continue ;; esac
+  seen="$seen$commit "
+
+  worktree="$tmp/wt-$gated"
+  git worktree add --quiet --detach "$worktree" "$commit" >/dev/null \
+    || fail "$local_ref: cannot check out $commit"
+  (cd "$worktree" && gate_tree "${commit:0:12}" </dev/null) || exit 1
+  gated=$((gated + 1))
+
+  if [ "$commit" = "$head_commit" ] && [ "$mirrors_checked" -eq 0 ]; then
+    check_provider_mirrors
+    mirrors_checked=1
+  fi
+done 3<<<"$refs"
+
+[ "$gated" -gt 0 ] && echo "pre-push: ok" || echo "pre-push: nothing to validate"

@@ -1,5 +1,10 @@
 #!/usr/bin/env ruby
 
+# This guard is line- and step-based. It matches workflow text and compares YAML
+# steps against pinned copies; it does not model shell context (quoting, here-docs,
+# functions, eval, variable indirection), so it narrows what a workflow can
+# spell, it does not prove what a shell will run. Review shell-level changes by hand.
+
 require "pathname"
 require "yaml"
 
@@ -34,7 +39,10 @@ VERIFY_BOUNDARY_RUN = <<~'SH'
   set -euo pipefail
   go test -race ./...
   go test -tags portable_readonly ./...
-  test -z "$(go list -tags portable_readonly -deps ./cmd/youtrack-agent-cli | grep -E '/internal/(auth|application|journal|mutation|operatorwrite|youtrack)$' || true)"
+  deps="$(go list -tags portable_readonly -deps ./cmd/youtrack-agent-cli)"
+  test -n "${deps}"
+  forbidden="$(grep -E '^net/http(/|$)|/internal/(auth|application|journal|mutation|oauth|oauthrecovery|operatorwrite|youtrack)(/|$)' <<<"${deps}" || true)"
+  if [ -n "${forbidden}" ]; then echo "portable build links forbidden packages:" >&2; echo "${forbidden}" >&2; exit 1; fi
   go build -tags portable_readonly -o "${RUNNER_TEMP}/portable-readonly" ./cmd/youtrack-agent-cli
   "${RUNNER_TEMP}/portable-readonly" --help | grep -Eq '^  profile +Manage non-secret read-only Remote MCP profiles$'
   ! "${RUNNER_TEMP}/portable-readonly" --help | grep -Eiq 'auth|inspect|mutation|operator-write'
@@ -190,6 +198,7 @@ CI_GORELEASER_STEPS = {
       ruby .github/scripts/verify-portable-release-policy_test.rb
       ruby .github/scripts/verify-portable-release-policy.rb youtrack-agent-cli/.goreleaser.yaml .
       ruby .github/scripts/ci-changes_test.rb
+      bash .github/scripts/pre-push_test.sh
     SH
   },
   CI_GORELEASER_JOB => {

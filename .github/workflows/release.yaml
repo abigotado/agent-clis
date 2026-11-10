@@ -49,7 +49,10 @@ jobs:
           set -euo pipefail
           go test -race ./...
           go test -tags portable_readonly ./...
-          test -z "$(go list -tags portable_readonly -deps ./cmd/youtrack-agent-cli | grep -E '/internal/(auth|application|journal|mutation|operatorwrite|youtrack)$' || true)"
+          deps="$(go list -tags portable_readonly -deps ./cmd/youtrack-agent-cli)"
+          test -n "${deps}"
+          forbidden="$(grep -E '^net/http(/|$)|/internal/(auth|application|journal|mutation|oauth|oauthrecovery|operatorwrite|youtrack)(/|$)' <<<"${deps}" || true)"
+          if [ -n "${forbidden}" ]; then echo "portable build links forbidden packages:" >&2; echo "${forbidden}" >&2; exit 1; fi
           go build -tags portable_readonly -o "${RUNNER_TEMP}/portable-readonly" ./cmd/youtrack-agent-cli
           "${RUNNER_TEMP}/portable-readonly" --help | grep -Eq '^  profile +Manage non-secret read-only Remote MCP profiles$'
           ! "${RUNNER_TEMP}/portable-readonly" --help | grep -Eiq 'auth|inspect|mutation|operator-write'
