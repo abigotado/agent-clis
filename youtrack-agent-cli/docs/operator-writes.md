@@ -177,8 +177,7 @@ New `issue.update` plans are v4; creation and comment addition continue to
 prepare v2 plans. V1/v2 bytes and hashes are preserved, v2 plans remain
 accepted and appliable, and both versions reject deletion; v3 accepts only
 `comment.delete` and v4 only `issue.update`. Only v4 can encode a User field or
-an explicit `null` target (clear); v1-v3 plans refuse both. `snapshot` does not
-select either yet.
+an explicit `null` target (clear); v1-v3 plans refuse both.
 Legacy plan schema v1 retains its exact bytes, digest, 15-minute expiry and
 claim validation; its results report `legacy_time_limited` and the original
 `expires_at`. Upgrading never migrates, extends or revives those plans. An old

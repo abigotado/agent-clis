@@ -3,12 +3,14 @@ package application
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
@@ -416,6 +418,36 @@ func TestOperatorUserFieldSentinelsStayOutOfSnapshotPlanAndErrors(t *testing.T) 
 			texts = append(texts, []byte(typed.Message+typed.Hint))
 		}
 	}
+	// Apply, status and reconcile surfaces and their stored records.
+	addInfo := func(info OperatorWriteInfo) {
+		raw, marshalErr := json.Marshal(info)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		texts = append(texts, raw)
+	}
+	applyPlan := f.preparePlanFor(t, userSet("carol"))
+	f.postStatus, f.postBody = http.StatusOK, userIssueJSON(`{"id":"1-6","login":"carol","$type":"User","fullName":"`+userSentinelFullName+`"}`)
+	applied, err := f.apply(t, applyPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addInfo(applied)
+	status, err := f.service.OperatorWriteStatus(t.Context(), applyPlan.PlanID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addInfo(status)
+	reconcilePlan := f.preparePlanFor(t, userClear())
+	if _, err := f.service.OperatorWrites.Claim(t.Context(), reconcilePlan.PlanID, reconcilePlan.IntentSHA256, f.service.currentTime()); err != nil {
+		t.Fatal(err)
+	}
+	f.useUserField(`null`, true, defaultUsers())
+	reconciled, err := f.service.ReconcileOperatorWrite(t.Context(), OperatorReconcileInput{Profile: "work", PlanID: reconcilePlan.PlanID, Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addInfo(reconciled)
 	// Files on disk: the --out snapshot export, the --out plan export and the
 	// stored plan itself.
 	dir := t.TempDir()
@@ -462,4 +494,44 @@ func TestOperatorUserFieldSentinelsStayOutOfSnapshotPlanAndErrors(t *testing.T) 
 			}
 		}
 	}
+}
+
+type failingTransport struct{ requests atomic.Int32 }
+
+func (r *failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	r.requests.Add(1)
+	return nil, errors.New("unexpected network request")
+}
+
+func TestSnapshotOperatorWriteClearSelectionValidation(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input OperatorSnapshotInput
+	}{
+		{"clear with value name", OperatorSnapshotInput{Kind: "issue.update", IssueID: "APP-12", Fields: []OperatorFieldSelection{{FieldName: "Stage", ValueName: "Done", Clear: true}}}},
+		{"clear with value id", OperatorSnapshotInput{Kind: "issue.update", IssueID: "APP-12", Fields: []OperatorFieldSelection{{FieldName: "Stage", ValueID: "101-1", Clear: true}}}},
+		{"clear on comment.add", OperatorSnapshotInput{Kind: "comment.add", IssueID: "APP-12", Fields: []OperatorFieldSelection{{FieldName: "Stage", Clear: true}}}},
+		{"two clear selections", OperatorSnapshotInput{Kind: "issue.update", IssueID: "APP-12", Fields: []OperatorFieldSelection{{FieldName: "Stage", Clear: true}, {FieldName: "Assignee", Clear: true}}}},
+		{"clear with field name and id", OperatorSnapshotInput{Kind: "issue.update", IssueID: "APP-12", Fields: []OperatorFieldSelection{{FieldName: "Stage", FieldID: "92-1", Clear: true}}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newOperatorFixture(t)
+			trap := &failingTransport{}
+			f.service.HTTP = trap
+			test.input.Profile = "work"
+			_, err := f.service.SnapshotOperatorWrite(t.Context(), test.input)
+			requireRefusal(t, err, "USAGE", errx.CodeUsage)
+			if trap.requests.Load() != 0 || f.posts.Load() != 0 || f.pages.Load() != 0 {
+				t.Fatalf("network touched: requests=%d posts=%d pages=%d", trap.requests.Load(), f.posts.Load(), f.pages.Load())
+			}
+		})
+	}
+}
+
+// The fixture profile lacks issue-create, so the capability check would pre-empt
+// the selection check through SnapshotOperatorWrite; validateOperatorTarget runs
+// before any credential or network access and is exercised directly.
+func TestValidateOperatorTargetRefusesClearOnCreate(t *testing.T) {
+	err := validateOperatorTarget(operatorwrite.KindIssueCreate, OperatorSnapshotInput{Kind: "issue.create", ProjectID: "0-3", Fields: []OperatorFieldSelection{{FieldName: "Stage", Clear: true}}})
+	requireRefusal(t, err, "USAGE", errx.CodeUsage)
 }
