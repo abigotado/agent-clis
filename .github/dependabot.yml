@@ -5,7 +5,8 @@ updates:
   # x/term — so grouping everything into one PR keeps the noise low
   # while still surfacing an update promptly.
   - package-ecosystem: gomod
-    directory: "/"
+    directories:
+      - "/youtrack-agent-cli"
     schedule:
       interval: weekly
     groups:
