@@ -333,6 +333,39 @@ func TestUpdateIssueVerifiesTouchedFieldIdentityTypeAndValue(t *testing.T) {
 	}
 }
 
+func TestUpdateIssueVerifiesSingleUserNestedType(t *testing.T) {
+	const userType = "SingleUserIssueCustomField"
+	field := func(value string) string {
+		return `[{"id":"issue-field-1","name":"Assignee","$type":"` + userType + `","value":` + value + `}]`
+	}
+	tests := []struct {
+		name, expected, returned string
+		wantUnknown              bool
+	}{
+		{"user type matches", `{"id":"1-6"}`, field(`{"id":"1-6","login":"carol","$type":"User"}`), false},
+		{"group type contradicts", `{"id":"1-6"}`, field(`{"id":"1-6","$type":"Group"}`), true},
+		{"missing type", `{"id":"1-6"}`, field(`{"id":"1-6","login":"carol"}`), true},
+		{"user id mismatch", `{"id":"1-6"}`, field(`{"id":"1-7","$type":"User"}`), true},
+		{"non-object value", `{"id":"1-6"}`, field(`"carol"`), true},
+		{"clear to null", `null`, field(`null`), false},
+		{"clear but still set", `null`, field(`{"id":"1-6","$type":"User"}`), true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				_, _ = io.WriteString(writer, strings.Replace(validIssueJSON("APP-12", "Summary"), `"customFields":[]`, `"customFields":`+test.returned, 1))
+			}))
+			defer server.Close()
+			_, err := newTestClient(t, server).UpdateIssue(context.Background(), UpdateIssueInput{IssueID: "2-12", ProjectID: "0-3", ProjectKey: "APP", CustomFields: []CustomFieldUpdate{{ID: "issue-field-1", Type: userType, Value: json.RawMessage(test.expected)}}})
+			if test.wantUnknown {
+				assertError(t, err, errx.CodeConflict, "WRITE_OUTCOME_UNKNOWN")
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 type commentFailureTransport struct {
 	calls      atomic.Int32
 	replayable atomic.Bool
