@@ -175,6 +175,10 @@ func (s *Service) SnapshotOperatorWrite(ctx context.Context, input OperatorSnaps
 			}
 			snapshot.Field = &field
 		}
+		if kind == operatorwrite.KindIssueEdit {
+			// Only hashes of the current text are frozen, never the text.
+			snapshot.Text = operatorEditPrecondition(issue)
+		}
 		if kind == operatorwrite.KindCommentDelete {
 			target, err := client.GetCommentForDeletion(ctx, issue.ID, input.CommentID)
 			if err != nil {
@@ -263,8 +267,41 @@ func validateOperatorTarget(kind operatorwrite.Kind, input OperatorSnapshotInput
 		if err := youtrack.ValidateDeleteCommentInput(youtrack.DeleteCommentInput{IssueID: input.IssueID, CommentID: input.CommentID}); err != nil {
 			return err
 		}
+	case operatorwrite.KindIssueEdit:
+		if input.IssueID == "" || input.ProjectID != "" || input.CommentID != "" {
+			return errx.Usage("issue.edit snapshot requires an exact --id and no --project")
+		}
+		if len(input.Fields) != 0 {
+			return errx.Usage("issue.edit snapshot does not accept field or value selectors")
+		}
 	default:
 		return errx.Usage("unsupported operator-write kind")
+	}
+	return nil
+}
+
+// operatorEditPrecondition is the one place that turns the current issue text
+// into the frozen hashes, used at snapshot and again at apply.
+func operatorEditPrecondition(issue youtrack.Issue) *operatorwrite.TextPrecondition {
+	summary := issue.Summary
+	return &operatorwrite.TextPrecondition{SummarySHA256: operatorwrite.HashText(&summary), DescriptionSHA256: operatorwrite.HashText(issue.Description)}
+}
+
+func errTextUnchanged() *errx.Error {
+	return errx.Unsupported("OPERATOR_TEXT_UNCHANGED", "the requested text equals the current text").WithHint("nothing to change; do not retry unchanged")
+}
+
+// requireEditChangesText refuses an issue.edit whose every requested text
+// already equals the current one, judged by hash so the old text is never held.
+func requireEditChangesText(plan operatorwrite.Plan) error {
+	if plan.Snapshot.Kind != operatorwrite.KindIssueEdit || plan.Snapshot.Text == nil {
+		return nil
+	}
+	summary, description := plan.Request.Summary, plan.Request.Description
+	changed := summary != "" && operatorwrite.HashText(&summary) != plan.Snapshot.Text.SummarySHA256 ||
+		description != "" && operatorwrite.HashText(&description) != plan.Snapshot.Text.DescriptionSHA256
+	if !changed {
+		return errTextUnchanged()
 	}
 	return nil
 }
@@ -590,6 +627,9 @@ func (s *Service) PrepareOperatorWrite(ctx context.Context, input OperatorPrepar
 	if err != nil {
 		return OperatorWriteInfo{}, err
 	}
+	if err := requireEditChangesText(plan); err != nil {
+		return OperatorWriteInfo{}, err
+	}
 	if input.DryRun {
 		result := operatorRecordInfo(operatorwrite.Record{Plan: plan, State: operatorwrite.StatePrepared})
 		result.State = "validated_not_applied"
@@ -667,6 +707,12 @@ func (s *Service) ApplyOperatorWrite(ctx context.Context, input OperatorApplyInp
 	var updateInput youtrack.UpdateIssueInput
 	if plan.Snapshot.Kind == operatorwrite.KindIssueUpdate {
 		updateInput, err = operatorUpdateInput(plan)
+		if err != nil {
+			return OperatorWriteInfo{}, err
+		}
+	}
+	if plan.Snapshot.Kind == operatorwrite.KindIssueEdit {
+		updateInput, err = operatorEditInput(plan)
 		if err != nil {
 			return OperatorWriteInfo{}, err
 		}
@@ -778,13 +824,20 @@ func verifyOperatorRemote(ctx context.Context, client *youtrack.Client, snapshot
 			}
 		}
 		return nil
-	case operatorwrite.KindIssueUpdate, operatorwrite.KindCommentAdd, operatorwrite.KindCommentDelete:
+	case operatorwrite.KindIssueUpdate, operatorwrite.KindIssueEdit, operatorwrite.KindCommentAdd, operatorwrite.KindCommentDelete:
 		issue, err := client.GetIssue(ctx, snapshot.Issue.ID)
 		if err != nil {
 			return err
 		}
 		if issue.Project.Archived || issue.Project.ID != snapshot.Issue.ProjectID || issue.Project.ShortName != snapshot.Issue.ProjectKey || issue.Updated != snapshot.Issue.Updated {
 			return errx.Conflict("OPERATOR_ISSUE_STALE", "target issue project or updated timestamp changed").WithHint("inspect a new snapshot and prepare a fresh intent")
+		}
+		if snapshot.Kind == operatorwrite.KindIssueEdit {
+			// A text change that left `updated` untouched is still drift.
+			if snapshot.Text == nil || *operatorEditPrecondition(issue) != *snapshot.Text {
+				return errx.Conflict("OPERATOR_ISSUE_STALE", "target issue summary or description changed").WithHint("inspect a new snapshot and prepare a fresh intent")
+			}
+			return nil
 		}
 		if snapshot.Kind == operatorwrite.KindCommentAdd {
 			return nil
@@ -854,7 +907,7 @@ func dispatchOperatorWrite(ctx context.Context, client *youtrack.Client, plan op
 	case operatorwrite.KindIssueCreate:
 		issue, err := client.CreateIssue(ctx, operatorCreateInput(plan))
 		return issue.ID, issue.IDReadable, err
-	case operatorwrite.KindIssueUpdate:
+	case operatorwrite.KindIssueUpdate, operatorwrite.KindIssueEdit:
 		issue, err := client.UpdateIssue(ctx, update)
 		return issue.ID, "", err
 	case operatorwrite.KindCommentAdd:
@@ -916,6 +969,24 @@ func operatorUpdateInput(plan operatorwrite.Plan) (youtrack.UpdateIssueInput, er
 	}
 	input := youtrack.UpdateIssueInput{IssueID: snapshot.Issue.ID, ProjectID: snapshot.Issue.ProjectID, ProjectKey: snapshot.Issue.ProjectKey,
 		CustomFields: []youtrack.CustomFieldUpdate{{ID: snapshot.Field.IssueFieldID, Type: snapshot.Field.Type, Value: value}}}
+	if err := youtrack.ValidateUpdateIssueInput(input); err != nil {
+		return youtrack.UpdateIssueInput{}, err
+	}
+	return input, nil
+}
+
+// operatorEditInput is the one issue.edit payload: summary and description
+// only, no custom fields. It is built and validated before the plan is claimed
+// and then dispatched unchanged. An empty request text means "not edited".
+func operatorEditInput(plan operatorwrite.Plan) (youtrack.UpdateIssueInput, error) {
+	snapshot := plan.Snapshot
+	input := youtrack.UpdateIssueInput{IssueID: snapshot.Issue.ID, ProjectID: snapshot.Issue.ProjectID, ProjectKey: snapshot.Issue.ProjectKey}
+	if summary := plan.Request.Summary; summary != "" {
+		input.Summary = &summary
+	}
+	if description := plan.Request.Description; description != "" {
+		input.Description = &description
+	}
 	if err := youtrack.ValidateUpdateIssueInput(input); err != nil {
 		return youtrack.UpdateIssueInput{}, err
 	}
@@ -1002,7 +1073,7 @@ func (s *Service) ReconcileOperatorWrite(ctx context.Context, input OperatorReco
 			outcome.RemoteID, outcome.RemoteReadableID = observed.ID, observed.IDReadable
 			evidence = observedEvidence
 		}
-	case operatorwrite.KindIssueUpdate, operatorwrite.KindCommentAdd:
+	case operatorwrite.KindIssueUpdate, operatorwrite.KindIssueEdit, operatorwrite.KindCommentAdd:
 		issue, err := client.GetIssue(ctx, snapshot.Issue.ID)
 		if err != nil {
 			return OperatorWriteInfo{}, err
@@ -1010,7 +1081,13 @@ func (s *Service) ReconcileOperatorWrite(ctx context.Context, input OperatorReco
 		if issue.Project.ID != snapshot.Issue.ProjectID || issue.Project.ShortName != snapshot.Issue.ProjectKey {
 			return OperatorWriteInfo{}, errx.Conflict("OPERATOR_PROJECT_CHANGED", "target issue moved from the frozen project")
 		}
-		if snapshot.Kind == operatorwrite.KindIssueUpdate {
+		if snapshot.Kind == operatorwrite.KindIssueEdit {
+			request := record.Plan.Request
+			if (request.Summary == "" || issue.Summary == request.Summary) &&
+				(request.Description == "" || issue.Description != nil && *issue.Description == request.Description) {
+				evidence = "desired_value_observed_without_causal_proof"
+			}
+		} else if snapshot.Kind == operatorwrite.KindIssueUpdate {
 			for _, field := range issue.CustomFields {
 				if field.ID == snapshot.Field.IssueFieldID && field.Type == snapshot.Field.Type {
 					if operatorFieldValueObserved(*snapshot.Field, field.Value) {
