@@ -173,10 +173,10 @@ existing selectable field vocabulary and returns an empty string for v2/v3/v4; u
 The unchanged `source`/lane name `operator-write-v1` identifies the operator
 storage namespace, not the nested plan schema or JSON envelope version.
 
-New `issue.update` plans are v4; creation and comment addition continue to
+New `issue.update` and `issue.edit` plans are v4; creation and comment addition continue to
 prepare v2 plans. V1/v2 bytes and hashes are preserved, v2 plans remain
 accepted and appliable, and both versions reject deletion; v3 accepts only
-`comment.delete` and v4 only `issue.update`. Only v4 can encode a User field or
+`comment.delete` and v4 only `issue.update` and `issue.edit`. Only v4 can encode a User field or
 an explicit `null` target (clear); v1-v3 plans refuse both.
 Legacy plan schema v1 retains its exact bytes, digest, 15-minute expiry and
 claim validation; its results report `legacy_time_limited` and the original
