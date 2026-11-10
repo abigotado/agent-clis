@@ -43,6 +43,8 @@ func requireOperatorProfile(selected profile.Profile, kind operatorwrite.Kind) e
 		capability = profile.CapabilityCommentAdd
 	case operatorwrite.KindCommentDelete:
 		capability = profile.CapabilityCommentDelete
+	case operatorwrite.KindIssueEdit:
+		capability = profile.CapabilityIssueEdit
 	default:
 		return errx.Usage("unsupported operator-write kind")
 	}

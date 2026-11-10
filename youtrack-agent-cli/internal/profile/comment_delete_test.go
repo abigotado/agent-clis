@@ -54,3 +54,57 @@ func TestCommentDeleteCapabilityRequiresExplicitProfileChange(t *testing.T) {
 		t.Fatal("selection identity did not bind the explicit comment-delete grant")
 	}
 }
+
+func TestIssueEditCapabilityIsExplicitAndCanonical(t *testing.T) {
+	tests := []struct {
+		name         string
+		capabilities []Capability
+		wantValid    bool
+	}{
+		{name: "edit only after read", capabilities: []Capability{CapabilityRead, CapabilityIssueEdit}, wantValid: true},
+		{name: "edit after delete", capabilities: []Capability{CapabilityRead, CapabilityCommentAdd, CapabilityCommentDelete, CapabilityIssueEdit}, wantValid: true},
+		{name: "edit before delete is rejected", capabilities: []Capability{CapabilityRead, CapabilityIssueEdit, CapabilityCommentDelete}},
+		{name: "edit before issue update is rejected", capabilities: []Capability{CapabilityRead, CapabilityIssueEdit, CapabilityIssueUpdate}},
+		{name: "duplicate edit is rejected", capabilities: []Capability{CapabilityRead, CapabilityIssueEdit, CapabilityIssueEdit}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateCapabilities(test.capabilities)
+			if test.wantValid && err != nil {
+				t.Fatalf("ValidateCapabilities() error = %v", err)
+			}
+			if !test.wantValid && !errors.Is(err, ErrInvalidProfile) {
+				t.Fatalf("ValidateCapabilities() error = %v, want ErrInvalidProfile", err)
+			}
+		})
+	}
+	if capabilityRank(CapabilityIssueEdit) != 5 || capabilityRank(CapabilityCommentDelete) != 4 {
+		t.Fatalf("ranks edit=%d delete=%d", capabilityRank(CapabilityIssueEdit), capabilityRank(CapabilityCommentDelete))
+	}
+}
+
+func TestIssueEditCapabilityRequiresExplicitProfileChange(t *testing.T) {
+	legacy, err := testProfile("work").WithNewCredentialGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.HasCapability(CapabilityIssueEdit) {
+		t.Fatal("legacy profile unexpectedly grants issue-edit")
+	}
+	withDelete := legacy
+	withDelete.Capabilities = append(append([]Capability(nil), legacy.Capabilities...), CapabilityCommentDelete)
+	if withDelete.HasCapability(CapabilityIssueEdit) {
+		t.Fatal("comment-delete implies issue-edit")
+	}
+	edit := withDelete
+	edit.Capabilities = append(append([]Capability(nil), withDelete.Capabilities...), CapabilityIssueEdit)
+	if err := edit.Validate(); err != nil {
+		t.Fatalf("explicit edit profile validation failed: %v", err)
+	}
+	if !edit.HasCapability(CapabilityIssueEdit) || !edit.HasCapability(CapabilityCommentDelete) {
+		t.Fatal("explicit issue-edit profile lost a capability")
+	}
+	if CredentialIdentity(withDelete) == CredentialIdentity(edit) || SelectionIdentity(withDelete) == SelectionIdentity(edit) {
+		t.Fatal("identity did not bind the explicit issue-edit grant")
+	}
+}
