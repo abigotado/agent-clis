@@ -5,73 +5,214 @@ require "yaml"
 
 ALLOWED_ACTIONS = %w[actions/checkout actions/setup-go actions/setup-python].freeze
 READONLY_TAG = "portable_readonly"
+MODULE_PREFIX = "github.com/abigotado/agent-clis/youtrack-agent-cli"
 CHECKOUT_STEP = {
   "name" => "Git checkout",
   "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "with" => { "fetch-depth" => 0, "persist-credentials" => false },
 }.freeze
+# Release builds must not restore mutable caches.
 SETUP_GO_STEP = {
   "name" => "Set up Go",
   "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
-  "with" => { "go-version-file" => "go.mod", "cache" => true },
+  "with" => {
+    "go-version-file" => "youtrack-agent-cli/go.mod",
+    "cache" => false,
+    "cache-dependency-path" => "youtrack-agent-cli/go.sum",
+  },
 }.freeze
-VERIFY_TAG_RUN = <<~SH
+VERIFY_TAG_RUN = <<~'SH'
   set -euo pipefail
   test "${GITHUB_REF_TYPE}" = tag
-  printf '%s' "${GITHUB_REF_NAME}" | grep -Eq '^v0\\.[0-9]+\\.[0-9]+$'
+  printf '%s' "${GITHUB_REF_NAME}" | grep -Eq '^youtrack-agent-cli/v0\.[0-9]+\.[0-9]+$'
   release_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
   git fetch origin main:refs/remotes/origin/main
   git merge-base --is-ancestor "${release_commit}" origin/main
   git tag --points-at "${release_commit}" | grep -Fxq "${GITHUB_REF_NAME}"
 SH
-VERIFY_BOUNDARY_RUN = <<~SH
+VERIFY_BOUNDARY_RUN = <<~'SH'
   set -euo pipefail
   go test -race ./...
   go test -tags portable_readonly ./...
   test -z "$(go list -tags portable_readonly -deps ./cmd/youtrack-agent-cli | grep -E '/internal/(auth|application|journal|mutation|operatorwrite|youtrack)$' || true)"
-  go build -tags portable_readonly -o portable-readonly ./cmd/youtrack-agent-cli
-  ./portable-readonly --help | grep -Eq '^  profile +Manage non-secret read-only Remote MCP profiles$'
-  ! ./portable-readonly --help | grep -Eiq 'auth|inspect|mutation|operator-write'
+  go build -tags portable_readonly -o "${RUNNER_TEMP}/portable-readonly" ./cmd/youtrack-agent-cli
+  "${RUNNER_TEMP}/portable-readonly" --help | grep -Eq '^  profile +Manage non-secret read-only Remote MCP profiles$'
+  ! "${RUNNER_TEMP}/portable-readonly" --help | grep -Eiq 'auth|inspect|mutation|operator-write'
 SH
-VERIFY_POLICY_RUN = <<~SH
+VERIFY_POLICY_RUN = <<~'SH'
   set -euo pipefail
   go install github.com/goreleaser/goreleaser/v2@v2.17.1
-  goreleaser check
+  (cd youtrack-agent-cli && goreleaser check --config .goreleaser.yaml)
   ruby .github/scripts/verify-portable-release-policy_test.rb
-  ruby .github/scripts/verify-portable-release-policy.rb .goreleaser.yaml
+  ruby .github/scripts/verify-portable-release-policy.rb youtrack-agent-cli/.goreleaser.yaml .
 SH
+BUILD_RUN = <<~'SH'
+  set -euo pipefail
+  test -z "$(git status --porcelain)"
+  export CLI_VERSION="${GITHUB_REF_NAME#youtrack-agent-cli/v}"
+  goreleaser release --config .goreleaser.yaml --snapshot --clean
+  binary="$(ls -d dist/portable-readonly_linux_amd64*/)youtrack-agent-cli"
+  report="$("${binary}" version -o json)"
+  test "$(jq -r '.data.version' <<<"${report}")" = "${CLI_VERSION}"
+  test "$(jq -r '.data.commit' <<<"${report}")" = "$(git rev-parse "${GITHUB_REF}^{commit}")"
+  for arch in amd64 arm64; do
+    test "$(tar -tzf "dist/youtrack-agent-cli_${CLI_VERSION}_linux_${arch}.tar.gz" | LC_ALL=C sort | tr '\n' ' ')" = "LICENSE README.md youtrack-agent-cli "
+  done
+SH
+UPLOAD_PATHS = <<~'PATHS'
+  youtrack-agent-cli/dist/youtrack-agent-cli_*_linux_amd64.tar.gz
+  youtrack-agent-cli/dist/youtrack-agent-cli_*_linux_arm64.tar.gz
+  youtrack-agent-cli/dist/checksums.txt
+PATHS
+REVERIFY_DRAFT_RUN = <<~'SH'
+  set -euo pipefail
+  test "${GITHUB_REF_TYPE}" = tag
+  printf '%s' "${GITHUB_REF_NAME}" | grep -Eq '^youtrack-agent-cli/v0\.[0-9]+\.[0-9]+$'
+  object="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}" --jq '.object.type + " " + .object.sha')"
+  if [ "${object%% *}" = tag ]; then
+    object="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object##* }" --jq '.object.type + " " + .object.sha')"
+  fi
+  test "${object%% *}" = commit
+  commit="${object##* }"
+  test "${commit}" = "${GITHUB_SHA}"
+  status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${commit}...main" --jq '.status')"
+  [ "${status}" = ahead ] || [ "${status}" = identical ]
+  {
+    echo "COMMIT=${commit}"
+    echo "CLI_VERSION=${GITHUB_REF_NAME#youtrack-agent-cli/v}"
+  } >> "${GITHUB_ENV}"
+SH
+VERIFY_FILES_RUN = <<~'SH'
+  set -euo pipefail
+  archives="$(printf '%s\n' "youtrack-agent-cli_${CLI_VERSION}_linux_amd64.tar.gz" "youtrack-agent-cli_${CLI_VERSION}_linux_arm64.tar.gz" | LC_ALL=C sort)"
+  test "$(find . -mindepth 1 -not -name checksums.txt -printf '%P\n' | LC_ALL=C sort)" = "${archives}"
+  test "$(awk '{print $2}' checksums.txt | LC_ALL=C sort)" = "${archives}"
+  sha256sum --check --strict checksums.txt
+SH
+CREATE_DRAFT_RUN = <<~'SH'
+  set -euo pipefail
+  existing="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '.[].tag_name')"
+  if grep -Fxq "${GITHUB_REF_NAME}" <<<"${existing}"; then
+    echo "a release already exists for ${GITHUB_REF_NAME}" >&2
+    exit 1
+  fi
+  printf '%s\n' "Portable read-only archives of youtrack-agent-cli ${CLI_VERSION}. The operator publishes this draft after checking it." > "${RUNNER_TEMP}/notes.md"
+  gh release create "${GITHUB_REF_NAME}" \
+    "artifacts/youtrack-agent-cli_${CLI_VERSION}_linux_amd64.tar.gz" \
+    "artifacts/youtrack-agent-cli_${CLI_VERSION}_linux_arm64.tar.gz" \
+    artifacts/checksums.txt \
+    --draft --verify-tag --target "${COMMIT}" \
+    --title "youtrack-agent-cli v${CLI_VERSION}" \
+    --notes-file "${RUNNER_TEMP}/notes.md"
+  object="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}" --jq '.object.type + " " + .object.sha')"
+  if [ "${object%% *}" = tag ]; then
+    object="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object##* }" --jq '.object.type + " " + .object.sha')"
+  fi
+  if [ "${object%% *}" != commit ] || [ "${object##* }" != "${COMMIT}" ]; then
+    echo "::error::tag ${GITHUB_REF_NAME} no longer resolves to ${COMMIT}; it moved during the job. The operator must delete the draft release before retrying."
+    exit 1
+  fi
+SH
+GH_ENV = { "GH_REPO" => "${{ github.repository }}", "GH_TOKEN" => "${{ github.token }}" }.freeze
 EXPECTED_RELEASE_WORKFLOW = {
-  "name" => "release-portable-readonly",
-  true => { "push" => { "tags" => ["v0.*"] } },
+  "name" => "release-youtrack-agent-cli",
+  true => { "push" => { "tags" => ["youtrack-agent-cli/v0.*"] } },
   "permissions" => { "contents" => "read" },
+  "env" => { "GOWORK" => "off" },
+  "concurrency" => { "group" => "release-${{ github.ref }}", "cancel-in-progress" => false },
   "jobs" => {
-    "verify-portable-readonly" => {
+    "verify" => {
       "name" => "Verify portable Remote-MCP read-only release", "runs-on" => "ubuntu-latest",
       "steps" => [
         CHECKOUT_STEP, SETUP_GO_STEP,
         { "name" => "Verify release tag is on main", "run" => VERIFY_TAG_RUN },
-        { "name" => "Verify portable read-only boundary", "run" => VERIFY_BOUNDARY_RUN },
+        { "name" => "Verify portable read-only boundary", "working-directory" => "youtrack-agent-cli", "run" => VERIFY_BOUNDARY_RUN },
         { "name" => "Verify release policy and config", "env" => { "GOTOOLCHAIN" => "auto" }, "run" => VERIFY_POLICY_RUN },
       ],
     },
-    "publish-portable-readonly" => {
-      "name" => "Publish checksummed portable read-only archives", "needs" => "verify-portable-readonly",
-      "permissions" => { "contents" => "write" }, "runs-on" => "ubuntu-latest",
+    "build" => {
+      "name" => "Build checksummed portable archives", "needs" => "verify", "runs-on" => "ubuntu-latest",
       "steps" => [
         CHECKOUT_STEP, SETUP_GO_STEP,
         { "name" => "Reverify release tag is on main", "run" => VERIFY_TAG_RUN },
         { "name" => "Install pinned GoReleaser", "env" => { "GOTOOLCHAIN" => "auto" }, "run" => "go install github.com/goreleaser/goreleaser/v2@v2.17.1" },
-        { "name" => "Publish checksummed portable read-only archives", "env" => { "GITHUB_TOKEN" => "${{ github.token }}" }, "run" => "goreleaser release --clean --config .goreleaser.yaml" },
+        { "name" => "Build and check the archives", "working-directory" => "youtrack-agent-cli", "run" => BUILD_RUN },
+        {
+          "name" => "Upload the archives",
+          "uses" => "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+          "with" => { "name" => "portable-archives", "path" => UPLOAD_PATHS, "if-no-files-found" => "error" },
+        },
+      ],
+    },
+    "draft" => {
+      "name" => "Create the draft release", "needs" => %w[verify build],
+      "permissions" => { "contents" => "write" }, "runs-on" => "ubuntu-latest",
+      "steps" => [
+        { "name" => "Reverify the tag against main", "env" => GH_ENV, "run" => REVERIFY_DRAFT_RUN },
+        {
+          "name" => "Download the archives",
+          "uses" => "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+          "with" => { "name" => "portable-archives", "path" => "artifacts" },
+        },
+        { "name" => "Verify the exact files and checksums", "working-directory" => "artifacts", "run" => VERIFY_FILES_RUN },
+        { "name" => "Create the draft", "env" => GH_ENV, "run" => CREATE_DRAFT_RUN },
       ],
     },
   },
 }.freeze
+# Workflows allowed to publish, each pinned to its approved content.
+PUBLISHERS = { ".github/workflows/release.yaml" => EXPECTED_RELEASE_WORKFLOW }.freeze
+# The tap publisher needs signing and its Environment, so nothing may occupy its
+# path until it is added to PUBLISHERS.
+RESERVED = %w[.github/workflows/tap.yaml .github/workflows/tap.yml].freeze
+CI_WORKFLOW = ".github/workflows/ci.yaml"
+CI_GATE = "ci-ok"
+CHECKOUT_INPUTS = %w[persist-credentials fetch-depth].freeze
+# The only lines outside the publishing workflows that may mention GoReleaser,
+# compared after stripping surrounding whitespace.
+GORELEASER_LINES = [
+  "ruby .github/scripts/verify-portable-release-policy.rb youtrack-agent-cli/.goreleaser.yaml .",
+  "- name: goreleaser check and portable build rehearsal",
+  "go install github.com/goreleaser/goreleaser/v2@v2.17.1",
+  "goreleaser check --config .goreleaser.yaml",
+  "goreleaser build --config .goreleaser.yaml --snapshot --clean --id portable-readonly",
+].freeze
+# The approved lines only count inside these exact ci.yaml steps, and the
+# rehearsal only inside a job pinned to the CLI's module directory: an approved
+# line run from another working directory would load an unchecked config.
+CI_GORELEASER_JOB = "youtrack"
+CI_GORELEASER_JOB_DEFAULTS = { "run" => { "working-directory" => "youtrack-agent-cli" } }.freeze
+CI_GORELEASER_STEPS = {
+  "repo" => {
+    "name" => "Release policy and change selection",
+    "run" => <<~'SH',
+      set -euo pipefail
+      ruby .github/scripts/verify-portable-release-policy_test.rb
+      ruby .github/scripts/verify-portable-release-policy.rb youtrack-agent-cli/.goreleaser.yaml .
+      ruby .github/scripts/ci-changes_test.rb
+    SH
+  },
+  CI_GORELEASER_JOB => {
+    "name" => "goreleaser check and portable build rehearsal",
+    "if" => "runner.os == 'Linux'",
+    "env" => { "GOTOOLCHAIN" => "auto", "CLI_VERSION" => "0.0.0" },
+    "run" => <<~'SH',
+      set -euo pipefail
+      go install github.com/goreleaser/goreleaser/v2@v2.17.1
+      goreleaser check --config .goreleaser.yaml
+      goreleaser build --config .goreleaser.yaml --snapshot --clean --id portable-readonly
+      binary="$(ls -d dist/portable-readonly_linux_amd64*/)youtrack-agent-cli"
+      test "$("${binary}" version -o json | jq -r '.data.version')" = "${CLI_VERSION}"
+    SH
+  },
+}.freeze
 
-path = ARGV.fetch(0) do
-  warn "usage: verify-portable-release-policy.rb GORELEASER_CONFIG [REPOSITORY_ROOT]"
+unless ARGV.length == 2
+  warn "usage: verify-portable-release-policy.rb GORELEASER_CONFIG REPOSITORY_ROOT"
   exit 2
 end
-root = File.expand_path(ARGV.fetch(1, File.dirname(File.expand_path(path))))
+path = ARGV.fetch(0)
+root = File.expand_path(ARGV.fetch(1))
 
 begin
   config = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
@@ -80,11 +221,13 @@ rescue Errno::ENOENT, Psych::Exception => error
   exit 1
 end
 
+relative_to_root = ->(candidate) { Pathname.new(candidate).relative_path_from(Pathname.new(root)).to_s }
+
 errors = []
 unless config.is_a?(Hash) && config["version"] == 2 && config["project_name"] == "youtrack-agent-cli"
   errors << "release config must identify the v2 youtrack-agent-cli project"
 end
-errors << "release config contains an unapproved top-level section" unless (config.keys - %w[version project_name builds archives checksum release]).empty?
+errors << "release config contains an unapproved top-level section" unless (config.keys - %w[version project_name builds archives checksum snapshot release]).empty?
 
 builds = config.fetch("builds", [])
 unless builds.length == 1
@@ -100,9 +243,9 @@ else
   errors << "portable build contains an unapproved setting" unless (build.keys - (expected.keys + ["ldflags"])).empty?
   expected_ldflags = [
     "-s -w",
-    "-X github.com/abigotado/youtrack-agent-cli/internal/readonlycli.releaseVersion={{ .Version }}",
-    "-X github.com/abigotado/youtrack-agent-cli/internal/readonlycli.releaseCommit={{ .FullCommit }}",
-    "-X github.com/abigotado/youtrack-agent-cli/internal/readonlycli.releaseCommitTime={{ .CommitDate }}",
+    "-X #{MODULE_PREFIX}/internal/readonlycli.releaseVersion={{ .Version }}",
+    "-X #{MODULE_PREFIX}/internal/readonlycli.releaseCommit={{ .FullCommit }}",
+    "-X #{MODULE_PREFIX}/internal/readonlycli.releaseCommitTime={{ .CommitDate }}",
   ]
   errors << "portable build has invalid provenance ldflags" unless build["ldflags"] == expected_ldflags
 end
@@ -116,30 +259,46 @@ unless archives == [expected_archive]
   errors << "release config must publish only portable read-only tar.gz archives"
 end
 errors << "release config must publish only the approved checksum" unless config["checksum"] == { "name_template" => "checksums.txt" }
-unless config["release"] == { "github" => { "owner" => "abigotado", "name" => "youtrack-agent-cli" } }
-  errors << "release config must target only the canonical GitHub repository"
-end
+errors << "release config must take its version from CLI_VERSION" unless config["snapshot"] == { "version_template" => "{{ .Env.CLI_VERSION }}" }
+errors << "release config must leave publication to the release workflow" unless config["release"] == { "disable" => true }
 %w[homebrew homebrew_casks nfpms docks brews blobs uploads universal_binaries].each do |key|
   errors << "portable release config must not define #{key}" if config.key?(key)
 end
 
-Dir.glob(File.join(root, "{Formula,Cask,Casks}/**/*.rb"), File::FNM_EXTGLOB).each do |candidate|
-  errors << "Homebrew Formula/Cask is forbidden: #{Pathname.new(candidate).relative_path_from(Pathname.new(root))}"
+Dir.glob(File.join(root, "{,*/}{Formula,Cask,Casks}/**/*.rb")).each do |candidate|
+  errors << "Homebrew Formula/Cask is forbidden: #{relative_to_root.call(candidate)}"
 end
 
-surface = [File.join(root, ".github/workflows/**/*"), File.join(root, "packaging/**/*"), File.join(root, "scripts/**/*")].flat_map { |glob| Dir.glob(glob) }.uniq
+# The trailing /**/* matters: a trailing /** does not recurse in Ruby and would
+# scan nothing.
+surface = [File.join(root, ".github/workflows/**/*"), File.join(root, "{,*/}{packaging,scripts}/**/*")].flat_map { |glob| Dir.glob(glob) }.uniq
 surface.each do |candidate|
   next unless File.file?(candidate)
-  relative = Pathname.new(candidate).relative_path_from(Pathname.new(root)).to_s
-  next if relative == ".github/workflows/release.yaml"
+  relative = relative_to_root.call(candidate)
+  next if PUBLISHERS.key?(relative)
   content = File.binread(candidate).force_encoding(Encoding::UTF_8).scrub
   errors << "#{relative} contains a Homebrew or quarantine bypass" if content.match?(/(?:\bbrew\s+(?:tap|tap-new|create|bump)|\bxattr\b|com\.apple\.quarantine|spctl\s+--master-disable)/i)
   errors << "#{relative} contains a publication action" if content.match?(/(?:\bgoreleaser\s+release\b|\bgh\s+(?:api|release)\b|action-gh-release|\/upload-artifact@)/i)
+  # Every line that mentions GoReleaser must be an approved line. A pattern for
+  # "has --config" can be dodged by continuations, prefixes or comments; without
+  # --config, GoReleaser prefers .config/goreleaser.y*ml or .goreleaser.yml.
+  # Outside ci.yaml nothing may mention it at all; inside, the steps are pinned below.
+  content.each_line.with_index(1) do |line, number|
+    next unless line.match?(/goreleaser/i)
+    next if relative == CI_WORKFLOW && GORELEASER_LINES.include?(line.strip)
+    errors << "#{relative}:#{number} mentions GoReleaser outside the approved lines: #{line.strip}"
+  end
 end
 
 workflows = Dir.glob(File.join(root, ".github/workflows/*.{yaml,yml}"))
+errors << "no workflows found under .github/workflows" if workflows.empty?
+present = workflows.map { |candidate| relative_to_root.call(candidate) }
+PUBLISHERS.each_key { |publisher| errors << "missing publishing workflow #{publisher}" unless present.include?(publisher) }
+(RESERVED & present).each { |reserved| errors << "#{reserved} is reserved for a publisher that is not approved yet" }
+errors << "missing #{CI_WORKFLOW}" unless present.include?(CI_WORKFLOW)
+
 workflows.each do |candidate|
-  relative = Pathname.new(candidate).relative_path_from(Pathname.new(root)).to_s
+  relative = relative_to_root.call(candidate)
   begin
     workflow = YAML.safe_load(File.read(candidate), permitted_classes: [], aliases: false)
   rescue Psych::Exception => error
@@ -150,12 +309,70 @@ workflows.each do |candidate|
     errors << "#{relative} must be a mapping"
     next
   end
-  release = relative == ".github/workflows/release.yaml"
-  permissions = workflow["permissions"]
-  if release
-    errors << "release workflow must equal the approved portable read-only publisher" unless workflow == EXPECTED_RELEASE_WORKFLOW
-  else
-    errors << "#{relative} must set read-only permissions" unless permissions == { "contents" => "read" }
+  checkouts = lambda do |value|
+    case value
+    when Hash
+      value.each do |key, item|
+        if key.to_s == "uses" && item.to_s.start_with?("actions/checkout@")
+          step_with = value["with"]
+          unless step_with.is_a?(Hash) && step_with["persist-credentials"] == false
+            errors << "#{relative} has an actions/checkout step without persist-credentials: false"
+          end
+          # repository, ref, path and the like would check out other code than
+          # the commit the policy validated.
+          extra = step_with.is_a?(Hash) ? step_with.keys.map(&:to_s) - CHECKOUT_INPUTS : []
+          errors << "#{relative} has an actions/checkout step with unapproved inputs: #{extra.join(', ')}" unless extra.empty?
+        end
+        checkouts.call(item)
+      end
+    when Array then value.each { |item| checkouts.call(item) }
+    end
+  end
+  checkouts.call(workflow)
+  if PUBLISHERS.key?(relative)
+    errors << "#{relative} must equal the approved publisher" unless workflow == PUBLISHERS.fetch(relative)
+    next
+  end
+  errors << "#{relative} must set read-only permissions" unless workflow["permissions"] == { "contents" => "read" }
+  if relative == CI_WORKFLOW
+    jobs = workflow["jobs"].is_a?(Hash) ? workflow["jobs"] : {}
+    gate = jobs[CI_GATE]
+    if gate.is_a?(Hash)
+      errors << "#{CI_GATE} must keep its job id as its name" unless gate["name"] == CI_GATE
+      errors << "#{CI_GATE} must need every other job" unless Array(gate["needs"]).sort == (jobs.keys - [CI_GATE]).sort
+      errors << "#{CI_GATE} must run with if: always()" unless gate["if"] == "always()"
+      gate_envs = Array(gate["steps"]).map { |step| step.is_a?(Hash) ? step["env"] : nil }
+      unless gate_envs.any? { |env| env.is_a?(Hash) && env["NEEDS"] == "${{ toJSON(needs) }}" }
+        errors << "#{CI_GATE} must pass NEEDS: ${{ toJSON(needs) }} to its verification step"
+      end
+    else
+      errors << "#{relative} has no #{CI_GATE} job"
+    end
+    forgiving = lambda do |value|
+      case value
+      when Hash then value.any? { |key, item| key.to_s == "continue-on-error" || forgiving.call(item) }
+      when Array then value.any? { |item| forgiving.call(item) }
+      else false
+      end
+    end
+    errors << "#{relative} must not use continue-on-error" if forgiving.call(jobs)
+    jobs.each do |job_id, job|
+      next unless job.is_a?(Hash)
+      if YAML.dump(job.reject { |key, _| key == "steps" }).match?(/goreleaser/i)
+        errors << "#{relative} job #{job_id} mentions GoReleaser outside its steps"
+      end
+      Array(job["steps"]).each do |step|
+        next unless YAML.dump(step).match?(/goreleaser/i)
+        next if CI_GORELEASER_STEPS[job_id] == step
+        errors << "#{relative} job #{job_id} has a GoReleaser step that is not the pinned step: #{step.is_a?(Hash) ? step["name"] : step}"
+      end
+    end
+    rehearsal = jobs[CI_GORELEASER_JOB]
+    if rehearsal.is_a?(Hash) && Array(rehearsal["steps"]).include?(CI_GORELEASER_STEPS[CI_GORELEASER_JOB])
+      unless rehearsal["defaults"] == CI_GORELEASER_JOB_DEFAULTS
+        errors << "#{relative} job #{CI_GORELEASER_JOB} must keep defaults.run.working-directory: youtrack-agent-cli"
+      end
+    end
   end
   walk = lambda do |value, nested_permissions = false|
     case value
@@ -177,7 +394,7 @@ workflows.each do |candidate|
       errors << "#{relative} references forbidden secrets context" if value.match?(/\$\{\{.*\bsecrets\b/im)
     end
   end
-  walk.call(workflow) unless release
+  walk.call(workflow)
 end
 
 if errors.empty?

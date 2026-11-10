@@ -1,12 +1,14 @@
 # Generated agent-harness mirrors. The canonical inputs live in .agents/.
 # These must never be committed: hook commands render with an absolute {root}
 # path, so committing them bakes one machine's checkout path into the repo.
-# CI enforces this in .github/workflows/agent_harness.yaml.
+# CI enforces this in .github/workflows/ci.yaml.
 .claude/
 .codex/
 
 # Go build output
-/youtrack-agent-cli
+/youtrack-agent-cli/youtrack-agent-cli
+/youtrack-agent-cli/dist/
+/youtrack-agent-cli/bin/
 /bin/
 /dist/
 *.test
@@ -18,6 +20,10 @@ coverage.out
 /reports/.artifacts/
 /reports/.history/
 /reports/security_audit.json
+
+# A workspace is local: every module builds with GOWORK=off.
+/go.work
+/go.work.sum
 
 # Harness script bytecode
 __pycache__/

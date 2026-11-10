@@ -1,4 +1,4 @@
-# youtrack-agent-cli Advisor
+# agent-clis Advisor
 
 Read-only adversarial review of a plan **before** any code is written. Never edit.
 

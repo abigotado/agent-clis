@@ -1,20 +1,23 @@
 ---
 name: quality-gate
-description: Run the youtrack-agent-cli validation gate — formatting, vet, race tests, and the agent-harness checks — and report exactly what passed and what was not run. Use before pushing, before opening a PR, or when asked whether the repository is green.
+description: Run the agent-clis validation gate — formatting, vet, race tests, and the agent-harness checks — and report exactly what passed and what was not run. Use before pushing, before opening a PR, or when asked whether the repository is green.
 ---
 
-# Run youtrack-agent-cli Quality Gate
+# Run agent-clis Quality Gate
 
-Run in order and report each result:
+Run in order inside every changed module, and report each result. The CLI's
+`AGENTS.md` lists its additional gates.
 
 ```bash
-gofmt -l .
+export GOWORK=off
+gofmt -l $(git ls-files '*.go')
 go vet ./...
 go build ./...
 go test -race ./...
 ```
 
-Then the agent harness, whenever anything under `.agents/` changed:
+Then, at the repository root, the agent harness whenever anything under
+`.agents/` or any `<cli>/rules/` changed:
 
 ```bash
 python3 ~/.agents/compiler.py --source .agents --root . --scope project

@@ -1,4 +1,4 @@
 interface:
-  display_name: "Review youtrack-agent-cli Change"
-  short_description: "Review a youtrack-agent-cli change and get a second opinion"
-  default_prompt: "Use $review to review the current youtrack-agent-cli change and surface findings."
+  display_name: "Review agent-clis Change"
+  short_description: "Review an agent-clis change and get a second opinion"
+  default_prompt: "Use $review to review the current agent-clis change and surface findings."

@@ -8,13 +8,19 @@ under this directory is committed; the provider-specific output is generated.
 | Path | Purpose |
 | --- | --- |
 | `agents.toml` + `agents/*.md` | agent registry and prompts |
-| `rules/*.md` | scoped working rules, routed from the root `AGENTS.md` |
+| `rules/*.md` | shared working rules, routed from the root `AGENTS.md` |
 | `skills/*/SKILL.md` + `skills/*/agents/openai.yaml` | cross-provider skills |
 | `hooks.toml` + `hooks/*` | pre- and post-tool-use hooks |
 | `permissions.toml` | explicit allow / ask / deny policy |
 | `providers/*.toml` | provider adapter settings |
-| `scripts/sync-rules.py` | Cursor rule mirror sync |
+| `scripts/sync-rules.py` | Cursor rule mirror sync, and the `RULES` / `CLI_RULES` registries |
 | `tests/` | harness unit tests |
+
+Per-CLI rules live outside this directory, in `<cli>/rules/`, because the
+provider compiler loads everything under `.agents/rules/` in every session. Each
+CLI directory has its own `AGENTS.md`, which the root `AGENTS.md` points to and
+which routes that CLI's rules. They are registered in the `CLI_RULES` dict of
+`scripts/sync-rules.py`.
 
 This directory is the **only** copy of these files in the repository. Nothing
 here is duplicated into a committed provider directory.
@@ -24,10 +30,10 @@ here is duplicated into a committed provider directory.
 `.claude/` and `.codex/` are compiled and **git-ignored**. Never edit or commit
 them — the next compile prunes the edit, and hook commands render with an
 absolute path, so committing them would bake one machine's checkout into the
-repo. CI enforces this in `.github/workflows/agent_harness.yaml`.
+repo. CI enforces this in `.github/workflows/ci.yaml`.
 
 Tracked `.cursor/rules/*.mdc` files are compatibility mirrors rendered from
-`rules/*.md`. They are committed because Cursor has no compile step.
+`rules/*.md` and `<cli>/rules/*.md` (the latter as `<cli>--<name>.mdc`). They are committed because Cursor has no compile step.
 
 ## Commands
 
@@ -90,11 +96,13 @@ leave those mirrors unreferenced. Available placeholders are `{python}`,
 
 ## Adding a rule
 
-1. Write `rules/<name>.md`. It must be flat — the sync script globs
-   `rules/*.md` non-recursively and rejects nesting.
-2. Register it in the `RULES` dict in `scripts/sync-rules.py` with a
-   description, `always_apply`, and `globs`. An unregistered rule is a hard
-   error, not a warning.
-3. Add a row to the router table in the root `AGENTS.md`.
+1. Write `rules/<name>.md` for a shared rule, or `<cli>/rules/<name>.md` for a
+   rule specific to one CLI. It must be flat — the sync script rejects nesting.
+2. Register it in the `RULES` dict (shared) or under its CLI in the `CLI_RULES`
+   dict (per-CLI) in `scripts/sync-rules.py` with a description, `always_apply`,
+   and `globs`. An unregistered rule, or a `rules/` directory under a top-level
+   directory that is not a `CLI_RULES` key, is a hard error, not a warning.
+3. Add a row to the router table in the root `AGENTS.md` (shared) or in the
+   CLI's own `AGENTS.md` (per-CLI).
 4. Run the compiler and the rule sync, then confirm `git status --porcelain` is
    clean.

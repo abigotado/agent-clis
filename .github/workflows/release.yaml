@@ -1,15 +1,22 @@
-name: release-portable-readonly
+name: release-youtrack-agent-cli
 
 on:
   push:
     tags:
-      - "v0.*"
+      - "youtrack-agent-cli/v0.*"
 
 permissions:
   contents: read
 
+env:
+  GOWORK: "off"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  verify-portable-readonly:
+  verify:
     name: Verify portable Remote-MCP read-only release
     runs-on: ubuntu-latest
     steps:
@@ -22,28 +29,30 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version-file: go.mod
-          cache: true
+          go-version-file: youtrack-agent-cli/go.mod
+          cache: false
+          cache-dependency-path: youtrack-agent-cli/go.sum
 
       - name: Verify release tag is on main
         run: |
           set -euo pipefail
           test "${GITHUB_REF_TYPE}" = tag
-          printf '%s' "${GITHUB_REF_NAME}" | grep -Eq '^v0\.[0-9]+\.[0-9]+$'
+          printf '%s' "${GITHUB_REF_NAME}" | grep -Eq '^youtrack-agent-cli/v0\.[0-9]+\.[0-9]+$'
           release_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
           git fetch origin main:refs/remotes/origin/main
           git merge-base --is-ancestor "${release_commit}" origin/main
           git tag --points-at "${release_commit}" | grep -Fxq "${GITHUB_REF_NAME}"
 
       - name: Verify portable read-only boundary
+        working-directory: youtrack-agent-cli
         run: |
           set -euo pipefail
           go test -race ./...
           go test -tags portable_readonly ./...
           test -z "$(go list -tags portable_readonly -deps ./cmd/youtrack-agent-cli | grep -E '/internal/(auth|application|journal|mutation|operatorwrite|youtrack)$' || true)"
-          go build -tags portable_readonly -o portable-readonly ./cmd/youtrack-agent-cli
-          ./portable-readonly --help | grep -Eq '^  profile +Manage non-secret read-only Remote MCP profiles$'
-          ! ./portable-readonly --help | grep -Eiq 'auth|inspect|mutation|operator-write'
+          go build -tags portable_readonly -o "${RUNNER_TEMP}/portable-readonly" ./cmd/youtrack-agent-cli
+          "${RUNNER_TEMP}/portable-readonly" --help | grep -Eq '^  profile +Manage non-secret read-only Remote MCP profiles$'
+          ! "${RUNNER_TEMP}/portable-readonly" --help | grep -Eiq 'auth|inspect|mutation|operator-write'
 
       - name: Verify release policy and config
         env:
@@ -51,15 +60,13 @@ jobs:
         run: |
           set -euo pipefail
           go install github.com/goreleaser/goreleaser/v2@v2.17.1
-          goreleaser check
+          (cd youtrack-agent-cli && goreleaser check --config .goreleaser.yaml)
           ruby .github/scripts/verify-portable-release-policy_test.rb
-          ruby .github/scripts/verify-portable-release-policy.rb .goreleaser.yaml
+          ruby .github/scripts/verify-portable-release-policy.rb youtrack-agent-cli/.goreleaser.yaml .
 
-  publish-portable-readonly:
-    name: Publish checksummed portable read-only archives
-    needs: verify-portable-readonly
-    permissions:
-      contents: write
+  build:
+    name: Build checksummed portable archives
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Git checkout
@@ -71,14 +78,15 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version-file: go.mod
-          cache: true
+          go-version-file: youtrack-agent-cli/go.mod
+          cache: false
+          cache-dependency-path: youtrack-agent-cli/go.sum
 
       - name: Reverify release tag is on main
         run: |
           set -euo pipefail
           test "${GITHUB_REF_TYPE}" = tag
-          printf '%s' "${GITHUB_REF_NAME}" | grep -Eq '^v0\.[0-9]+\.[0-9]+$'
+          printf '%s' "${GITHUB_REF_NAME}" | grep -Eq '^youtrack-agent-cli/v0\.[0-9]+\.[0-9]+$'
           release_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
           git fetch origin main:refs/remotes/origin/main
           git merge-base --is-ancestor "${release_commit}" origin/main
@@ -89,7 +97,101 @@ jobs:
           GOTOOLCHAIN: auto
         run: go install github.com/goreleaser/goreleaser/v2@v2.17.1
 
-      - name: Publish checksummed portable read-only archives
+      - name: Build and check the archives
+        working-directory: youtrack-agent-cli
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          export CLI_VERSION="${GITHUB_REF_NAME#youtrack-agent-cli/v}"
+          goreleaser release --config .goreleaser.yaml --snapshot --clean
+          binary="$(ls -d dist/portable-readonly_linux_amd64*/)youtrack-agent-cli"
+          report="$("${binary}" version -o json)"
+          test "$(jq -r '.data.version' <<<"${report}")" = "${CLI_VERSION}"
+          test "$(jq -r '.data.commit' <<<"${report}")" = "$(git rev-parse "${GITHUB_REF}^{commit}")"
+          for arch in amd64 arm64; do
+            test "$(tar -tzf "dist/youtrack-agent-cli_${CLI_VERSION}_linux_${arch}.tar.gz" | LC_ALL=C sort | tr '\n' ' ')" = "LICENSE README.md youtrack-agent-cli "
+          done
+
+      - name: Upload the archives
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: portable-archives
+          path: |
+            youtrack-agent-cli/dist/youtrack-agent-cli_*_linux_amd64.tar.gz
+            youtrack-agent-cli/dist/youtrack-agent-cli_*_linux_arm64.tar.gz
+            youtrack-agent-cli/dist/checksums.txt
+          if-no-files-found: error
+
+  draft:
+    name: Create the draft release
+    needs:
+      - verify
+      - build
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reverify the tag against main
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: goreleaser release --clean --config .goreleaser.yaml
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_TYPE}" = tag
+          printf '%s' "${GITHUB_REF_NAME}" | grep -Eq '^youtrack-agent-cli/v0\.[0-9]+\.[0-9]+$'
+          object="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}" --jq '.object.type + " " + .object.sha')"
+          if [ "${object%% *}" = tag ]; then
+            object="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object##* }" --jq '.object.type + " " + .object.sha')"
+          fi
+          test "${object%% *}" = commit
+          commit="${object##* }"
+          test "${commit}" = "${GITHUB_SHA}"
+          status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${commit}...main" --jq '.status')"
+          [ "${status}" = ahead ] || [ "${status}" = identical ]
+          {
+            echo "COMMIT=${commit}"
+            echo "CLI_VERSION=${GITHUB_REF_NAME#youtrack-agent-cli/v}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Download the archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: portable-archives
+          path: artifacts
+
+      - name: Verify the exact files and checksums
+        working-directory: artifacts
+        run: |
+          set -euo pipefail
+          archives="$(printf '%s\n' "youtrack-agent-cli_${CLI_VERSION}_linux_amd64.tar.gz" "youtrack-agent-cli_${CLI_VERSION}_linux_arm64.tar.gz" | LC_ALL=C sort)"
+          test "$(find . -mindepth 1 -not -name checksums.txt -printf '%P\n' | LC_ALL=C sort)" = "${archives}"
+          test "$(awk '{print $2}' checksums.txt | LC_ALL=C sort)" = "${archives}"
+          sha256sum --check --strict checksums.txt
+
+      - name: Create the draft
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          existing="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '.[].tag_name')"
+          if grep -Fxq "${GITHUB_REF_NAME}" <<<"${existing}"; then
+            echo "a release already exists for ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+          printf '%s\n' "Portable read-only archives of youtrack-agent-cli ${CLI_VERSION}. The operator publishes this draft after checking it." > "${RUNNER_TEMP}/notes.md"
+          gh release create "${GITHUB_REF_NAME}" \
+            "artifacts/youtrack-agent-cli_${CLI_VERSION}_linux_amd64.tar.gz" \
+            "artifacts/youtrack-agent-cli_${CLI_VERSION}_linux_arm64.tar.gz" \
+            artifacts/checksums.txt \
+            --draft --verify-tag --target "${COMMIT}" \
+            --title "youtrack-agent-cli v${CLI_VERSION}" \
+            --notes-file "${RUNNER_TEMP}/notes.md"
+          object="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}" --jq '.object.type + " " + .object.sha')"
+          if [ "${object%% *}" = tag ]; then
+            object="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object##* }" --jq '.object.type + " " + .object.sha')"
+          fi
+          if [ "${object%% *}" != commit ] || [ "${object##* }" != "${COMMIT}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} no longer resolves to ${COMMIT}; it moved during the job. The operator must delete the draft release before retrying."
+            exit 1
+          fi

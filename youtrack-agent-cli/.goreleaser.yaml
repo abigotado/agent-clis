@@ -1,0 +1,47 @@
+version: 2
+
+project_name: youtrack-agent-cli
+
+# This is the only portable release shape. The build tag selects a separate
+# command tree that has no authentication, REST, journal, mutation, or native
+# approval dependencies. Do not add a second build here without a reviewed
+# product/security decision.
+builds:
+  - id: portable-readonly
+    main: ./cmd/youtrack-agent-cli
+    binary: youtrack-agent-cli
+    tags:
+      - portable_readonly
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/abigotado/agent-clis/youtrack-agent-cli/internal/readonlycli.releaseVersion={{ .Version }}
+      - -X github.com/abigotado/agent-clis/youtrack-agent-cli/internal/readonlycli.releaseCommit={{ .FullCommit }}
+      - -X github.com/abigotado/agent-clis/youtrack-agent-cli/internal/readonlycli.releaseCommitTime={{ .CommitDate }}
+
+archives:
+  - id: portable-readonly
+    ids:
+      - portable-readonly
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+# Snapshot mode because a prefixed tag is not a semantic version. The release
+# workflow derives CLI_VERSION from the tag and creates the draft itself.
+snapshot:
+  version_template: "{{ .Env.CLI_VERSION }}"
+
+release:
+  disable: true

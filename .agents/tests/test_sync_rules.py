@@ -28,6 +28,14 @@ class SyncRulesTest(unittest.TestCase):
                 f"# {name}\n\nCanonical {name} rule.\n",
                 encoding="utf-8",
             )
+        for cli, rules in SYNC_RULES.CLI_RULES.items():
+            rules_root = repo / cli / "rules"
+            rules_root.mkdir(parents=True)
+            for name in rules:
+                (rules_root / f"{name}.md").write_text(
+                    f"# {name}\n\nCanonical {cli} {name} rule.\n",
+                    encoding="utf-8",
+                )
         return repo
 
     def test_extra_rule_is_detected_and_removed_by_sync(self) -> None:
@@ -63,6 +71,65 @@ class SyncRulesTest(unittest.TestCase):
                 r"unexpected canonical rule: \.agents/rules/undeclared\.md",
             ):
                 SYNC_RULES.synchronize(repo, check=True)
+
+    def test_undeclared_cli_rule_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = self._repo(temporary)
+            (repo / "youtrack-agent-cli" / "rules" / "undeclared.md").write_text(
+                "# undeclared\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                SYNC_RULES.RuleSyncError,
+                r"unexpected canonical rule: youtrack-agent-cli/rules/undeclared\.md",
+            ):
+                SYNC_RULES.synchronize(repo, check=False)
+
+    def test_rules_in_an_unregistered_cli_directory_are_rejected(self) -> None:
+        for relative in ("rules/rule.md", "rules/nested/rule.md"):
+            with self.subTest(relative=relative):
+                with tempfile.TemporaryDirectory() as temporary:
+                    repo = self._repo(temporary)
+                    rule = repo / "other-cli" / relative
+                    rule.parent.mkdir(parents=True)
+                    rule.write_text("# unregistered\n", encoding="utf-8")
+
+                    with self.assertRaisesRegex(
+                        SYNC_RULES.RuleSyncError,
+                        rf"unexpected canonical rule: other-cli/{relative.replace('.', r'\.')}",
+                    ):
+                        SYNC_RULES.synchronize(repo, check=False)
+
+    def test_nested_rules_are_rejected(self) -> None:
+        for directory in (".agents", "youtrack-agent-cli"):
+            with self.subTest(directory=directory):
+                with tempfile.TemporaryDirectory() as temporary:
+                    repo = self._repo(temporary)
+                    nested = repo / directory / "rules" / "nested"
+                    nested.mkdir()
+                    (nested / "rule.md").write_text("# nested\n", encoding="utf-8")
+
+                    with self.assertRaisesRegex(
+                        SYNC_RULES.RuleSyncError,
+                        rf"unexpected canonical rule: {directory}/rules/nested/rule\.md",
+                    ):
+                        SYNC_RULES.synchronize(repo, check=False)
+
+    def test_cli_mirror_is_prefixed_and_scoped_to_its_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = self._repo(temporary)
+            SYNC_RULES.synchronize(repo, check=False)
+            mirror = (
+                repo / ".cursor" / "rules" / "youtrack-agent-cli--cli-contract.mdc"
+            ).read_text(encoding="utf-8")
+            _, frontmatter, _ = mirror.split("---\n", 2)
+            globs = frontmatter.split('globs: "', 1)[1].split('"', 1)[0].split(",")
+
+            self.assertIn("alwaysApply: false", frontmatter)
+            self.assertEqual(len(globs), 3)
+            for glob in globs:
+                self.assertTrue(glob.startswith("youtrack-agent-cli/"), glob)
 
     def test_rendered_mirror_keeps_canonical_body_after_frontmatter(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -114,10 +181,21 @@ class RealRepositoryInventoryTest(unittest.TestCase):
 
         self.assertEqual(committed, set(SYNC_RULES.RULES))
 
+    def test_declared_cli_rules_match_committed_files(self) -> None:
+        for cli, rules in SYNC_RULES.CLI_RULES.items():
+            committed = {path.stem for path in (REPO / cli / "rules").glob("*.md")}
+
+            self.assertEqual(committed, set(rules))
+
     def test_committed_mirrors_match_declared_rules(self) -> None:
         mirrors = {path.stem for path in (REPO / ".cursor" / "rules").glob("*.mdc")}
+        declared = set(SYNC_RULES.RULES) | {
+            f"{cli}--{name}"
+            for cli, rules in SYNC_RULES.CLI_RULES.items()
+            for name in rules
+        }
 
-        self.assertEqual(mirrors, set(SYNC_RULES.RULES))
+        self.assertEqual(mirrors, declared)
 
     def test_committed_mirrors_are_in_sync(self) -> None:
         SYNC_RULES.synchronize(REPO, check=True)

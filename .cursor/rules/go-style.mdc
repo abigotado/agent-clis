@@ -1,5 +1,5 @@
 ---
-description: youtrack-agent-cli Go conventions: errors, context, resources, naming.
+description: Go conventions: errors, context, resources, naming.
 alwaysApply: false
 globs: "**/*.go"
 ---

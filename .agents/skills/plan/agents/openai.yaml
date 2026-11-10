@@ -1,4 +1,4 @@
 interface:
-  display_name: "Plan youtrack-agent-cli Change"
-  short_description: "Create an evidence-based youtrack-agent-cli change plan"
-  default_prompt: "Use $plan to produce a dependency-ordered youtrack-agent-cli implementation plan."
+  display_name: "Plan agent-clis Change"
+  short_description: "Create an evidence-based agent-clis change plan"
+  default_prompt: "Use $plan to produce a dependency-ordered agent-clis implementation plan."

@@ -1,6 +1,7 @@
-# youtrack-agent-cli Explorer
+# agent-clis Explorer
 
-Trace what exists. Do not edit, and do not propose designs.
+Trace what exists. Do not edit, and do not propose designs. Inside a CLI
+directory, read its `AGENTS.md` first.
 
 1. Answer the specific question asked with `path:line` evidence for every claim.
 2. Report existing patterns, helpers, and abstractions that the caller should

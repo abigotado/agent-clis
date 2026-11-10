@@ -18,13 +18,15 @@ Write it in the imperative: "Stop auth list reading the keychain".
 
 <!-- Check only what you actually ran. -->
 
-- [ ] `gofmt -l .` prints nothing
+<!-- Go commands run inside each changed module, with GOWORK=off. -->
+
+- [ ] `gofmt -l $(git ls-files '*.go')` prints nothing
 - [ ] `go vet ./...`
 - [ ] `go test -race ./...`
 - [ ] `go generate ./...` ran and the result is committed — or this change touches
       neither the command surface nor `internal/errx`
 - [ ] `python3 .agents/scripts/sync-rules.py` and the harness tests pass — or this
-      change does not touch `.agents/`
+      change touches neither `.agents/` nor any `<cli>/rules/`
 
 ## Checklist
 

@@ -1,4 +1,4 @@
 interface:
-  display_name: "Implement youtrack-agent-cli Change"
-  short_description: "Plan, implement, test, and review a youtrack-agent-cli change"
-  default_prompt: "Use $implement to deliver a reviewed, tested youtrack-agent-cli change."
+  display_name: "Implement agent-clis Change"
+  short_description: "Plan, implement, test, and review an agent-clis change"
+  default_prompt: "Use $implement to deliver a reviewed, tested agent-clis change."

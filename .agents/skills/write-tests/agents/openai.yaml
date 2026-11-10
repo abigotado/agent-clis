@@ -1,4 +1,4 @@
 interface:
-  display_name: "Write youtrack-agent-cli Tests"
-  short_description: "Add boundary tests for changed youtrack-agent-cli behavior"
-  default_prompt: "Use $write-tests to cover the changed youtrack-agent-cli behavior with table-driven tests."
+  display_name: "Write agent-clis Tests"
+  short_description: "Add boundary tests for changed agent-clis behavior"
+  default_prompt: "Use $write-tests to cover the changed agent-clis behavior with table-driven tests."

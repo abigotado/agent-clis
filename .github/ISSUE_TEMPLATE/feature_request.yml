@@ -9,7 +9,7 @@ body:
         command is easier to agree on before it is written than after. Contract
         changes — renamed flags, new exit codes, changed envelope fields — are
         discussed here first; see
-        [CONTRIBUTING.md](https://github.com/abigotado/youtrack-agent-cli/blob/main/CONTRIBUTING.md#contract-changes).
+        [CONTRIBUTING.md](https://github.com/abigotado/agent-clis/blob/main/CONTRIBUTING.md#contract-changes).
 
   - type: textarea
     id: problem

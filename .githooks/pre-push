@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# youtrack-agent-cli pre-push quality gate.
+# agent-clis pre-push quality gate.
 #
 # Install with `.githooks/install`, remove with `.githooks/uninstall`.
 # Do not bypass with `git push --no-verify` — if the gate is wrong, fix the gate.
@@ -17,27 +17,33 @@ if ! command -v go >/dev/null 2>&1; then
   fail "go is not on PATH"
 fi
 
-# No Go sources yet (harness-only checkout): skip the Go gate rather than
-# failing a push that has no Go code to validate.
-if [ -f go.mod ]; then
-  echo "pre-push: gofmt"
-  unformatted=$(gofmt -l . | grep -v '^vendor/' || true)
+# Every tracked Go module is gated. No tracked module at all means the checkout
+# is wrong, so it fails instead of skipping the Go gate.
+modules=$(git -c core.quotePath=false ls-files -- go.mod '*/go.mod')
+if [ -z "$modules" ]; then
+  fail "no tracked Go module"
+fi
+
+while IFS= read -r module; do
+  dir=$(dirname "$module")
+  echo "pre-push: $dir: gofmt"
+  # Tracked files only: a filesystem walk would descend into nested worktrees.
+  unformatted=$(git ls-files -z -- "$dir/*.go" | xargs -0 gofmt -l) \
+    || fail "$dir: gofmt failed"
   if [ -n "$unformatted" ]; then
     echo "$unformatted" >&2
-    fail "the files above are not gofmt-clean"
+    fail "$dir: the files above are not gofmt-clean"
   fi
 
-  echo "pre-push: go vet"
-  go vet ./... || fail "go vet failed"
+  echo "pre-push: $dir: go vet"
+  GOWORK=off go -C "$dir" vet ./... || fail "$dir: go vet failed"
 
-  echo "pre-push: go build"
-  go build ./... || fail "go build failed"
+  echo "pre-push: $dir: go build"
+  GOWORK=off go -C "$dir" build ./... || fail "$dir: go build failed"
 
-  echo "pre-push: go test"
-  go test -race ./... || fail "go test failed"
-else
-  echo "pre-push: no go.mod yet; skipping Go checks"
-fi
+  echo "pre-push: $dir: go test"
+  GOWORK=off go -C "$dir" test -race ./... || fail "$dir: go test failed"
+done <<<"$modules"
 
 # The agent harness is compiled, not hand-written. A drifted mirror means the
 # canonical .agents/ inputs changed without recompiling.

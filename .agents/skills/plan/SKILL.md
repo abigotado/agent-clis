@@ -1,9 +1,9 @@
 ---
 name: plan
-description: Produce an evidence-based, dependency-ordered plan for a youtrack-agent-cli change without editing any files. Use before implementing anything that spans multiple packages, touches the machine contract, or has more than one reasonable approach.
+description: Produce an evidence-based, dependency-ordered plan for an agent-clis change without editing any files. Use before implementing anything that spans multiple packages, touches the machine contract, or has more than one reasonable approach.
 ---
 
-# Plan youtrack-agent-cli Change
+# Plan agent-clis Change
 
 1. Read `AGENTS.md` and the rules its router lists for the touched surface.
 2. Use `explorer` to establish what already exists, with `path:line` evidence.
