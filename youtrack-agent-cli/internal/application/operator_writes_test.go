@@ -3,6 +3,7 @@ package application
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -770,6 +771,67 @@ func TestOperatorReconcilePreservesTerminalResultWithoutCredentialsOrNetwork(t *
 			record, err := f.service.OperatorWrites.Get(t.Context(), plan.PlanID)
 			if err != nil || record.Result == nil || *record.Result != outcome {
 				t.Fatalf("terminal outcome downgraded: record=%#v error=%v", record, err)
+			}
+		})
+	}
+}
+
+func TestSnapshotOperatorWriteRefusesUnsupportedFieldSchema(t *testing.T) {
+	const userSchema = `{"id":"92-1","$type":"UserProjectCustomField","project":{"id":"0-3"},"field":{"id":"42-1","name":"Stage","fieldType":{"id":"user[1]","valueType":"user","isMultiValue":false,"$type":"FieldType"}},"canBeEmpty":true,"isPublic":true%s}`
+	userIssue := strings.Replace(operatorIssueJSON, "StateIssueCustomField", "SingleUserIssueCustomField", 1)
+	userIssue = strings.Replace(userIssue, `"value":null`, `"value":{"id":"1-5","login":"bob","$type":"User"}`, 1)
+	for _, test := range []struct {
+		name          string
+		issue, schema string
+	}{
+		{"user bundle without values", userIssue, fmt.Sprintf(userSchema, `,"bundle":{"id":"100-1","$type":"UserBundle","aggregatedUsers":[{"id":"1-5","login":"bob"}]}`)},
+		{"user bundle with values lacking archived", userIssue, fmt.Sprintf(userSchema, `,"bundle":{"id":"100-1","$type":"UserBundle","values":[{"id":"1-5","login":"bob","$type":"User"}],"aggregatedUsers":[{"id":"1-5","login":"bob"}]}`)},
+		{"user field without bundle", userIssue, fmt.Sprintf(userSchema, "")},
+		{"multi-value state field", operatorIssueJSON, strings.Replace(operatorSchemaJSON, `"isMultiValue":false`, `"isMultiValue":true`, 1)},
+		{"unknown bundle type", operatorIssueJSON, strings.Replace(strings.Replace(operatorSchemaJSON, "StateBundle", "OwnedBundle", 1), `"values":[{"id":"101-1","name":"Open","$type":"StateBundleElement","archived":false},{"id":"101-2","name":"Done","$type":"StateBundleElement","archived":false}]`, `"values":[{"id":"101-1"}]`, 1)},
+		{"state field over another bundle type", operatorIssueJSON, strings.Replace(operatorSchemaJSON, `"$type":"StateBundle"`, `"$type":"EnumBundle"`, 1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newOperatorFixture(t)
+			f.issue, f.schema = test.issue, test.schema
+			_, err := f.service.SnapshotOperatorWrite(t.Context(), OperatorSnapshotInput{Profile: "work", Kind: "issue.update", IssueID: "APP-12", Fields: []OperatorFieldSelection{{FieldName: "Stage", ValueName: "Done"}}})
+			if got := operatorReason(t, err); got != "OPERATOR_FIELD_UNSUPPORTED" || errx.ExitCode(err) != errx.CodeUsage {
+				t.Fatalf("reason=%q code=%d err=%v", got, errx.ExitCode(err), err)
+			}
+			if f.posts.Load() != 0 {
+				t.Fatalf("unsupported schema dispatched %d POSTs", f.posts.Load())
+			}
+		})
+	}
+}
+
+func TestOperatorApplyRefreezeRefusalIsStaleAndReadErrorsPassThrough(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(f *operatorFixture)
+		reason string
+		code   errx.Code
+	}{
+		{"emptiness flipped", func(f *operatorFixture) {
+			f.schema = strings.Replace(f.schema, `"canBeEmpty":true`, `"canBeEmpty":false`, 1)
+		}, "OPERATOR_FIELD_STALE", errx.CodeConflict},
+		{"target archived", func(f *operatorFixture) {
+			f.schema = strings.Replace(f.schema, `"name":"Done","$type":"StateBundleElement","archived":false`, `"name":"Done","$type":"StateBundleElement","archived":true`, 1)
+		}, "OPERATOR_FIELD_STALE", errx.CodeConflict},
+		{"schema read malformed", func(f *operatorFixture) { f.schema = `{}` }, "INTERNAL", errx.CodeInternal},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newOperatorFixture(t)
+			p := f.prepare(t, "issue.update")
+			f.mu.Lock()
+			test.mutate(f)
+			f.mu.Unlock()
+			_, err := f.service.ApplyOperatorWrite(t.Context(), OperatorApplyInput{Profile: "work", PlanID: p.PlanID, ConfirmIntent: p.IntentSHA256, Yes: true})
+			if got := operatorReason(t, err); got != test.reason || errx.ExitCode(err) != test.code {
+				t.Fatalf("reason=%q code=%d err=%v", got, errx.ExitCode(err), err)
+			}
+			if f.posts.Load() != 0 {
+				t.Fatalf("drift dispatched %d POSTs", f.posts.Load())
 			}
 		})
 	}

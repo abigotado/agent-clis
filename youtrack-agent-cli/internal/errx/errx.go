@@ -103,6 +103,13 @@ func Usage(format string, args ...any) *Error {
 	return &Error{Code: CodeUsage, Reason: "USAGE", Message: fmt.Sprintf(format, args...), Hint: "check the flags against --help"}
 }
 
+// Unsupported reports a well-formed request that names something this CLI
+// cannot handle. It shares the usage exit code but carries its own stable
+// reason so a caller can tell it from malformed flags.
+func Unsupported(reason, format string, args ...any) *Error {
+	return &Error{Code: CodeUsage, Reason: reason, Message: fmt.Sprintf(format, args...), Hint: "choose a supported target; do not retry unchanged"}
+}
+
 // ProfileRequired reports that the command has no authorized profile selection.
 func ProfileRequired() *Error {
 	return &Error{

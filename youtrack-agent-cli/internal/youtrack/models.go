@@ -10,6 +10,8 @@ type User struct {
 	Name     string `json:"name,omitempty"`
 	FullName string `json:"fullName,omitempty"`
 	Email    string `json:"email,omitempty"`
+	// Banned is read for bundle users only; it is not requested elsewhere.
+	Banned bool `json:"banned,omitempty"`
 }
 
 // Project is the exact project identity used by policy checks.

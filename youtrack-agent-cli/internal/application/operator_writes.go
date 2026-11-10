@@ -310,11 +310,28 @@ func resolveOperatorField(ctx context.Context, client *youtrack.Client, projectI
 	return schema, nil
 }
 
+// supportedOperatorSchema reports whether the project field is a State or Enum
+// field backed by the matching bundle type. Everything else, including user
+// fields until they are writable, is refused as unsupported rather than invalid.
+func supportedOperatorSchema(schema youtrack.ProjectField) bool {
+	if schema.Bundle == nil {
+		return false
+	}
+	switch schema.Type {
+	case "StateProjectCustomField":
+		return schema.Bundle.Type == "StateBundle"
+	case "EnumProjectCustomField":
+		return schema.Bundle.Type == "EnumBundle"
+	default:
+		return false
+	}
+}
+
 // freezeCreateField freezes one project schema and nonarchived target value
 // for a new issue. There is no issue field or current value to bind yet.
 func freezeCreateField(schema youtrack.ProjectField, valueID, valueName string) (operatorwrite.Field, error) {
-	if schema.ID == "" || schema.Field.ID == "" || schema.Field.FieldType.IsMultiValue || schema.Bundle == nil {
-		return operatorwrite.Field{}, errx.Usage("only single State and Enum fields are supported")
+	if schema.ID == "" || schema.Field.ID == "" || schema.Field.FieldType.IsMultiValue || schema.Bundle == nil || !supportedOperatorSchema(schema) {
+		return operatorwrite.Field{}, errx.Unsupported("OPERATOR_FIELD_UNSUPPORTED", "only single State and Enum fields are supported")
 	}
 	var issueType, valueType string
 	switch schema.Type {
@@ -323,7 +340,7 @@ func freezeCreateField(schema youtrack.ProjectField, valueID, valueName string) 
 	case "EnumProjectCustomField":
 		issueType, valueType = "SingleEnumIssueCustomField", "EnumBundleElement"
 	default:
-		return operatorwrite.Field{}, errx.Usage("only single State and Enum fields are supported")
+		return operatorwrite.Field{}, errx.Unsupported("OPERATOR_FIELD_UNSUPPORTED", "only single State and Enum fields are supported")
 	}
 	field := operatorwrite.Field{ProjectFieldID: schema.ID, GlobalFieldID: schema.Field.ID, Name: schema.Field.Name,
 		Type: issueType, ProjectFieldType: schema.Type, ValueType: schema.Field.FieldType.ValueType, IsMultiValue: schema.Field.FieldType.IsMultiValue,
@@ -350,8 +367,8 @@ func freezeCreateField(schema youtrack.ProjectField, valueID, valueName string) 
 	return field, nil
 }
 func freezeOperatorField(issue youtrack.Issue, schema youtrack.ProjectField, valueID, valueName string) (operatorwrite.Field, error) {
-	if schema.ID == "" || schema.Field.ID == "" || schema.Field.FieldType.IsMultiValue || schema.Bundle == nil {
-		return operatorwrite.Field{}, errx.Usage("only single State and Enum fields are supported")
+	if schema.ID == "" || schema.Field.ID == "" || schema.Field.FieldType.IsMultiValue || schema.Bundle == nil || !supportedOperatorSchema(schema) {
+		return operatorwrite.Field{}, errx.Unsupported("OPERATOR_FIELD_UNSUPPORTED", "only single State and Enum fields are supported")
 	}
 	var issueField youtrack.IssueCustomField
 	matches := 0
@@ -391,7 +408,7 @@ func freezeOperatorField(issue youtrack.Issue, schema youtrack.ProjectField, val
 	case "SingleEnumIssueCustomField":
 		valueType = "EnumBundleElement"
 	default:
-		return field, errx.Usage("only single State and Enum fields are supported")
+		return field, errx.Unsupported("OPERATOR_FIELD_UNSUPPORTED", "only single State and Enum fields are supported")
 	}
 	var current struct {
 		ID   string `json:"id"`
@@ -664,7 +681,8 @@ func verifyOperatorRemote(ctx context.Context, client *youtrack.Client, snapshot
 		}
 		field, err := freezeOperatorField(issue, schema, snapshot.Field.TargetValue.ID, "")
 		if err != nil {
-			return err
+			// The snapshot froze a valid field, so a refusal now is drift.
+			return errx.Conflict("OPERATOR_FIELD_STALE", "touched field schema, current value, or target changed").WithHint("inspect a new snapshot and prepare a fresh intent")
 		}
 		return requireSameField(*snapshot.Field, field)
 	default:
