@@ -17,7 +17,7 @@ go test -race ./...
 ```
 
 Then, at the repository root, the agent harness whenever anything under
-`.agents/` changed:
+`.agents/` or any `<cli>/rules/` changed:
 
 ```bash
 python3 ~/.agents/compiler.py --source .agents --root . --scope project

@@ -1,7 +1,7 @@
 //go:build ignore
 
 // This generator is test-only. The public fixture scalar and nonce MUST NOT be
-// used for real signatures. Run from the repository root with go run
+// used for real signatures. Run from the youtrack-agent-cli/ module directory with go run
 // ./testdata/gate1a-v3/generate.go; add -check to verify without writing.
 package main
 

@@ -1,7 +1,7 @@
 //go:build ignore
 
 // Test-only public scalars and reused nonces: NEVER use these keys or signing
-// routines outside this synthetic corpus. Run from the repository root with
+// routines outside this synthetic corpus. Run from the youtrack-agent-cli/ module directory with
 // go run ./testdata/gate1a-registry/generate.go [-check]. No runtime codec is used.
 package main
 

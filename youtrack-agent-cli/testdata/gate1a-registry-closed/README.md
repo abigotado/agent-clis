@@ -53,7 +53,7 @@ test-only `canonical_encoding`, `bounds_grammar`, `digest_domain`, `closed_bindi
 
 ## Reproduction
 
-From the repository root:
+From the `youtrack-agent-cli/` module directory:
 
 ```sh
 go run ./testdata/gate1a-registry/generate.go -check

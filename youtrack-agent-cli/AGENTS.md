@@ -39,7 +39,7 @@ go run ./testdata/gate1a-registry/generate.go -check   # and the other five fixt
 ```
 
 `go vet ./...` skips `testdata/`, so a change to imports needs the fixture
-checks. The Homebrew offline build is `go run ./tools/homebrewcheck`. The
+checks. The Homebrew offline build is `go run ./tools/homebrewcheck --proxy-dir <proxy-dir> --build`. The
 release policy guard runs from the repository root.
 
 ## Never

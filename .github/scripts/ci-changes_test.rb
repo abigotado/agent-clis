@@ -44,7 +44,7 @@ class CiChangesTest < Minitest::Test
       output = File.join(dir, "output")
       env = {
         "EVENT_NAME" => event,
-        "BASE_SHA" => base == :base ? base_sha : base,
+        "BASE_SHA" => base == :base ? base_sha : (base.respond_to?(:call) ? base.call : base),
         "HEAD_SHA" => head == :head ? head_sha : head,
         "GITHUB_OUTPUT" => output,
       }
@@ -95,6 +95,32 @@ class CiChangesTest < Minitest::Test
       assert success, stderr
       assert_equal ALL, pairs, base
     end
+  end
+
+  def test_an_unusable_head_selects_everything
+    ["", "0" * 40, "1" * 40].each do |head|
+      success, pairs, stderr = select(head: head) { |repo| write(repo, "youtrack-agent-cli/internal/a.go") }
+      assert success, stderr
+      assert_equal ALL, pairs, head
+    end
+  end
+
+  def test_a_base_from_unrelated_history_selects_everything
+    orphan = nil
+    success, pairs, stderr = select(base: -> { orphan }) do |repo|
+      write(repo, "youtrack-agent-cli/internal/a.go")
+      git(repo, "add", "-A")
+      git(repo, "commit", "-q", "-m", "change")
+      git(repo, "checkout", "-q", "--orphan", "unrelated")
+      git(repo, "rm", "-rq", "--cached", ".")
+      write(repo, "other.txt")
+      git(repo, "add", "other.txt")
+      git(repo, "commit", "-q", "-m", "orphan")
+      orphan = git(repo, "rev-parse", "HEAD")
+      git(repo, "checkout", "-q", "-f", "main")
+    end
+    assert success, stderr
+    assert_equal ALL, pairs
   end
 
   def test_an_empty_diff_selects_everything

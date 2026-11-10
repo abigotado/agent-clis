@@ -1,7 +1,7 @@
 //go:build ignore
 
 // Generate synthetic retained-candidate registry close fixtures, not runtime evidence.
-// Run from repository root: go run ./testdata/gate1a-registry-closed/generate.go [-check].
+// Run from the youtrack-agent-cli/ module directory: go run ./testdata/gate1a-registry-closed/generate.go [-check].
 package main
 
 import (

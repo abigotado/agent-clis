@@ -25,7 +25,7 @@ Scalar invalid text is tested directly; it need not be a canonical JSON value.
 The core, intent, and active source corpus hashes are frozen in the supplement
 and independently pinned by the consumers. No prior corpus is regenerated.
 
-From the repository root:
+From the `youtrack-agent-cli/` module directory:
 
 ```sh
 go run ./testdata/gate1a-registry-time/generate.go

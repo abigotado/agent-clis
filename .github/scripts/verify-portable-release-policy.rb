@@ -11,12 +11,13 @@ CHECKOUT_STEP = {
   "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "with" => { "fetch-depth" => 0, "persist-credentials" => false },
 }.freeze
+# Release builds must not restore mutable caches.
 SETUP_GO_STEP = {
   "name" => "Set up Go",
   "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
   "with" => {
     "go-version-file" => "youtrack-agent-cli/go.mod",
-    "cache" => true,
+    "cache" => false,
     "cache-dependency-path" => "youtrack-agent-cli/go.sum",
   },
 }.freeze
@@ -41,7 +42,7 @@ SH
 VERIFY_POLICY_RUN = <<~'SH'
   set -euo pipefail
   go install github.com/goreleaser/goreleaser/v2@v2.17.1
-  (cd youtrack-agent-cli && goreleaser check)
+  (cd youtrack-agent-cli && goreleaser check --config .goreleaser.yaml)
   ruby .github/scripts/verify-portable-release-policy_test.rb
   ruby .github/scripts/verify-portable-release-policy.rb youtrack-agent-cli/.goreleaser.yaml .
 SH
@@ -49,7 +50,7 @@ BUILD_RUN = <<~'SH'
   set -euo pipefail
   test -z "$(git status --porcelain)"
   export CLI_VERSION="${GITHUB_REF_NAME#youtrack-agent-cli/v}"
-  goreleaser release --snapshot --clean
+  goreleaser release --config .goreleaser.yaml --snapshot --clean
   binary="$(ls -d dist/portable-readonly_linux_amd64*/)youtrack-agent-cli"
   report="$("${binary}" version -o json)"
   test "$(jq -r '.data.version' <<<"${report}")" = "${CLI_VERSION}"
@@ -103,6 +104,14 @@ CREATE_DRAFT_RUN = <<~'SH'
     --draft --verify-tag --target "${COMMIT}" \
     --title "youtrack-agent-cli v${CLI_VERSION}" \
     --notes-file "${RUNNER_TEMP}/notes.md"
+  object="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}" --jq '.object.type + " " + .object.sha')"
+  if [ "${object%% *}" = tag ]; then
+    object="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object##* }" --jq '.object.type + " " + .object.sha')"
+  fi
+  if [ "${object%% *}" != commit ] || [ "${object##* }" != "${COMMIT}" ]; then
+    echo "::error::tag ${GITHUB_REF_NAME} no longer resolves to ${COMMIT}; it moved during the job. The operator must delete the draft release before retrying."
+    exit 1
+  fi
 SH
 GH_ENV = { "GH_REPO" => "${{ github.repository }}", "GH_TOKEN" => "${{ github.token }}" }.freeze
 EXPECTED_RELEASE_WORKFLOW = {
@@ -252,6 +261,22 @@ workflows.each do |candidate|
     errors << "#{relative} must be a mapping"
     next
   end
+  checkouts = lambda do |value|
+    case value
+    when Hash
+      value.each do |key, item|
+        if key.to_s == "uses" && item.to_s.start_with?("actions/checkout@")
+          step_with = value["with"]
+          unless step_with.is_a?(Hash) && step_with["persist-credentials"] == false
+            errors << "#{relative} has an actions/checkout step without persist-credentials: false"
+          end
+        end
+        checkouts.call(item)
+      end
+    when Array then value.each { |item| checkouts.call(item) }
+    end
+  end
+  checkouts.call(workflow)
   if PUBLISHERS.key?(relative)
     errors << "#{relative} must equal the approved publisher" unless workflow == PUBLISHERS.fetch(relative)
     next
@@ -264,6 +289,10 @@ workflows.each do |candidate|
       errors << "#{CI_GATE} must keep its job id as its name" unless gate["name"] == CI_GATE
       errors << "#{CI_GATE} must need every other job" unless Array(gate["needs"]).sort == (jobs.keys - [CI_GATE]).sort
       errors << "#{CI_GATE} must run with if: always()" unless gate["if"] == "always()"
+      gate_envs = Array(gate["steps"]).map { |step| step.is_a?(Hash) ? step["env"] : nil }
+      unless gate_envs.any? { |env| env.is_a?(Hash) && env["NEEDS"] == "${{ toJSON(needs) }}" }
+        errors << "#{CI_GATE} must pass NEEDS: ${{ toJSON(needs) }} to its verification step"
+      end
     else
       errors << "#{relative} has no #{CI_GATE} job"
     end

@@ -86,6 +86,21 @@ class SyncRulesTest(unittest.TestCase):
             ):
                 SYNC_RULES.synchronize(repo, check=False)
 
+    def test_rules_in_an_unregistered_cli_directory_are_rejected(self) -> None:
+        for relative in ("rules/rule.md", "rules/nested/rule.md"):
+            with self.subTest(relative=relative):
+                with tempfile.TemporaryDirectory() as temporary:
+                    repo = self._repo(temporary)
+                    rule = repo / "other-cli" / relative
+                    rule.parent.mkdir(parents=True)
+                    rule.write_text("# unregistered\n", encoding="utf-8")
+
+                    with self.assertRaisesRegex(
+                        SYNC_RULES.RuleSyncError,
+                        rf"unexpected canonical rule: other-cli/{relative.replace('.', r'\.')}",
+                    ):
+                        SYNC_RULES.synchronize(repo, check=False)
+
     def test_nested_rules_are_rejected(self) -> None:
         for directory in (".agents", "youtrack-agent-cli"):
             with self.subTest(directory=directory):

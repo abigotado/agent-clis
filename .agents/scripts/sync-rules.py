@@ -141,10 +141,23 @@ def _check_inventory(root: Path, names: dict[str, object], repo: Path) -> None:
         _assert_contained(path, root.resolve(), label="canonical rule")
 
 
+def _check_unregistered_cli_rules(repo: Path) -> None:
+    """Fail on rules under a top-level <dir>/rules/ whose <dir> is not in CLI_RULES."""
+    details = [
+        f"unexpected canonical rule: {path.relative_to(repo)}"
+        for top in sorted(repo.glob("*/"))
+        if top.is_dir() and not top.name.startswith(".") and top.name not in CLI_RULES
+        for path in sorted(top.glob("rules/**/*.md"))
+    ]
+    if details:
+        raise RuleSyncError("\n".join(details) + "\nregister the directory in CLI_RULES")
+
+
 def _declared_rules(repo: Path) -> dict[str, tuple[Path, dict[str, object]]]:
     """Map each mirror name to its validated canonical source and metadata."""
     canonical_root = repo / ".agents" / "rules"
     _check_inventory(canonical_root, RULES, repo)
+    _check_unregistered_cli_rules(repo)
     declared = {name: (canonical_root / f"{name}.md", metadata) for name, metadata in RULES.items()}
     for cli, rules in CLI_RULES.items():
         rules_root = repo / cli / "rules"

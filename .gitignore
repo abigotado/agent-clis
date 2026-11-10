@@ -8,6 +8,7 @@
 # Go build output
 /youtrack-agent-cli/youtrack-agent-cli
 /youtrack-agent-cli/dist/
+/youtrack-agent-cli/bin/
 /bin/
 /dist/
 *.test

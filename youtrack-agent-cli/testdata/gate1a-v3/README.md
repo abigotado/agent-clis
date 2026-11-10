@@ -14,7 +14,7 @@ so receipt generation/revision equality cannot mask a generation-ceiling defect.
 Fixture readers select current, shared or historical paths explicitly, with no
 filename-based version routing or fallback.
 
-Run from the repository root:
+Run from the `youtrack-agent-cli/` module directory:
 
 ```sh
 go run ./testdata/gate1a-v3/generate.go

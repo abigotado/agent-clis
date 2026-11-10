@@ -1,7 +1,7 @@
 //go:build ignore
 
 // Generate synthetic test-only active/intent fixtures independently of runtime codecs.
-// Run from the repository root: go run ./testdata/gate1a-registry-active/generate.go [-check].
+// Run from the youtrack-agent-cli/ module directory: go run ./testdata/gate1a-registry-active/generate.go [-check].
 package main
 
 import (

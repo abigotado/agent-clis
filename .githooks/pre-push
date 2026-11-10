@@ -19,7 +19,7 @@ fi
 
 # Every tracked Go module is gated. No tracked module at all means the checkout
 # is wrong, so it fails instead of skipping the Go gate.
-modules=$(git ls-files -- go.mod '*/go.mod')
+modules=$(git -c core.quotePath=false ls-files -- go.mod '*/go.mod')
 if [ -z "$modules" ]; then
   fail "no tracked Go module"
 fi

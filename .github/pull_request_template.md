@@ -26,7 +26,7 @@ Write it in the imperative: "Stop auth list reading the keychain".
 - [ ] `go generate ./...` ran and the result is committed — or this change touches
       neither the command surface nor `internal/errx`
 - [ ] `python3 .agents/scripts/sync-rules.py` and the harness tests pass — or this
-      change does not touch `.agents/`
+      change touches neither `.agents/` nor any `<cli>/rules/`
 
 ## Checklist
 

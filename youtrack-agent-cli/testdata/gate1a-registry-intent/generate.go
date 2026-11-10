@@ -1,7 +1,7 @@
 //go:build ignore
 
 // Generate the synthetic, test-only registry intent corpus from immutable core
-// positives. Run from the repository root: go run ./testdata/gate1a-registry-intent/generate.go [-check].
+// positives. Run from the youtrack-agent-cli/ module directory: go run ./testdata/gate1a-registry-intent/generate.go [-check].
 // This generator uses only the standard library and never invokes a runtime codec.
 package main
 

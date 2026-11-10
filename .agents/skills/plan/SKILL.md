@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Produce an evidence-based, dependency-ordered plan for a agent-clis change without editing any files. Use before implementing anything that spans multiple packages, touches the machine contract, or has more than one reasonable approach.
+description: Produce an evidence-based, dependency-ordered plan for an agent-clis change without editing any files. Use before implementing anything that spans multiple packages, touches the machine contract, or has more than one reasonable approach.
 ---
 
 # Plan agent-clis Change

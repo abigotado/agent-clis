@@ -56,7 +56,7 @@ They are not credentials or an enrolled authorization root. Never use them for
 production signatures. The generator imports neither registry parsers nor the
 test consumers; generated results are not themselves an oracle.
 
-From the repository root:
+From the `youtrack-agent-cli/` module directory:
 
 ```sh
 go run ./testdata/gate1a-registry/generate.go
@@ -257,7 +257,7 @@ The Go checks require at least Go 1.25.13, as declared in
 [`go.mod`](../../go.mod). [CI](../../../.github/workflows/ci.yaml) reads that same
 version through `go-version-file`.
 
-From the repository root:
+From the `youtrack-agent-cli/` module directory:
 
 ```sh
 go test -race ./internal/approval -run '^TestSharedRegistrySignatureControl' -count=1

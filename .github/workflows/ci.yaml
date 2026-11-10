@@ -11,7 +11,6 @@ on:
   pull_request:
     branches:
       - main
-    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -47,6 +46,8 @@ jobs:
     steps:
       - name: Git Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -152,6 +153,8 @@ jobs:
     steps:
       - name: Git Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -319,8 +322,8 @@ jobs:
         run: |
           set -euo pipefail
           go install github.com/goreleaser/goreleaser/v2@v2.17.1
-          goreleaser check
-          goreleaser build --snapshot --clean --id portable-readonly
+          goreleaser check --config .goreleaser.yaml
+          goreleaser build --config .goreleaser.yaml --snapshot --clean --id portable-readonly
           binary="$(ls -d dist/portable-readonly_linux_amd64*/)youtrack-agent-cli"
           test "$("${binary}" version -o json | jq -r '.data.version')" = "${CLI_VERSION}"
 
@@ -348,6 +351,8 @@ jobs:
     steps:
       - name: Git Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -375,27 +380,44 @@ jobs:
     steps:
       - name: Verify every job
         env:
-          CHANGES_RESULT: ${{ needs.changes.result }}
-          REPO_RESULT: ${{ needs.repo.result }}
-          YOUTRACK_RESULT: ${{ needs.youtrack.result }}
-          WINDOWS_RESULT: ${{ needs.youtrack-windows.result }}
+          NEEDS: ${{ toJSON(needs) }}
           YOUTRACK_SELECTED: ${{ needs.changes.outputs.youtrack }}
           ALL_SELECTED: ${{ needs.changes.outputs.all }}
         run: |
           set -euo pipefail
-          fail() {
-            echo "::error::$1"
-            exit 1
-          }
-          [ "${CHANGES_RESULT}" = success ] || fail "changes=${CHANGES_RESULT}"
-          [ "${REPO_RESULT}" = success ] || fail "repo=${REPO_RESULT}"
           case "${YOUTRACK_SELECTED}:${ALL_SELECTED}" in
-            true:true | true:false | false:true | false:false) ;;
-            *) fail "malformed selection: youtrack=${YOUTRACK_SELECTED} all=${ALL_SELECTED}" ;;
+            true:true | true:false | false:true) ;;
+            *)
+              echo "::error::malformed or empty selection: youtrack=${YOUTRACK_SELECTED} all=${ALL_SELECTED}"
+              exit 1
+              ;;
           esac
-          expected=skipped
-          if [ "${YOUTRACK_SELECTED}" = true ] || [ "${ALL_SELECTED}" = true ]; then
-            expected=success
+          # An empty or malformed context would make the loop below vacuous.
+          if ! jq -e 'type == "object" and .changes.result == "success" and .repo.result == "success"' <<<"${NEEDS}" >/dev/null; then
+            echo "::error::needs context is missing the always-on jobs"
+            exit 1
           fi
-          [ "${YOUTRACK_RESULT}" = "${expected}" ] || fail "youtrack=${YOUTRACK_RESULT}, expected ${expected}"
-          [ "${WINDOWS_RESULT}" = "${expected}" ] || fail "youtrack-windows=${WINDOWS_RESULT}, expected ${expected}"
+          cli_selected=false
+          if [ "${YOUTRACK_SELECTED}" = true ] || [ "${ALL_SELECTED}" = true ]; then
+            cli_selected=true
+          fi
+          # Every needed job must have succeeded. The CLI jobs may be skipped
+          # only when the change selection left them out.
+          failures="$(jq -r --arg selected "${cli_selected}" '
+            to_entries[]
+            | select(
+                .value.result != "success"
+                and (
+                  (
+                    .value.result == "skipped"
+                    and $selected == "false"
+                    and (.key == "youtrack" or .key == "youtrack-windows")
+                  ) | not
+                )
+              )
+            | "\(.key)=\(.value.result)"
+          ' <<<"${NEEDS}")"
+          if [ -n "${failures}" ]; then
+            echo "::error::jobs did not succeed: ${failures//$'\n'/, }"
+            exit 1
+          fi

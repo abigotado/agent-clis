@@ -30,7 +30,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: youtrack-agent-cli/go.mod
-          cache: true
+          cache: false
           cache-dependency-path: youtrack-agent-cli/go.sum
 
       - name: Verify release tag is on main
@@ -60,7 +60,7 @@ jobs:
         run: |
           set -euo pipefail
           go install github.com/goreleaser/goreleaser/v2@v2.17.1
-          (cd youtrack-agent-cli && goreleaser check)
+          (cd youtrack-agent-cli && goreleaser check --config .goreleaser.yaml)
           ruby .github/scripts/verify-portable-release-policy_test.rb
           ruby .github/scripts/verify-portable-release-policy.rb youtrack-agent-cli/.goreleaser.yaml .
 
@@ -79,7 +79,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: youtrack-agent-cli/go.mod
-          cache: true
+          cache: false
           cache-dependency-path: youtrack-agent-cli/go.sum
 
       - name: Reverify release tag is on main
@@ -103,7 +103,7 @@ jobs:
           set -euo pipefail
           test -z "$(git status --porcelain)"
           export CLI_VERSION="${GITHUB_REF_NAME#youtrack-agent-cli/v}"
-          goreleaser release --snapshot --clean
+          goreleaser release --config .goreleaser.yaml --snapshot --clean
           binary="$(ls -d dist/portable-readonly_linux_amd64*/)youtrack-agent-cli"
           report="$("${binary}" version -o json)"
           test "$(jq -r '.data.version' <<<"${report}")" = "${CLI_VERSION}"
@@ -187,3 +187,11 @@ jobs:
             --draft --verify-tag --target "${COMMIT}" \
             --title "youtrack-agent-cli v${CLI_VERSION}" \
             --notes-file "${RUNNER_TEMP}/notes.md"
+          object="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}" --jq '.object.type + " " + .object.sha')"
+          if [ "${object%% *}" = tag ]; then
+            object="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object##* }" --jq '.object.type + " " + .object.sha')"
+          fi
+          if [ "${object%% *}" != commit ] || [ "${object##* }" != "${COMMIT}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} no longer resolves to ${COMMIT}; it moved during the job. The operator must delete the draft release before retrying."
+            exit 1
+          fi

@@ -28,7 +28,9 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
         needs: [changes]
         runs-on: ubuntu-latest
         steps:
-          - run: "true"
+          - env:
+              NEEDS: ${{ toJSON(needs) }}
+            run: "true"
   YAML
 
   def verify(config = CONFIG, files = {}, release: RELEASE, ci: MINIMAL_CI)
@@ -112,6 +114,51 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
     success, stderr = verify(CONFIG, {}, ci: MINIMAL_CI.sub("if: always()", "if: success()"))
     refute success
     assert_includes stderr, "if: always()"
+  end
+
+  def test_rejects_a_gate_without_the_needs_context
+    changed = MINIMAL_CI.sub("NEEDS: ${{ toJSON(needs) }}", "NEEDS: ${{ needs.changes.result }}")
+    refute_equal MINIMAL_CI, changed
+    success, stderr = verify(CONFIG, {}, ci: changed)
+    refute success
+    assert_includes stderr, "must pass NEEDS"
+  end
+
+  def test_rejects_a_release_workflow_without_the_goreleaser_config_flag
+    changed = RELEASE.gsub(" --config .goreleaser.yaml", "")
+    refute_equal RELEASE, changed
+    success, stderr = verify(CONFIG, {}, release: changed)
+    refute success
+    assert_includes stderr, "must equal the approved publisher"
+  end
+
+  def test_rejects_a_release_workflow_that_restores_the_go_cache
+    changed = RELEASE.gsub("cache: false", "cache: true")
+    refute_equal RELEASE, changed
+    success, stderr = verify(CONFIG, {}, release: changed)
+    refute success
+    assert_includes stderr, "must equal the approved publisher"
+  end
+
+  def test_rejects_a_release_draft_that_does_not_recheck_the_tag
+    changed = RELEASE.sub("no longer resolves to", "still resolves to")
+    refute_equal RELEASE, changed
+    success, stderr = verify(CONFIG, {}, release: changed)
+    refute success
+    assert_includes stderr, "must equal the approved publisher"
+  end
+
+  def test_rejects_a_checkout_that_persists_credentials_in_any_workflow
+    bare = "uses: actions/checkout@#{'a' * 40}"
+    kept = "uses: actions/checkout@#{'a' * 40}\n        with:\n          persist-credentials: true"
+    [bare, kept].each do |step|
+      success, stderr = verify(CONFIG, { ".github/workflows/other.yaml" => workflow_using(step) })
+      refute success, step
+      assert_includes stderr, "without persist-credentials: false"
+    end
+    success, stderr = verify(CONFIG, {}, release: RELEASE.sub("persist-credentials: false", "persist-credentials: true"))
+    refute success
+    assert_includes stderr, "without persist-credentials: false"
   end
 
   def test_rejects_continue_on_error_at_any_depth

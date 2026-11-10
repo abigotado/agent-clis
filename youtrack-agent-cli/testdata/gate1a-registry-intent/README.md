@@ -39,7 +39,7 @@ not an allocation guarantee or a fabricated maximum-valid object.
 
 ## Reproduction
 
-From the repository root, run the original generator check before the dependent
+From the `youtrack-agent-cli/` module directory, run the original generator check before the dependent
 supplemental check:
 
 ```sh

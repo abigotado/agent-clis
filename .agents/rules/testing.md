@@ -21,5 +21,6 @@ touched-schema refusal; durable exclusive/concurrent claim protection; and
 verified-write local/output failures distinct from unknown outcomes. Capabilities
 report configuration, never server permission.
 
-Exit codes and envelope shape are contract tests. Before review run `gofmt -l
-.`, `go vet ./...`, and `go test -race ./...`.
+Exit codes and envelope shape are contract tests. Before review, inside each
+changed module with `GOWORK=off`, run `gofmt -l $(git ls-files '*.go')` (it must
+print nothing), `go vet ./...`, and `go test -race ./...`.

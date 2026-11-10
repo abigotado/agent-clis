@@ -46,7 +46,7 @@ Refusals use the test-only classes `canonical_encoding`, `bounds_grammar`,
 
 ## Reproduction
 
-From the repository root:
+From the `youtrack-agent-cli/` module directory:
 
 ```sh
 go run ./testdata/gate1a-registry/generate.go -check
