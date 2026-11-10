@@ -15,6 +15,9 @@ const (
 // or by immutable project-field and bundle-value IDs, never a mix.
 type OperatorFieldSelection struct {
 	FieldName, ValueName, FieldID, ValueID string
+	// Clear empties the field instead of selecting a value; it carries a field
+	// selector only.
+	Clear bool
 }
 
 // OperatorSnapshotInput selects an exact issue for issue.update/comment.add,

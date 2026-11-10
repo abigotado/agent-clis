@@ -96,6 +96,7 @@ func (a *App) newOperatorWriteCommand() *cobra.Command {
 func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 	var input application.OperatorSnapshotInput
 	var fieldNames, valueNames, fieldIDs, valueIDs []string
+	var clearValue bool
 	command := &cobra.Command{Use: "snapshot", Short: "Read one exact issue or project and freeze a supported write target", Args: usageArgs(cobra.NoArgs), RunE: func(cmd *cobra.Command, _ []string) error {
 		if err := a.resolveOperationProfile(cmd, "write"); err != nil {
 			return err
@@ -108,6 +109,28 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 		}
 		if input.Kind == "comment.delete" && (len(fieldNames) != 0 || len(valueNames) != 0 || len(fieldIDs) != 0 || len(valueIDs) != 0) {
 			return errx.Usage("comment.delete snapshot does not accept field or value selectors")
+		}
+		if clearValue {
+			// Checked on the raw flags: --value "" must conflict, never clear.
+			if input.Kind != "issue.update" {
+				return errx.Usage("--clear-value is accepted only with --kind issue.update")
+			}
+			if len(valueNames) != 0 || len(valueIDs) != 0 {
+				return errx.Usage("--clear-value cannot be combined with --value or --value-id")
+			}
+			if len(fieldNames)+len(fieldIDs) != 1 {
+				return errx.Usage("--clear-value requires exactly one --field or --field-id")
+			}
+			if len(fieldNames) == 1 && fieldNames[0] == "" || len(fieldIDs) == 1 && fieldIDs[0] == "" {
+				return errx.Usage("--clear-value requires a nonempty --field or --field-id")
+			}
+			input.Fields = []application.OperatorFieldSelection{{Clear: true}}
+			if len(fieldNames) == 1 {
+				input.Fields[0].FieldName = fieldNames[0]
+			} else {
+				input.Fields[0].FieldID = fieldIDs[0]
+			}
+			fieldNames, valueNames, fieldIDs, valueIDs = nil, nil, nil, nil
 		}
 		if input.Kind != "issue.create" {
 			// Single-field kinds keep the scalar flags' last-value-wins meaning.
@@ -139,9 +162,10 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 	flags.StringVar(&input.CommentID, "comment-id", "", "immutable exact comment ID for comment.delete")
 	flags.StringVar(&input.ProjectID, "project", "", "exact project entity ID or key for issue.create")
 	flags.StringArrayVar(&fieldNames, "field", nil, "exact field name, for example Stage; repeatable for issue.create, last wins otherwise")
-	flags.StringArrayVar(&valueNames, "value", nil, "exact target bundle value name, paired with --field")
+	flags.StringArrayVar(&valueNames, "value", nil, "exact target bundle value name, or exact user login for a user field, paired with --field")
 	flags.StringArrayVar(&fieldIDs, "field-id", nil, "immutable project custom-field ID; repeatable for issue.create, last wins otherwise")
-	flags.StringArrayVar(&valueIDs, "value-id", nil, "immutable target bundle value ID, paired with --field-id")
+	flags.StringArrayVar(&valueIDs, "value-id", nil, "immutable target bundle value ID, or user ID for a user field, paired with --field-id")
+	flags.BoolVar(&clearValue, "clear-value", false, "empty the selected field instead of setting a value; only with --kind issue.update and exactly one --field or --field-id, never with --value or --value-id. The field must allow empty values (canBeEmpty) and currently hold one")
 	flags.StringVar(&input.OutputPath, "out", "", "new exclusive 0600 snapshot path in an existing private directory")
 	return command
 }

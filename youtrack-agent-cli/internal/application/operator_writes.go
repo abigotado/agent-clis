@@ -167,7 +167,7 @@ func (s *Service) SnapshotOperatorWrite(ctx context.Context, input OperatorSnaps
 			if err != nil {
 				return OperatorWriteInfo{}, err
 			}
-			field, err := freezeOperatorField(issue, schema, selection.ValueID, selection.ValueName, false)
+			field, err := freezeOperatorField(issue, schema, selection.ValueID, selection.ValueName, selection.Clear)
 			if err != nil {
 				return OperatorWriteInfo{}, err
 			}
@@ -199,6 +199,22 @@ func (s *Service) SnapshotOperatorWrite(ctx context.Context, input OperatorSnaps
 // credential or network access.
 func validateOperatorTarget(kind operatorwrite.Kind, input OperatorSnapshotInput) error {
 	for _, selection := range input.Fields {
+		if selection.Clear {
+			if kind != operatorwrite.KindIssueUpdate {
+				return errx.Usage("--clear-value is accepted only by issue.update")
+			}
+			if len(input.Fields) != 1 {
+				return errx.Usage("--clear-value requires exactly one field selection")
+			}
+			hasName, hasID := selection.FieldName != "", selection.FieldID != ""
+			if hasName == hasID {
+				return errx.Usage("--clear-value requires exactly one of --field or --field-id")
+			}
+			if selection.ValueName != "" || selection.ValueID != "" {
+				return errx.Usage("--clear-value cannot be combined with --value or --value-id")
+			}
+			continue
+		}
 		byName := selection.FieldName != "" && selection.ValueName != "" && selection.FieldID == "" && selection.ValueID == ""
 		byID := selection.FieldID != "" && selection.ValueID != "" && selection.FieldName == "" && selection.ValueName == ""
 		if !byName && !byID {
@@ -310,9 +326,10 @@ func resolveOperatorField(ctx context.Context, client *youtrack.Client, projectI
 	return schema, nil
 }
 
-// supportedOperatorSchema reports whether the project field is a State or Enum
-// field backed by the matching bundle type. Everything else, including user
-// fields until they are writable, is refused as unsupported rather than invalid.
+// supportedOperatorSchema reports whether the project field is a single State,
+// Enum, or User field backed by the matching bundle type. Everything else is
+// refused as unsupported rather than invalid. Creating an issue freezes only
+// State and Enum fields; freezeCreateField refuses the user schema itself.
 func supportedOperatorSchema(schema youtrack.ProjectField) bool {
 	if schema.Bundle == nil {
 		return false
@@ -322,6 +339,8 @@ func supportedOperatorSchema(schema youtrack.ProjectField) bool {
 		return schema.Bundle.Type == "StateBundle"
 	case "EnumProjectCustomField":
 		return schema.Bundle.Type == "EnumBundle"
+	case "UserProjectCustomField":
+		return schema.Bundle.Type == "UserBundle" && schema.Field.FieldType.ValueType == "user" && !schema.Field.FieldType.IsMultiValue
 	default:
 		return false
 	}
@@ -369,10 +388,12 @@ func freezeCreateField(schema youtrack.ProjectField, valueID, valueName string) 
 
 // freezeOperatorField freezes the touched issue field. With clearTarget set no target
 // value is selected and the frozen target stays nil (an explicit clear), which
-// needs a clearable field that currently holds a value.
+// needs a clearable field that currently holds a value. Setting a field to the
+// value it already holds is refused the same way, so a no-op can never be mistaken
+// for a successful write during reconciliation.
 func freezeOperatorField(issue youtrack.Issue, schema youtrack.ProjectField, valueID, valueName string, clearTarget bool) (operatorwrite.Field, error) {
 	if schema.ID == "" || schema.Field.ID == "" || schema.Field.FieldType.IsMultiValue || schema.Bundle == nil || !supportedOperatorSchema(schema) {
-		return operatorwrite.Field{}, errx.Unsupported("OPERATOR_FIELD_UNSUPPORTED", "only single State and Enum fields are supported")
+		return operatorwrite.Field{}, errx.Unsupported("OPERATOR_FIELD_UNSUPPORTED", "only single State, Enum, and User fields are supported")
 	}
 	var issueField youtrack.IssueCustomField
 	matches := 0
@@ -405,14 +426,25 @@ func freezeOperatorField(issue youtrack.Issue, schema youtrack.ProjectField, val
 		Type: issueField.Type, ProjectFieldType: schema.Type, ValueType: schema.Field.FieldType.ValueType, IsMultiValue: schema.Field.FieldType.IsMultiValue,
 		CanBeEmpty: schema.CanBeEmpty, IsPublic: schema.IsPublic, FieldTypeID: schema.Field.FieldType.ID, FieldTypeType: schema.Field.FieldType.Type,
 		BundleID: schema.Bundle.ID, BundleType: schema.Bundle.Type}
-	valueType := ""
+	valueType, projectType := "", ""
 	switch issueField.Type {
 	case "StateIssueCustomField":
-		valueType = "StateBundleElement"
+		valueType, projectType = "StateBundleElement", "StateProjectCustomField"
 	case "SingleEnumIssueCustomField":
-		valueType = "EnumBundleElement"
+		valueType, projectType = "EnumBundleElement", "EnumProjectCustomField"
+	case "SingleUserIssueCustomField":
+		valueType, projectType = "User", "UserProjectCustomField"
 	default:
-		return field, errx.Unsupported("OPERATOR_FIELD_UNSUPPORTED", "only single State and Enum fields are supported")
+		return field, errx.Unsupported("OPERATOR_FIELD_UNSUPPORTED", "only single State, Enum, and User fields are supported")
+	}
+	if schema.Type != projectType {
+		return field, errx.Conflict("OPERATOR_FIELD_MAPPING_INVALID", "issue field type does not match the project field type")
+	}
+	if clearTarget && !schema.CanBeEmpty {
+		return field, errx.Unsupported("OPERATOR_FIELD_REQUIRED", "the field cannot be empty, so it cannot be cleared").WithHint("choose a clearable field or set a value instead")
+	}
+	if valueType == "User" {
+		return freezeUserField(field, issueField, schema, valueID, valueName, clearTarget)
 	}
 	var current struct {
 		ID   string `json:"id"`
@@ -449,8 +481,8 @@ func freezeOperatorField(issue youtrack.Issue, schema youtrack.ProjectField, val
 		return field, errx.Usage("current and target values must be known and the unique target must not be archived")
 	}
 	if clearTarget {
-		if !schema.CanBeEmpty || field.CurrentValue == nil {
-			return field, errx.Usage("only a clearable field that currently holds a value can be cleared")
+		if field.CurrentValue == nil {
+			return field, errAlreadyEmpty()
 		}
 	} else if targetMatches != 1 || field.TargetValue == nil || field.TargetValue.Archived {
 		return field, errx.Usage("current and target values must be known and the unique target must not be archived")
@@ -460,6 +492,67 @@ func freezeOperatorField(issue youtrack.Issue, schema youtrack.ProjectField, val
 	}
 	if field.CurrentValue != nil && current.Name != "" && current.Name != field.CurrentValue.Name {
 		return field, errx.Conflict("OPERATOR_FIELD_VALUE_INVALID", "current field value disagrees with its bundle")
+	}
+	if field.TargetValue != nil && field.CurrentValue != nil && field.TargetValue.ID == field.CurrentValue.ID {
+		return field, errAlreadySet()
+	}
+	return field, nil
+}
+
+func errAlreadyEmpty() *errx.Error {
+	return errx.Unsupported("OPERATOR_FIELD_ALREADY_EMPTY", "the field is already empty").WithHint("nothing to clear; do not retry unchanged")
+}
+
+func errAlreadySet() *errx.Error {
+	return errx.Unsupported("OPERATOR_FIELD_ALREADY_SET", "the field already holds the target value").WithHint("nothing to change; do not retry unchanged")
+}
+
+// freezeUserField freezes a single user field. The current user comes from the
+// issue and need not be in the bundle (a departed assignee is the main clearing
+// case). Only id, login, and type are frozen, never fullName or email, and users
+// are compared by login. A set target must match exactly one nonbanned bundle
+// user by exact login or ID.
+func freezeUserField(field operatorwrite.Field, issueField youtrack.IssueCustomField, schema youtrack.ProjectField, valueID, valueName string, clearTarget bool) (operatorwrite.Field, error) {
+	var current struct {
+		ID    string `json:"id"`
+		Login string `json:"login"`
+		Type  string `json:"$type"`
+	}
+	if bytes.Equal(bytes.TrimSpace(issueField.Value), []byte("null")) {
+		if !schema.CanBeEmpty {
+			return field, errx.Conflict("OPERATOR_FIELD_VALUE_INVALID", "non-empty field has a null current value")
+		}
+	} else {
+		if err := json.Unmarshal(issueField.Value, &current); err != nil || current.ID == "" || current.Login == "" || current.Type != "User" {
+			return field, errx.Conflict("OPERATOR_FIELD_VALUE_INVALID", "current field value is not an immutable single user value")
+		}
+		field.CurrentValue = &operatorwrite.Value{ID: current.ID, Name: current.Login, Type: "User"}
+	}
+	if clearTarget {
+		if field.CurrentValue == nil {
+			return field, errAlreadyEmpty()
+		}
+		return field, nil
+	}
+	targetMatches := 0
+	var target youtrack.User
+	seen := make(map[string]bool, len(schema.Bundle.AggregatedUsers))
+	for _, user := range schema.Bundle.AggregatedUsers {
+		if user.ID == "" || user.Login == "" || seen[user.ID] {
+			return field, errx.Conflict("OPERATOR_BUNDLE_INVALID", "field bundle has missing or duplicate user IDs")
+		}
+		seen[user.ID] = true
+		if valueID != "" && user.ID == valueID || valueName != "" && user.Login == valueName {
+			target = user
+			targetMatches++
+		}
+	}
+	if targetMatches != 1 || target.Banned {
+		return field, errx.Usage("the target user must be one known, unbanned user of the field bundle, selected by exact login or ID")
+	}
+	field.TargetValue = &operatorwrite.Value{ID: target.ID, Name: target.Login, Type: "User"}
+	if field.CurrentValue != nil && field.CurrentValue.ID == target.ID {
+		return field, errAlreadySet()
 	}
 	return field, nil
 }

@@ -784,8 +784,6 @@ func TestSnapshotOperatorWriteRefusesUnsupportedFieldSchema(t *testing.T) {
 		name          string
 		issue, schema string
 	}{
-		{"user bundle without values", userIssue, fmt.Sprintf(userSchema, `,"bundle":{"id":"100-1","$type":"UserBundle","aggregatedUsers":[{"id":"1-5","login":"bob"}]}`)},
-		{"user bundle with values lacking archived", userIssue, fmt.Sprintf(userSchema, `,"bundle":{"id":"100-1","$type":"UserBundle","values":[{"id":"1-5","login":"bob","$type":"User"}],"aggregatedUsers":[{"id":"1-5","login":"bob"}]}`)},
 		{"user field without bundle", userIssue, fmt.Sprintf(userSchema, "")},
 		{"multi-value state field", operatorIssueJSON, strings.Replace(operatorSchemaJSON, `"isMultiValue":false`, `"isMultiValue":true`, 1)},
 		{"unknown bundle type", operatorIssueJSON, strings.Replace(strings.Replace(operatorSchemaJSON, "StateBundle", "OwnedBundle", 1), `"values":[{"id":"101-1","name":"Open","$type":"StateBundleElement","archived":false},{"id":"101-2","name":"Done","$type":"StateBundleElement","archived":false}]`, `"values":[{"id":"101-1"}]`, 1)},

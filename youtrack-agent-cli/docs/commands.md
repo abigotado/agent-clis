@@ -304,6 +304,7 @@ Read one exact issue or project and freeze a supported write target
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
+| `--clear-value` | bool |  | empty the selected field instead of setting a value; only with --kind issue.update and exactly one --field or --field-id, never with --value or --value-id. The field must allow empty values (canBeEmpty) and currently hold one |
 | `--comment-id` | string |  | immutable exact comment ID for comment.delete |
 | `--field` | stringArray |  | exact field name, for example Stage; repeatable for issue.create, last wins otherwise |
 | `--field-id` | stringArray |  | immutable project custom-field ID; repeatable for issue.create, last wins otherwise |
@@ -311,8 +312,8 @@ Read one exact issue or project and freeze a supported write target
 | `--kind` | string |  | supported write kind: issue.create, issue.update, comment.add, or comment.delete |
 | `--out` | string |  | new exclusive 0600 snapshot path in an existing private directory |
 | `--project` | string |  | exact project entity ID or key for issue.create |
-| `--value` | stringArray |  | exact target bundle value name, paired with --field |
-| `--value-id` | stringArray |  | immutable target bundle value ID, paired with --field-id |
+| `--value` | stringArray |  | exact target bundle value name, or exact user login for a user field, paired with --field |
+| `--value-id` | stringArray |  | immutable target bundle value ID, or user ID for a user field, paired with --field-id |
 
 ### `youtrack-agent-cli operator-write status`
 
