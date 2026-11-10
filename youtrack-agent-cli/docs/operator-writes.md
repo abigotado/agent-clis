@@ -277,13 +277,15 @@ Snapshot takes only `--id` and `--out`; `--field`, `--value`, `--clear-value`,
 `--project` and `--comment-id` are usage errors (exit 2). Either request member
 may be omitted to leave that attribute alone. Bounds: the summary is one line,
 at most 1024 bytes; the description is at most 32 KiB, LF-only and trimmed.
-Clearing the description is not supported.
+An explicitly present empty or null `summary` or `description` member is
+refused; clearing either attribute is not supported (omit the member instead).
 
 The snapshot freezes SHA-256 hashes of the current summary and description, not
 the text. The plan holds the new text and only those hashes of the old text. If
-the requested text equals the current text, prepare or apply refuses with
-`OPERATOR_TEXT_UNCHANGED` (exit 2). Apply re-reads the issue and refuses a
-changed text with `OPERATOR_ISSUE_STALE` (exit 9) even when `updated` is
+the requested text equals the current text, prepare (including `--dry-run`)
+refuses with `OPERATOR_TEXT_UNCHANGED` (exit 2); apply never raises it. Apply
+re-reads the issue and refuses a changed text with `OPERATOR_ISSUE_STALE`
+(exit 9), even when the new text equals the request and even when `updated` is
 unchanged. A window remains between that re-check and the single POST because
 YouTrack has no conditional update; a concurrent edit in it can be overwritten.
 The plan is v4 and `capabilities` lists `issue.edit`.

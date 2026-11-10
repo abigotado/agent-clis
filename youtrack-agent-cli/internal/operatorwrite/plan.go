@@ -442,6 +442,21 @@ func decode(r io.Reader, limit int, dst any) error {
 	return nil
 }
 
+// hasEmptyEditMember reports an explicitly present empty or null summary or
+// description member; omission is the only way to leave an attribute alone.
+func hasEmptyEditMember(raw []byte) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return true
+	}
+	for _, k := range []string{"summary", "description"} {
+		if v, ok := m[k]; ok && (string(v) == "null" || string(v) == `""`) {
+			return true
+		}
+	}
+	return false
+}
+
 func hasDuplicateKeys(raw []byte) bool {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	var walk func() bool
@@ -497,8 +512,18 @@ func DecodeSnapshot(r io.Reader) (Snapshot, error) {
 }
 func DecodeRequest(r io.Reader) (Request, error) {
 	var q Request
-	if err := decode(r, MaxRequestBytes, &q); err != nil {
+	if r == nil {
+		return Request{}, invalid()
+	}
+	raw, err := io.ReadAll(io.LimitReader(r, MaxRequestBytes+1))
+	if err != nil {
+		return Request{}, invalid()
+	}
+	if err := decode(bytes.NewReader(raw), MaxRequestBytes, &q); err != nil {
 		return Request{}, err
+	}
+	if q.Kind == KindIssueEdit && hasEmptyEditMember(raw) {
+		return Request{}, invalid()
 	}
 	if !validRequest(q) || q.Kind == KindIssueCreate && !validDescriptionBody(q.Description) {
 		return Request{}, invalid()

@@ -944,6 +944,7 @@ func TestOperatorCapabilitiesListsCreateFirstInCanonicalOrder(t *testing.T) {
 	}{
 		{"all three kinds", []profile.Capability{profile.CapabilityRead, profile.CapabilityIssueCreate, profile.CapabilityIssueUpdate, profile.CapabilityCommentAdd}, []string{"issue.create", "issue.update", "comment.add"}},
 		{"create only", []profile.Capability{profile.CapabilityRead, profile.CapabilityIssueCreate}, []string{"issue.create"}},
+		{"edit only", []profile.Capability{profile.CapabilityRead, profile.CapabilityIssueEdit}, []string{"issue.edit"}},
 		{"update and comment only", []profile.Capability{profile.CapabilityRead, profile.CapabilityIssueUpdate, profile.CapabilityCommentAdd}, []string{"issue.update", "comment.add"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -958,6 +959,35 @@ func TestOperatorCapabilitiesListsCreateFirstInCanonicalOrder(t *testing.T) {
 				t.Fatalf("kinds JSON=%s error=%v", raw, err)
 			}
 		})
+	}
+}
+
+func TestOperatorCapabilitiesIssueEditAdvertisedOnlyWithItsCapability(t *testing.T) {
+	with := newCreateFixture(t, profile.CapabilityRead, profile.CapabilityIssueEdit)
+	got, err := with.service.Capabilities(t.Context(), "work")
+	if err != nil || got.PlanVersions["issue.edit"] != operatorwrite.PlanVersion4 {
+		t.Fatalf("capabilities=%#v error=%v", got, err)
+	}
+	without := newCreateFixture(t, profile.CapabilityRead, profile.CapabilityIssueCreate)
+	got, err = without.service.Capabilities(t.Context(), "work")
+	if err != nil {
+		t.Fatalf("capabilities=%#v error=%v", got, err)
+	}
+	for _, kind := range got.Kinds {
+		if kind == "issue.edit" {
+			t.Fatalf("issue.edit advertised without capability: %#v", got)
+		}
+	}
+}
+
+func TestIssueEditOnlyProfileBindsWritePolicy(t *testing.T) {
+	f := newCreateFixture(t, profile.CapabilityRead, profile.CapabilityIssueEdit)
+	projects := []writepolicy.Project{{ID: "0-1", Key: "APP"}}
+	if _, err := f.service.PreviewPolicy(t.Context(), "work", projects); err != nil {
+		t.Fatalf("PreviewPolicy() error = %v", err)
+	}
+	if _, err := f.service.SetPolicy(t.Context(), "work", projects); err != nil {
+		t.Fatalf("SetPolicy() error = %v", err)
 	}
 }
 
