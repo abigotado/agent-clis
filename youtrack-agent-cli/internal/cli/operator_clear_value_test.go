@@ -3,8 +3,10 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/application"
 	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
@@ -45,6 +47,40 @@ func TestOperatorCLIClearValueFlagValidation(t *testing.T) {
 			// check proves the CLI accepted the selection and built a valid shape.
 			if code != test.wantCode || decode(t, stdout)["error"].(map[string]any)["code"] != test.wantReason || creds.loads != 0 || posts.Load() != 0 {
 				t.Fatalf("code=%d loads=%d posts=%d stdout=%s stderr=%s", code, creds.loads, posts.Load(), stdout, stderr)
+			}
+		})
+	}
+}
+
+func TestOperatorFieldSelectionsMapping(t *testing.T) {
+	one := func(s ...string) []string { return s }
+	for _, test := range []struct {
+		name                                       string
+		kind                                       string
+		fieldNames, valueNames, fieldIDs, valueIDs []string
+		clear                                      bool
+		want                                       []application.OperatorFieldSelection
+		wantUsage                                  bool
+	}{
+		{name: "clear by name", kind: "issue.update", fieldNames: one("Assignee"), clear: true,
+			want: []application.OperatorFieldSelection{{FieldName: "Assignee", Clear: true}}},
+		{name: "clear by id", kind: "issue.update", fieldIDs: one("92-1"), clear: true,
+			want: []application.OperatorFieldSelection{{FieldID: "92-1", Clear: true}}},
+		{name: "unassigned is a plain value", kind: "issue.update", fieldNames: one("Assignee"), valueNames: one("Unassigned"),
+			want: []application.OperatorFieldSelection{{FieldName: "Assignee", ValueName: "Unassigned"}}},
+		{name: "empty value is not a clear", kind: "issue.update", fieldNames: one("Assignee"), valueNames: one(""), wantUsage: true},
+		{name: "clear with empty value conflicts", kind: "issue.update", fieldNames: one("Assignee"), valueNames: one(""), clear: true, wantUsage: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := operatorFieldSelections(test.kind, test.fieldNames, test.valueNames, test.fieldIDs, test.valueIDs, test.clear)
+			if test.wantUsage {
+				if err == nil || errx.ExitCode(err) != errx.CodeUsage {
+					t.Fatalf("got %v, %v", got, err)
+				}
+				return
+			}
+			if err != nil || !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("got %#v, %v want %#v", got, err, test.want)
 			}
 		})
 	}

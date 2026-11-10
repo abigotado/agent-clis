@@ -114,17 +114,18 @@ func TestExactProjectFieldValidatesBundleByType(t *testing.T) {
 					t.Fatalf("bundle=%#v", field.Bundle)
 				}
 			}},
-		{name: "user bundle values lacking archived are ignored", response: fmt.Sprintf(userField, `,"values":[{"id":"1-5","login":"bob","$type":"User"}],"aggregatedUsers":[{"id":"1-5","login":"bob"}]`),
+		{name: "user bundle values lacking archived are ignored", response: fmt.Sprintf(userField, `,"values":[{"id":"1-5","login":"bob","$type":"User"}],"aggregatedUsers":[{"id":"1-5","login":"bob","banned":false}]`),
 			check: func(t *testing.T, field ProjectField) {
 				if len(field.Bundle.Values) != 0 || len(field.Bundle.AggregatedUsers) != 1 || field.Bundle.AggregatedUsers[0].Banned {
 					t.Fatalf("bundle=%#v", field.Bundle)
 				}
 			}},
 		{name: "user bundle without aggregated users", response: fmt.Sprintf(userField, ``)},
-		{name: "aggregated user without id", wantErr: true, response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"login":"bob"}]`)},
-		{name: "aggregated user with malformed id", wantErr: true, response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"id":"../bad","login":"bob"}]`)},
-		{name: "aggregated user with blank login", wantErr: true, response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"id":"1-5","login":"  "}]`)},
-		{name: "aggregated user without login", wantErr: true, response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"id":"1-5"}]`)},
+		{name: "aggregated user without id", wantErr: true, response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"login":"bob","banned":false}]`)},
+		{name: "aggregated user with malformed id", wantErr: true, response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"id":"../bad","login":"bob","banned":false}]`)},
+		{name: "aggregated user with blank login", wantErr: true, response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"id":"1-5","login":"  ","banned":false}]`)},
+		{name: "aggregated user without login", wantErr: true, response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"id":"1-5","banned":false}]`)},
+		{name: "aggregated user without banned", wantErr: true, response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"id":"1-5","login":"bob"}]`)},
 		{name: "state value missing archived", wantErr: true, response: strings.Replace(exactProjectFieldJSON, `"archived":false,`, "", 1)},
 		{name: "state value blank name", wantErr: true, response: strings.Replace(exactProjectFieldJSON, `"name":"Open"`, `"name":" "`, 1)},
 		{name: "enum value missing archived", wantErr: true, response: strings.Replace(strings.Replace(exactProjectFieldJSON, "StateBundle", "EnumBundle", 1), `"archived":false,`, "", 1)},

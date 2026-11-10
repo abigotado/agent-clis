@@ -84,6 +84,12 @@ type exactProjectFieldResponse struct {
 		// Values stay raw: only State and Enum bundles are interpreted, so a
 		// valid UserBundle or unsupported bundle type cannot fail the read.
 		Values json.RawMessage `json:"values"`
+		// AggregatedUsers shadows the embedded field so a missing banned flag
+		// is detectable: the write path must not treat it as not banned.
+		AggregatedUsers []struct {
+			User
+			Banned *bool `json:"banned"`
+		} `json:"aggregatedUsers"`
 	} `json:"bundle"`
 }
 
@@ -231,6 +237,15 @@ func (client *Client) GetProjectField(ctx context.Context, projectID, projectFie
 		case "UserBundle":
 			// A user bundle's membership is its aggregated users; the raw
 			// values (groups and users) are never interpreted.
+			bundle.AggregatedUsers = nil
+			for _, user := range response.Bundle.AggregatedUsers {
+				if user.Banned == nil {
+					return ProjectField{}, invalidReadResponse()
+				}
+				entry := user.User
+				entry.Banned = *user.Banned
+				bundle.AggregatedUsers = append(bundle.AggregatedUsers, entry)
+			}
 		default:
 			// Unsupported bundle types are refused by the caller, not here.
 			bundle.AggregatedUsers = nil

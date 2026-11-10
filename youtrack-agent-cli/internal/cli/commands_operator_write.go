@@ -110,42 +110,11 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 		if input.Kind == "comment.delete" && (len(fieldNames) != 0 || len(valueNames) != 0 || len(fieldIDs) != 0 || len(valueIDs) != 0) {
 			return errx.Usage("comment.delete snapshot does not accept field or value selectors")
 		}
-		if clearValue {
-			// Checked on the raw flags: --value "" must conflict, never clear.
-			if input.Kind != "issue.update" {
-				return errx.Usage("--clear-value is accepted only with --kind issue.update")
-			}
-			if len(valueNames) != 0 || len(valueIDs) != 0 {
-				return errx.Usage("--clear-value cannot be combined with --value or --value-id")
-			}
-			if len(fieldNames)+len(fieldIDs) != 1 {
-				return errx.Usage("--clear-value requires exactly one --field or --field-id")
-			}
-			if len(fieldNames) == 1 && fieldNames[0] == "" || len(fieldIDs) == 1 && fieldIDs[0] == "" {
-				return errx.Usage("--clear-value requires a nonempty --field or --field-id")
-			}
-			input.Fields = []application.OperatorFieldSelection{{Clear: true}}
-			if len(fieldNames) == 1 {
-				input.Fields[0].FieldName = fieldNames[0]
-			} else {
-				input.Fields[0].FieldID = fieldIDs[0]
-			}
-			fieldNames, valueNames, fieldIDs, valueIDs = nil, nil, nil, nil
+		fields, err := operatorFieldSelections(input.Kind, fieldNames, valueNames, fieldIDs, valueIDs, clearValue)
+		if err != nil {
+			return err
 		}
-		if input.Kind != "issue.create" {
-			// Single-field kinds keep the scalar flags' last-value-wins meaning.
-			fieldNames, valueNames, fieldIDs, valueIDs = lastValue(fieldNames), lastValue(valueNames), lastValue(fieldIDs), lastValue(valueIDs)
-		}
-		// Selectors pair by position, so one call uses names or IDs, never both.
-		if len(fieldNames) != len(valueNames) || len(fieldIDs) != len(valueIDs) || len(fieldNames) > 0 && len(fieldIDs) > 0 {
-			return errx.Usage("pair each --field with one --value, or each --field-id with one --value-id, without mixing names and IDs")
-		}
-		for index := range fieldNames {
-			input.Fields = append(input.Fields, application.OperatorFieldSelection{FieldName: fieldNames[index], ValueName: valueNames[index]})
-		}
-		for index := range fieldIDs {
-			input.Fields = append(input.Fields, application.OperatorFieldSelection{FieldID: fieldIDs[index], ValueID: valueIDs[index]})
-		}
+		input.Fields = fields
 		if err := a.out.Validate(operatorWriteView{}); err != nil {
 			return err
 		}
@@ -168,6 +137,49 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 	flags.BoolVar(&clearValue, "clear-value", false, "empty the selected field instead of setting a value; only with --kind issue.update and exactly one --field or --field-id, never with --value or --value-id. The field must allow empty values (canBeEmpty) and currently hold one")
 	flags.StringVar(&input.OutputPath, "out", "", "new exclusive 0600 snapshot path in an existing private directory")
 	return command
+}
+
+// operatorFieldSelections maps the raw snapshot selector flags to the
+// selections handed to the application layer.
+func operatorFieldSelections(kind string, fieldNames, valueNames, fieldIDs, valueIDs []string, clearValue bool) ([]application.OperatorFieldSelection, error) {
+	var fields []application.OperatorFieldSelection
+	if clearValue {
+		// Checked on the raw flags: --value "" must conflict, never clear.
+		if kind != "issue.update" {
+			return nil, errx.Usage("--clear-value is accepted only with --kind issue.update")
+		}
+		if len(valueNames) != 0 || len(valueIDs) != 0 {
+			return nil, errx.Usage("--clear-value cannot be combined with --value or --value-id")
+		}
+		if len(fieldNames)+len(fieldIDs) != 1 {
+			return nil, errx.Usage("--clear-value requires exactly one --field or --field-id")
+		}
+		if len(fieldNames) == 1 && fieldNames[0] == "" || len(fieldIDs) == 1 && fieldIDs[0] == "" {
+			return nil, errx.Usage("--clear-value requires a nonempty --field or --field-id")
+		}
+		fields = []application.OperatorFieldSelection{{Clear: true}}
+		if len(fieldNames) == 1 {
+			fields[0].FieldName = fieldNames[0]
+		} else {
+			fields[0].FieldID = fieldIDs[0]
+		}
+		fieldNames, valueNames, fieldIDs, valueIDs = nil, nil, nil, nil
+	}
+	if kind != "issue.create" {
+		// Single-field kinds keep the scalar flags' last-value-wins meaning.
+		fieldNames, valueNames, fieldIDs, valueIDs = lastValue(fieldNames), lastValue(valueNames), lastValue(fieldIDs), lastValue(valueIDs)
+	}
+	// Selectors pair by position, so one call uses names or IDs, never both.
+	if len(fieldNames) != len(valueNames) || len(fieldIDs) != len(valueIDs) || len(fieldNames) > 0 && len(fieldIDs) > 0 {
+		return nil, errx.Usage("pair each --field with one --value, or each --field-id with one --value-id, without mixing names and IDs")
+	}
+	for index := range fieldNames {
+		fields = append(fields, application.OperatorFieldSelection{FieldName: fieldNames[index], ValueName: valueNames[index]})
+	}
+	for index := range fieldIDs {
+		fields = append(fields, application.OperatorFieldSelection{FieldID: fieldIDs[index], ValueID: valueIDs[index]})
+	}
+	return fields, nil
 }
 
 // lastValue keeps the scalar flag meaning: the last occurrence wins, and an

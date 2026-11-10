@@ -126,8 +126,9 @@ current holder need not still be in the bundle. The plan's `target_value` is
 `null` for a clear; the key is always present. Dispatch sends `{"id":...}` for a
 user and `null` for a clear.
 
-Refusals, all exit 2 with a distinct `reason`: `OPERATOR_FIELD_UNSUPPORTED`
-(field schema the CLI cannot write; it replaces the former `USAGE` reason),
+Refusals, all exit 2 with a distinct `error.code`: `OPERATOR_FIELD_UNSUPPORTED`
+(field schema the CLI cannot write; it replaces the former `USAGE` `error.code`,
+exit stays 2, the hint changed),
 `OPERATOR_FIELD_REQUIRED` (clear on a field that cannot be empty),
 `OPERATOR_FIELD_ALREADY_EMPTY` (clear on an empty field) and
 `OPERATOR_FIELD_ALREADY_SET` (target equals the current value). Do not retry
@@ -137,9 +138,14 @@ Changing an assignee can notify a third party, and profiles with the
 `issue-update` capability gain this authority: they previously could not touch
 user fields. Review the profile's capabilities before relying on it.
 
-Contract change: refusals from the apply-time re-freeze of the field (for
-example an archived target) now report `OPERATOR_FIELD_STALE` with exit 9
-(conflict, re-read) instead of exit 2. Errors from reading the issue or project
+Contract change: all refusals from the apply-time re-freeze of the field for
+`issue.update` (for example an archived target) now report `error.code`
+`OPERATOR_FIELD_STALE` with exit 9 (conflict, re-read). Cases that previously
+reported `OPERATOR_FIELD_VALUE_INVALID`, `OPERATOR_BUNDLE_INVALID` or
+`OPERATOR_FIELD_MAPPING_INVALID` at exit 9 changed code with the same exit;
+cases that previously exited 2 moved to exit 9. A stored plan whose target
+already equals the current value is now refused at apply as
+`OPERATOR_FIELD_STALE` instead of sending a no-op POST. Errors from reading the issue or project
 field pass through unchanged. The `inspect schema` request now also asks for
 `banned` on `aggregatedUsers`; its output is unchanged.
 

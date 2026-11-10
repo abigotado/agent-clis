@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -401,9 +404,56 @@ func TestOperatorUserFieldSentinelsStayOutOfSnapshotPlanAndErrors(t *testing.T) 
 			t.Fatal("expected refusal")
 		}
 		texts = append(texts, []byte(err.Error()))
+		for _, login := range []string{"nobody", "dave", "twin"} {
+			if bytes.Contains([]byte(err.Error()), []byte(login)) {
+				t.Fatalf("refused login %q leaked into error %q", login, err)
+			}
+			if typed, ok := err.(*errx.Error); ok && strings.Contains(typed.Message+typed.Hint, login) {
+				t.Fatalf("refused login %q leaked into typed error %q %q", login, typed.Message, typed.Hint)
+			}
+		}
 		if typed, ok := err.(*errx.Error); ok {
 			texts = append(texts, []byte(typed.Message+typed.Hint))
 		}
+	}
+	// Files on disk: the --out snapshot export, the --out plan export and the
+	// stored plan itself.
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	snapshotPath, planPath := filepath.Join(dir, "snapshot.json"), filepath.Join(dir, "plan.json")
+	exported, err := f.service.SnapshotOperatorWrite(t.Context(), OperatorSnapshotInput{Profile: "work", Kind: "issue.update", IssueID: "APP-12", Fields: userSet("carol"), OutputPath: snapshotPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawSnapshot, err := json.Marshal(exported.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.PrepareOperatorWrite(t.Context(), OperatorPrepareInput{Profile: "work", SnapshotJSON: rawSnapshot, RequestJSON: []byte(`{"kind":"issue.update"}`), OutputPath: planPath}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{snapshotPath, planPath} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		texts = append(texts, content)
+	}
+	err = filepath.WalkDir(f.service.OperatorWrites.Root(), func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() {
+			return walkErr
+		}
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		texts = append(texts, content)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 	for _, sentinel := range []string{userSentinelFullName, userSentinelEmail, userSentinelName, "OPERATOR_TEST_SENTINEL"} {
 		for _, text := range texts {

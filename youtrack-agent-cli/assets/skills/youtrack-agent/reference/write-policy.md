@@ -101,10 +101,12 @@ uses its legacy rules; request a released upgrade rather than bypassing them.
    or `--value-id USER_ID`. To empty a field use `--clear-value` with exactly one
    `--field`/`--field-id` and no `--value`/`--value-id`; the field must allow
    empty values and currently hold one. Changing an assignee notifies a third
-   party: disclose it. Exit 2 reasons `OPERATOR_FIELD_UNSUPPORTED`,
+   party: disclose it. Exit 2 `error.code` values `OPERATOR_FIELD_UNSUPPORTED`,
    `OPERATOR_FIELD_REQUIRED`, `OPERATOR_FIELD_ALREADY_EMPTY` and
    `OPERATOR_FIELD_ALREADY_SET` are final for that request; do not retry them
-   unchanged. At apply, `OPERATOR_FIELD_STALE` (exit 9) means re-snapshot.
+   unchanged. `OPERATOR_FIELD_UNSUPPORTED` replaces the former `USAGE`
+   `error.code` for unsupported field schemas (exit stays 2): do not match on
+   `USAGE` for it. At apply, `OPERATOR_FIELD_STALE` (exit 9) means re-snapshot.
 2. Run `operator-write prepare --offline --profile NAME --snapshot FILE
    --request-stdin --out PRIVATE_DIR/plan.json`. Request JSON is
    `{"kind":"issue.update"}` for the frozen field change,
