@@ -9,12 +9,14 @@ require "yaml"
 class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
   ROOT = File.expand_path("../..", __dir__)
   VERIFIER = File.join(__dir__, "verify-portable-release-policy.rb")
-  CONFIG = YAML.safe_load(File.read(File.join(ROOT, ".goreleaser.yaml")), permitted_classes: [], aliases: false)
+  CONFIG_PATH = "youtrack-agent-cli/.goreleaser.yaml"
+  CONFIG = YAML.safe_load(File.read(File.join(ROOT, CONFIG_PATH)), permitted_classes: [], aliases: false)
   RELEASE = File.read(File.join(ROOT, ".github/workflows/release.yaml"))
 
   def verify(config = CONFIG, files = {}, release: RELEASE)
     Dir.mktmpdir("portable-release-policy") do |root|
-      config_path = File.join(root, ".goreleaser.yaml")
+      config_path = File.join(root, CONFIG_PATH)
+      FileUtils.mkdir_p(File.dirname(config_path))
       File.write(config_path, YAML.dump(config))
       files.each do |relative, content|
         target = File.join(root, relative)
@@ -22,15 +24,55 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
         File.write(target, content)
       end
       FileUtils.mkdir_p(File.join(root, ".github/workflows"))
-      File.write(File.join(root, ".github/workflows/release.yaml"), release)
+      File.write(File.join(root, ".github/workflows/release.yaml"), release) if release
       _stdout, stderr, status = Open3.capture3("ruby", VERIFIER, config_path, root)
       [status.success?, stderr]
     end
   end
 
+  def workflow_using(step)
+    <<~YAML
+      name: other
+      on: pull_request
+      permissions:
+        contents: read
+      jobs:
+        check:
+          runs-on: ubuntu-latest
+          steps:
+            - #{step}
+    YAML
+  end
+
   def test_current_configuration_passes
     success, stderr = verify
     assert success, stderr
+  end
+
+  def test_requires_the_repository_root_argument
+    _stdout, stderr, status = Open3.capture3("ruby", VERIFIER, File.join(ROOT, CONFIG_PATH))
+    assert_equal 2, status.exitstatus
+    assert_includes stderr, "usage:"
+  end
+
+  def test_rejects_an_empty_workflows_directory
+    success, stderr = verify(CONFIG, {}, release: nil)
+    refute success
+    assert_includes stderr, "no workflows found"
+  end
+
+  def test_rejects_a_missing_release_workflow
+    success, stderr = verify(CONFIG, { ".github/workflows/other.yaml" => workflow_using("run: true") }, release: nil)
+    refute success
+    assert_includes stderr, "missing publishing workflow .github/workflows/release.yaml"
+  end
+
+  def test_rejects_a_workflow_at_the_reserved_tap_path
+    %w[tap.yaml tap.yml].each do |name|
+      success, stderr = verify(CONFIG, { ".github/workflows/#{name}" => workflow_using("run: true") })
+      refute success, name
+      assert_includes stderr, ".github/workflows/#{name} is reserved"
+    end
   end
 
   def test_release_config_selects_only_portable_readonly_build
@@ -62,6 +104,14 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
     assert_includes stderr, "invalid goos"
   end
 
+  def test_rejects_the_old_ldflags_prefix
+    changed = Marshal.load(Marshal.dump(CONFIG))
+    changed.fetch("builds").fetch(0)["ldflags"] = changed.fetch("builds").fetch(0).fetch("ldflags").map { |flag| flag.sub("agent-clis/", "") }
+    success, stderr = verify(changed)
+    refute success
+    assert_includes stderr, "invalid provenance ldflags"
+  end
+
   def test_rejects_release_config_hooks_or_extra_archive_files
     changed = Marshal.load(Marshal.dump(CONFIG))
     changed["before"] = { "hooks" => ["curl https://example.invalid"] }
@@ -72,24 +122,36 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
     assert_includes stderr, "must publish only portable read-only tar.gz archives"
   end
 
-  def test_rejects_extra_release_assets_or_checksum_settings
+  def test_rejects_enabled_release_or_checksum_settings
     changed = Marshal.load(Marshal.dump(CONFIG))
-    changed.fetch("release")["extra_files"] = [{ "glob" => "README.md" }]
+    changed["release"] = { "github" => { "owner" => "abigotado", "name" => "agent-clis" } }
     changed.fetch("checksum")["algorithm"] = "sha512"
     success, stderr = verify(changed)
     refute success
-    assert_includes stderr, "target only the canonical GitHub repository"
+    assert_includes stderr, "leave publication to the release workflow"
     assert_includes stderr, "only the approved checksum"
   end
 
-  def test_rejects_homebrew_and_quarantine_workarounds
-    success, stderr = verify(CONFIG, { "Formula/youtrack-agent-cli.rb" => "class YoutrackAgentCli < Formula; end\n" })
+  def test_rejects_a_changed_snapshot_version
+    changed = Marshal.load(Marshal.dump(CONFIG))
+    changed["snapshot"] = { "version_template" => "{{ .Tag }}" }
+    success, stderr = verify(changed)
     refute success
-    assert_includes stderr, "Homebrew Formula/Cask"
+    assert_includes stderr, "version from CLI_VERSION"
+  end
 
-    success, stderr = verify(CONFIG, { "packaging/install.sh" => "xattr -dr com.apple.quarantine binary\n" })
-    refute success
-    assert_includes stderr, "quarantine bypass"
+  def test_rejects_homebrew_and_quarantine_workarounds
+    ["Formula/youtrack-agent-cli.rb", "youtrack-agent-cli/Formula/youtrack-agent-cli.rb"].each do |formula|
+      success, stderr = verify(CONFIG, { formula => "class YoutrackAgentCli < Formula; end\n" })
+      refute success, formula
+      assert_includes stderr, "Homebrew Formula/Cask"
+    end
+
+    ["packaging/install.sh", "youtrack-agent-cli/packaging/homebrew/x.sh", "youtrack-agent-cli/scripts/deep/x.sh"].each do |script|
+      success, stderr = verify(CONFIG, { script => "xattr -dr com.apple.quarantine binary\n" })
+      refute success, script
+      assert_includes stderr, "quarantine bypass"
+    end
   end
 
   def test_rejects_unrelated_publisher
@@ -112,22 +174,57 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
     assert_includes stderr, "publication action"
   end
 
-  def test_release_workflow_is_v0_tag_only_and_scoped
+  def test_rejects_unpinned_or_unapproved_actions
+    success, stderr = verify(CONFIG, { ".github/workflows/other.yaml" => workflow_using("uses: actions/checkout@v7") })
+    refute success
+    assert_includes stderr, "unpinned action"
+
+    success, stderr = verify(CONFIG, { ".github/workflows/other.yaml" => workflow_using("uses: actions/upload-artifact@#{'a' * 40}") })
+    refute success
+    assert_includes stderr, "unapproved action"
+  end
+
+  def test_rejects_secrets_outside_the_publisher
+    success, stderr = verify(CONFIG, { ".github/workflows/ci.yaml" => workflow_using("run: echo ${{ secrets.TOKEN }}") })
+    refute success
+    assert_includes stderr, "forbidden secrets context"
+  end
+
+  def test_release_workflow_is_prefixed_tag_only_and_scoped
     workflow = YAML.safe_load(RELEASE, permitted_classes: [], aliases: false)
     assert_equal({ "contents" => "read" }, workflow.fetch("permissions"))
-    assert_equal({ "push" => { "tags" => ["v0.*"] } }, workflow.fetch(true))
-    assert_equal "verify-portable-readonly", workflow.fetch("jobs").fetch("publish-portable-readonly").fetch("needs")
-    assert_equal({ "contents" => "write" }, workflow.fetch("jobs").fetch("publish-portable-readonly").fetch("permissions"))
+    assert_equal({ "push" => { "tags" => ["youtrack-agent-cli/v0.*"] } }, workflow.fetch(true))
+    assert_equal "verify", workflow.fetch("jobs").fetch("build").fetch("needs")
+    assert_equal %w[verify build], workflow.fetch("jobs").fetch("draft").fetch("needs")
+    assert_equal({ "contents" => "write" }, workflow.fetch("jobs").fetch("draft").fetch("permissions"))
+    refute workflow.fetch("jobs").fetch("build").key?("permissions")
     assert_equal 2, RELEASE.scan("persist-credentials: false").length
     refute_match(/homebrew|xattr|secrets\./i, RELEASE)
     assert_includes RELEASE, "-tags portable_readonly"
+    assert_includes RELEASE, "--draft --verify-tag"
+  end
+
+  def test_rejects_a_root_tag_trigger
+    changed = RELEASE.sub('"youtrack-agent-cli/v0.*"', '"v0.*"')
+    refute_equal RELEASE, changed
+    success, stderr = verify(CONFIG, {}, release: changed)
+    refute success
+    assert_includes stderr, "must equal the approved publisher"
   end
 
   def test_rejects_a_second_upload_path_in_release_workflow
-    changed = RELEASE.sub("run: goreleaser release --clean --config .goreleaser.yaml", "run: goreleaser release --clean --config .goreleaser.yaml\n      - run: curl -T artifact https://example.invalid")
+    changed = "#{RELEASE}      - run: curl -T artifact https://example.invalid\n"
     success, stderr = verify(CONFIG, {}, release: changed)
     refute success
-    assert_includes stderr, "must equal the approved portable read-only publisher"
+    assert_includes stderr, "must equal the approved publisher"
+  end
+
+  def test_rejects_publishing_the_draft
+    changed = RELEASE.sub("--draft --verify-tag", "--verify-tag")
+    refute_equal RELEASE, changed
+    success, stderr = verify(CONFIG, {}, release: changed)
+    refute success
+    assert_includes stderr, "must equal the approved publisher"
   end
 
   def test_rejects_removing_operator_write_dependency_guard
@@ -135,6 +232,6 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
     refute_equal RELEASE, changed
     success, stderr = verify(CONFIG, {}, release: changed)
     refute success
-    assert_includes stderr, "must equal the approved portable read-only publisher"
+    assert_includes stderr, "must equal the approved publisher"
   end
 end

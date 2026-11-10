@@ -38,7 +38,10 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# Snapshot mode because a prefixed tag is not a semantic version. The release
+# workflow derives CLI_VERSION from the tag and creates the draft itself.
+snapshot:
+  version_template: "{{ .Env.CLI_VERSION }}"
+
 release:
-  github:
-    owner: abigotado
-    name: youtrack-agent-cli
+  disable: true
