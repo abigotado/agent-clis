@@ -239,6 +239,22 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
     assert_includes stderr, "without persist-credentials: false"
   end
 
+  def test_rejects_a_checkout_of_other_code_in_any_workflow
+    checkout = "        with:\n          persist-credentials: false\n"
+    youtrack_checkout = REAL_CI.index(checkout, REAL_CI.index("  youtrack:\n"))
+    refute_nil youtrack_checkout
+    %w[repository path ref].each do |input|
+      line = "          #{input}: alternate\n"
+      ci = REAL_CI.dup.insert(youtrack_checkout + checkout.length, line)
+      success, stderr = verify(CONFIG, {}, ci: ci)
+      refute success, input
+      assert_includes stderr, "ci.yaml has an actions/checkout step with unapproved inputs: #{input}"
+      success, stderr = verify(CONFIG, {}, release: RELEASE.sub("          persist-credentials: false\n", "          persist-credentials: false\n#{line}"))
+      refute success, input
+      assert_includes stderr, "release.yaml has an actions/checkout step with unapproved inputs: #{input}"
+    end
+  end
+
   def test_rejects_continue_on_error_at_any_depth
     job_level = MINIMAL_CI.sub("  changes:\n", "  changes:\n    continue-on-error: true\n")
     step_level = MINIMAL_CI.sub('- run: "true"', "- run: \"true\"\n        continue-on-error: true")

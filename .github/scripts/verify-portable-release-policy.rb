@@ -167,6 +167,7 @@ PUBLISHERS = { ".github/workflows/release.yaml" => EXPECTED_RELEASE_WORKFLOW }.f
 RESERVED = %w[.github/workflows/tap.yaml .github/workflows/tap.yml].freeze
 CI_WORKFLOW = ".github/workflows/ci.yaml"
 CI_GATE = "ci-ok"
+CHECKOUT_INPUTS = %w[persist-credentials fetch-depth].freeze
 # The only lines outside the publishing workflows that may mention GoReleaser,
 # compared after stripping surrounding whitespace.
 GORELEASER_LINES = [
@@ -317,6 +318,10 @@ workflows.each do |candidate|
           unless step_with.is_a?(Hash) && step_with["persist-credentials"] == false
             errors << "#{relative} has an actions/checkout step without persist-credentials: false"
           end
+          # repository, ref, path and the like would check out other code than
+          # the commit the policy validated.
+          extra = step_with.is_a?(Hash) ? step_with.keys.map(&:to_s) - CHECKOUT_INPUTS : []
+          errors << "#{relative} has an actions/checkout step with unapproved inputs: #{extra.join(', ')}" unless extra.empty?
         end
         checkouts.call(item)
       end
