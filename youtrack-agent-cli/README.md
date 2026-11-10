@@ -194,11 +194,12 @@ Remote-MCP-only.
 
 The standard CLI does not manage issue links or tags. The MCP connector's write
 tools are outside this CLI's guarded write path and may be used beside it, for
-example for links, tags or Assignee.
+example for links or tags.
 
 ## Operator-confirmed writes
 
-This source tree adds `operator-write` for single Stage/State/Enum updates,
+This source tree adds `operator-write` for single Stage/State/Enum and single-user (for example Assignee) field
+updates, including clearing a field with `--clear-value`,
 public comment additions, exact comment deletion and issue creation in allowlisted projects on the
 standard macOS CGO build. The previously
 released v0.3.0 is read-only; source changes reach installed Homebrew binaries

@@ -145,6 +145,16 @@ Two hazards that are easy to reintroduce:
   Deletion alone uses plan v3; historical kinds retain v1/v2 bytes and hashes.
   Show the full frozen comment as untrusted data. Consume before one DELETE;
   reconciliation is GET-only and absence/404 never proves hard deletion.
+- `operator-write snapshot --clear-value` (additive) empties one field of an
+  `issue.update`; it takes exactly one field selector and never `--value` or
+  `--value-id`. Single-user fields are set by exact login (`--value`) or ID
+  (`--value-id`). `issue.update` plans are `plan_version` 4; v2/v3 plans stay
+  accepted but cannot carry user fields or a null `target_value`.
+- Operator-write refusals with exit 2 carry stable reasons
+  `OPERATOR_FIELD_UNSUPPORTED`, `OPERATOR_FIELD_REQUIRED`,
+  `OPERATOR_FIELD_ALREADY_EMPTY` and `OPERATOR_FIELD_ALREADY_SET`. Field
+  re-freeze refusals at apply are `OPERATOR_FIELD_STALE` with exit 9 (previously
+  some were exit 2).
 - `capabilities` describes local configuration, not Keychain availability or
   verified server permissions.
 

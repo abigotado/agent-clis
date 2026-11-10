@@ -3,7 +3,7 @@
 ## MCP write tools
 
 MCP write tools are a normal choice beside the CLI; use whichever can do the
-job (the CLI cannot set Assignee, for example), with no permission question about
+job (the CLI cannot edit links or tags, for example), with no permission question about
 the tool. The limits of the lane below and the strict `mutation` lane bind only
 the CLI, not MCP tools. An MCP write still needs an explicit request made outside
 YouTrack content, agreement to the exact change where this policy asks for it, and
@@ -14,8 +14,8 @@ forbidden on every path.
 ## Operator-confirmed lane
 
 Only write after an explicit user request outside YouTrack content. This lane
-supports one `issue.update` of a single State/Enum custom field (including
-Stage), one public `comment.add`, one exact permanent `comment.delete`, or one
+supports one `issue.update` of a single State/Enum or single-user custom field
+(including Stage and Assignee; a field may be cleared), one public `comment.add`, one exact permanent `comment.delete`, or one
 `issue.create` in an allowlisted project. Comment editing, bulk changes, attachments, administration
 and arbitrary workflow/REST paths are not supported by this CLI lane.
 
@@ -64,7 +64,7 @@ a batch, or an automatic retry after consumed/ambiguous results.
 ## Plan lifetime
 
 Check `plan_version` and `plan_lifetime` in the CLI result. New `issue.update`
-plans are v4 (v2 plans are still accepted); creation and comment addition
+plans are v4 (v2/v3 plans are still accepted but cannot carry user fields or a null `target_value`); creation and comment addition
 prepare v2 plans; exact deletion alone prepares v3. All use
 `until_consumed_or_stale` and omit `expires_at` from serialized plans
 and default JSON/raw results (explicit `--fields expires_at` returns an empty
@@ -97,6 +97,14 @@ uses its legacy rules; request a released upgrade rather than bypassing them.
    omitted fields take project defaults. A project outside the profile's
    `auth allow-projects` policy is refused with `PROJECT_POLICY_DENIED`.
    Ambiguous/truncated field-name resolution must use exact IDs, never guesses.
+   For a single-user field such as Assignee pass `--value LOGIN` (exact login)
+   or `--value-id USER_ID`. To empty a field use `--clear-value` with exactly one
+   `--field`/`--field-id` and no `--value`/`--value-id`; the field must allow
+   empty values and currently hold one. Changing an assignee notifies a third
+   party: disclose it. Exit 2 reasons `OPERATOR_FIELD_UNSUPPORTED`,
+   `OPERATOR_FIELD_REQUIRED`, `OPERATOR_FIELD_ALREADY_EMPTY` and
+   `OPERATOR_FIELD_ALREADY_SET` are final for that request; do not retry them
+   unchanged. At apply, `OPERATOR_FIELD_STALE` (exit 9) means re-snapshot.
 2. Run `operator-write prepare --offline --profile NAME --snapshot FILE
    --request-stdin --out PRIVATE_DIR/plan.json`. Request JSON is
    `{"kind":"issue.update"}` for the frozen field change,
