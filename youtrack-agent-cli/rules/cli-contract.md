@@ -145,6 +145,10 @@ Two hazards that are easy to reintroduce:
   (`--value-id`). `issue.update` plans are `plan_version` 4; previously prepared v2
   `issue.update` plans stay accepted but cannot carry user fields or a null
   `target_value` (v3 is `comment.delete` only).
+- `operator-write` kind `issue.edit` (additive) replaces summary and/or
+  description under the new `issue-edit` capability; `capabilities` lists it and
+  its plan is `plan_version` 4. New reasons: `OPERATOR_TEXT_UNCHANGED` (exit 2)
+  and `OPERATOR_ISSUE_STALE` (exit 9) for a text-hash mismatch.
 - Operator-write refusals with exit 2 carry stable `error.code` values
   `OPERATOR_FIELD_UNSUPPORTED`, `OPERATOR_FIELD_REQUIRED`,
   `OPERATOR_FIELD_ALREADY_EMPTY` and `OPERATOR_FIELD_ALREADY_SET`.

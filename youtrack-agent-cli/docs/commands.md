@@ -308,8 +308,8 @@ Read one exact issue or project and freeze a supported write target
 | `--comment-id` | string |  | immutable exact comment ID for comment.delete |
 | `--field` | stringArray |  | exact field name, for example Stage; repeatable for issue.create, last wins otherwise |
 | `--field-id` | stringArray |  | immutable project custom-field ID; repeatable for issue.create, last wins otherwise |
-| `--id` | string |  | exact issue entity or readable ID for issue.update, comment.add, or comment.delete |
-| `--kind` | string |  | supported write kind: issue.create, issue.update, comment.add, or comment.delete |
+| `--id` | string |  | exact issue entity or readable ID for issue.update, issue.edit, comment.add, or comment.delete |
+| `--kind` | string |  | supported write kind: issue.create, issue.update, issue.edit, comment.add, or comment.delete |
 | `--out` | string |  | new exclusive 0600 snapshot path in an existing private directory |
 | `--project` | string |  | exact project entity ID or key for issue.create |
 | `--value` | stringArray |  | exact target bundle value name, or exact user login for a user field, paired with --field |
