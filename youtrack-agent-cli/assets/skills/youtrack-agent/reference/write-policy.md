@@ -64,7 +64,7 @@ a batch, or an automatic retry after consumed/ambiguous results.
 ## Plan lifetime
 
 Check `plan_version` and `plan_lifetime` in the CLI result. New `issue.update`
-plans are v4 (previously prepared v2 `issue.update` plans are still accepted but cannot carry user fields or a null `target_value`; v3 is `comment.delete` only); creation and comment addition
+and `issue.edit` plans are v4 (previously prepared v2 `issue.update` plans are still accepted but cannot carry user fields or a null `target_value`; v3 is `comment.delete` only); creation and comment addition
 prepare v2 plans; exact deletion alone prepares v3. All use
 `until_consumed_or_stale` and omit `expires_at` from serialized plans
 and default JSON/raw results (explicit `--fields expires_at` returns an empty

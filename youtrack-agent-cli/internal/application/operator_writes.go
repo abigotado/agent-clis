@@ -177,7 +177,11 @@ func (s *Service) SnapshotOperatorWrite(ctx context.Context, input OperatorSnaps
 		}
 		if kind == operatorwrite.KindIssueEdit {
 			// Only hashes of the current text are frozen, never the text.
-			snapshot.Text = operatorEditPrecondition(issue)
+			text, err := operatorEditPrecondition(issue)
+			if err != nil {
+				return OperatorWriteInfo{}, err
+			}
+			snapshot.Text = text
 		}
 		if kind == operatorwrite.KindCommentDelete {
 			target, err := client.GetCommentForDeletion(ctx, issue.ID, input.CommentID)
@@ -282,9 +286,12 @@ func validateOperatorTarget(kind operatorwrite.Kind, input OperatorSnapshotInput
 
 // operatorEditPrecondition is the one place that turns the current issue text
 // into the frozen hashes, used at snapshot and again at apply.
-func operatorEditPrecondition(issue youtrack.Issue) *operatorwrite.TextPrecondition {
+func operatorEditPrecondition(issue youtrack.Issue) (*operatorwrite.TextPrecondition, error) {
+	if err := issue.RequireDescription(); err != nil {
+		return nil, err
+	}
 	summary := issue.Summary
-	return &operatorwrite.TextPrecondition{SummarySHA256: operatorwrite.HashText(&summary), DescriptionSHA256: operatorwrite.HashText(issue.Description)}
+	return &operatorwrite.TextPrecondition{SummarySHA256: operatorwrite.HashText(&summary), DescriptionSHA256: operatorwrite.HashText(issue.Description)}, nil
 }
 
 func errTextUnchanged() *errx.Error {
@@ -834,7 +841,11 @@ func verifyOperatorRemote(ctx context.Context, client *youtrack.Client, snapshot
 		}
 		if snapshot.Kind == operatorwrite.KindIssueEdit {
 			// A text change that left `updated` untouched is still drift.
-			if snapshot.Text == nil || *operatorEditPrecondition(issue) != *snapshot.Text {
+			current, err := operatorEditPrecondition(issue)
+			if err != nil {
+				return err
+			}
+			if snapshot.Text == nil || *current != *snapshot.Text {
 				return errx.Conflict("OPERATOR_ISSUE_STALE", "target issue summary or description changed").WithHint("inspect a new snapshot and prepare a fresh intent")
 			}
 			return nil

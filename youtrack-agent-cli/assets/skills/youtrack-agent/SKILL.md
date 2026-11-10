@@ -56,7 +56,7 @@ discloses the entire frozen comment and its permanent removal; it adds no marker
 capability. Active text-only comments without attachments are eligible; never
 select deletion targets by text search or use bulk deletion. V2 and v3 plans have no
 wall-clock expiry; live preconditions and permanent consumption still apply.
-Deletion uses v3, while existing operations retain v2. A missing comment or
+Deletion uses v3, `issue.update` and `issue.edit` use v4, and creation and comment addition retain v2. A missing comment or
 `404` after a lost DELETE response is inconclusive, never proof of success or
 permission to replay. See the write policy for the exact supported workflow.
 Before a CLI write, check `capabilities -o json`:

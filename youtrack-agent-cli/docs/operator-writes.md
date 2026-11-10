@@ -164,7 +164,7 @@ before dispatch and never restores it.
 
 `capabilities` advertises the highest supported `plan_version: 4` and
 `plan_lifetime: until_consumed_or_stale`; its `plan_versions` map reports v4 for
-`issue.update` (previously prepared v2 `issue.update` plans are still accepted but cannot carry
+`issue.update` and `issue.edit` (previously prepared v2 `issue.update` plans are still accepted but cannot carry
 user fields or a null target), v2 for creation and comment addition, and v3 for deletion. Plan/status/apply results report
 their actual plan version/lifetime. V2/v3/v4 default JSON/raw results and serialized plans
 omit `expires_at`. An explicit `--fields expires_at` projection retains the

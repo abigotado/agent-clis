@@ -470,3 +470,27 @@ func TestOperatorIssueEditNeverStoresOrPrintsOldText(t *testing.T) {
 		t.Fatalf("scanned=%d err=%v", scanned, err)
 	}
 }
+
+// issueWithoutDescription is a read that omits the description member
+// entirely, which is malformed and must never hash like an empty description.
+const issueWithoutDescription = `{"id":"2-12","idReadable":"APP-12","summary":"Example","project":{"id":"0-3","shortName":"APP","name":"Application","archived":false},"reporter":{"id":"1-2","login":"alice"},"created":1,"updated":2,"commentsCount":0,"customFields":[]}`
+
+func TestOperatorIssueEditRefusesAnOmittedDescriptionMember(t *testing.T) {
+	t.Run("snapshot", func(t *testing.T) {
+		f := newEditFixture(t, "Example", nil)
+		f.setIssue(issueWithoutDescription)
+		_, err := f.service.SnapshotOperatorWrite(t.Context(), OperatorSnapshotInput{Profile: "work", Kind: "issue.edit", IssueID: "APP-12"})
+		if err == nil || errx.ExitCode(err) != errx.CodeInternal {
+			t.Fatalf("expected the invalid read response, got %v", err)
+		}
+	})
+	t.Run("apply", func(t *testing.T) {
+		f := newEditFixture(t, "Example", nil)
+		plan := f.prepareEdit(t, `{"kind":"issue.edit","summary":"New summary"}`)
+		f.setIssue(issueWithoutDescription)
+		f.postStatus, f.postBody = http.StatusOK, editIssue("New summary", nil, 4)
+		if _, err := f.apply(t, plan); err == nil || f.posts.Load() != 0 {
+			t.Fatalf("err=%v posts=%d, want a refusal before any POST", err, f.posts.Load())
+		}
+	})
+}
