@@ -167,6 +167,15 @@ PUBLISHERS = { ".github/workflows/release.yaml" => EXPECTED_RELEASE_WORKFLOW }.f
 RESERVED = %w[.github/workflows/tap.yaml .github/workflows/tap.yml].freeze
 CI_WORKFLOW = ".github/workflows/ci.yaml"
 CI_GATE = "ci-ok"
+# The only lines outside the publishing workflows that may mention GoReleaser,
+# compared after stripping surrounding whitespace.
+GORELEASER_LINES = [
+  "ruby .github/scripts/verify-portable-release-policy.rb youtrack-agent-cli/.goreleaser.yaml .",
+  "- name: goreleaser check and portable build rehearsal",
+  "go install github.com/goreleaser/goreleaser/v2@v2.17.1",
+  "goreleaser check --config .goreleaser.yaml",
+  "goreleaser build --config .goreleaser.yaml --snapshot --clean --id portable-readonly",
+].freeze
 
 unless ARGV.length == 2
   warn "usage: verify-portable-release-policy.rb GORELEASER_CONFIG REPOSITORY_ROOT"
@@ -240,10 +249,13 @@ surface.each do |candidate|
   content = File.binread(candidate).force_encoding(Encoding::UTF_8).scrub
   errors << "#{relative} contains a Homebrew or quarantine bypass" if content.match?(/(?:\bbrew\s+(?:tap|tap-new|create|bump)|\bxattr\b|com\.apple\.quarantine|spctl\s+--master-disable)/i)
   errors << "#{relative} contains a publication action" if content.match?(/(?:\bgoreleaser\s+release\b|\bgh\s+(?:api|release)\b|action-gh-release|\/upload-artifact@)/i)
-  # Without --config, GoReleaser prefers .config/goreleaser.y*ml or .goreleaser.yml
-  # over the checked config if one appears.
-  content.scan(/(?:^|[;&|(]|\brun:)[ \t]*goreleaser[ \t]+(?:check|build|release)\b[^\n]*/i).each do |call|
-    errors << "#{relative} runs GoReleaser without --config .goreleaser.yaml: #{call.strip}" unless call.include?("--config .goreleaser.yaml")
+  # Every line that mentions GoReleaser must be an approved line. A pattern for
+  # "has --config" can be dodged by continuations, prefixes or comments; without
+  # --config, GoReleaser prefers .config/goreleaser.y*ml or .goreleaser.yml.
+  content.each_line.with_index(1) do |line, number|
+    next unless line.match?(/goreleaser/i)
+    next if GORELEASER_LINES.include?(line.strip)
+    errors << "#{relative}:#{number} mentions GoReleaser outside the approved lines: #{line.strip}"
   end
 end
 

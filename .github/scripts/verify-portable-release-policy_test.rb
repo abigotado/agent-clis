@@ -132,20 +132,47 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
     assert_includes stderr, "must equal the approved publisher"
   end
 
-  def test_rejects_goreleaser_without_the_config_flag_in_any_workflow
-    real_ci = File.read(File.join(ROOT, ".github/workflows/ci.yaml"))
-    assert_includes real_ci, "goreleaser build --config .goreleaser.yaml"
-    ["goreleaser check", "(cd x && goreleaser build --snapshot --clean)"].each do |call|
-      changed = MINIMAL_CI.sub("- run: \"true\"\n", "- run: \"true\"\n      - run: #{call}\n")
-      refute_equal MINIMAL_CI, changed
-      success, stderr = verify(CONFIG, {}, ci: changed)
-      refute success, call
-      assert_includes stderr, "without --config .goreleaser.yaml"
+  def with_run_block(*lines)
+    block = lines.map { |line| "          #{line}\n" }.join
+    changed = MINIMAL_CI.sub("- run: \"true\"\n", "- run: \"true\"\n      - run: |\n#{block}")
+    refute_equal MINIMAL_CI, changed
+    changed
+  end
+
+  def test_rejects_goreleaser_outside_the_approved_lines
+    [
+      ["goreleaser check"],
+      ["(cd x && goreleaser build --snapshot --clean)"],
+      ["goreleaser \\", "  build --snapshot --clean"],
+      ["command goreleaser build --config .goreleaser.yaml --snapshot --clean --id portable-readonly"],
+      ["if goreleaser check --config .goreleaser.yaml; then true; fi"],
+      ["goreleaser build # --config .goreleaser.yaml"],
+      ["goreleaser check --config .goreleaser.yaml; goreleaser build --snapshot"],
+      ["goreleaser build --config=.goreleaser.yaml --snapshot --clean --id portable-readonly"],
+    ].each do |lines|
+      success, stderr = verify(CONFIG, {}, ci: with_run_block(*lines))
+      refute success, lines.join(" / ")
+      assert_includes stderr, "outside the approved lines"
     end
-    with_flag = MINIMAL_CI.sub("- run: \"true\"\n", "- run: \"true\"\n      - name: GoReleaser check\n        run: goreleaser check --config .goreleaser.yaml\n")
-    refute_equal MINIMAL_CI, with_flag
-    success, stderr = verify(CONFIG, {}, ci: with_flag)
+  end
+
+  def test_accepts_the_approved_goreleaser_lines
+    success, stderr = verify(CONFIG, {}, ci: with_run_block(
+      "go install github.com/goreleaser/goreleaser/v2@v2.17.1",
+      "goreleaser check --config .goreleaser.yaml",
+      "goreleaser build --config .goreleaser.yaml --snapshot --clean --id portable-readonly",
+    ))
     assert success, stderr
+  end
+
+  def test_every_approved_goreleaser_line_is_used
+    real_ci = File.read(File.join(ROOT, ".github/workflows/ci.yaml"), encoding: "UTF-8").lines.map(&:strip)
+    source = File.read(VERIFIER, encoding: "UTF-8")
+    approved = source[/GORELEASER_LINES = \[\n(.*?)\n\]\.freeze/m, 1]
+    refute_nil approved
+    approved.scan(/^\s+"(.*)",$/).flatten.each do |line|
+      assert_includes real_ci, line.gsub('\\"', '"')
+    end
   end
 
   def test_rejects_a_release_workflow_that_restores_the_go_cache
