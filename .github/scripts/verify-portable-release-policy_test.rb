@@ -12,12 +12,34 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
   CONFIG_PATH = "youtrack-agent-cli/.goreleaser.yaml"
   CONFIG = YAML.safe_load(File.read(File.join(ROOT, CONFIG_PATH)), permitted_classes: [], aliases: false)
   RELEASE = File.read(File.join(ROOT, ".github/workflows/release.yaml"))
+  MINIMAL_CI = <<~YAML
+    name: ci
+    on: pull_request
+    permissions:
+      contents: read
+    jobs:
+      changes:
+        runs-on: ubuntu-latest
+        steps:
+          - run: "true"
+      ci-ok:
+        name: ci-ok
+        if: always()
+        needs: [changes]
+        runs-on: ubuntu-latest
+        steps:
+          - run: "true"
+  YAML
 
-  def verify(config = CONFIG, files = {}, release: RELEASE)
+  def verify(config = CONFIG, files = {}, release: RELEASE, ci: MINIMAL_CI)
     Dir.mktmpdir("portable-release-policy") do |root|
       config_path = File.join(root, CONFIG_PATH)
       FileUtils.mkdir_p(File.dirname(config_path))
       File.write(config_path, YAML.dump(config))
+      if ci
+        FileUtils.mkdir_p(File.join(root, ".github/workflows"))
+        File.write(File.join(root, ".github/workflows/ci.yaml"), ci)
+      end
       files.each do |relative, content|
         target = File.join(root, relative)
         FileUtils.mkdir_p(File.dirname(target))
@@ -56,7 +78,7 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
   end
 
   def test_rejects_an_empty_workflows_directory
-    success, stderr = verify(CONFIG, {}, release: nil)
+    success, stderr = verify(CONFIG, {}, release: nil, ci: nil)
     refute success
     assert_includes stderr, "no workflows found"
   end
@@ -65,6 +87,42 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
     success, stderr = verify(CONFIG, { ".github/workflows/other.yaml" => workflow_using("run: true") }, release: nil)
     refute success
     assert_includes stderr, "missing publishing workflow .github/workflows/release.yaml"
+  end
+
+  def test_rejects_a_missing_ci_workflow
+    success, stderr = verify(CONFIG, {}, ci: nil)
+    refute success
+    assert_includes stderr, "missing .github/workflows/ci.yaml"
+  end
+
+  def test_rejects_a_ci_workflow_without_the_gate
+    success, stderr = verify(CONFIG, {}, ci: MINIMAL_CI.sub("  ci-ok:\n", "  other:\n"))
+    refute success
+    assert_includes stderr, "has no ci-ok job"
+  end
+
+  def test_rejects_a_gate_that_misses_a_job
+    extra_job = "  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: \"true\"\n"
+    success, stderr = verify(CONFIG, {}, ci: MINIMAL_CI + extra_job)
+    refute success
+    assert_includes stderr, "must need every other job"
+  end
+
+  def test_rejects_a_gate_that_does_not_always_run
+    success, stderr = verify(CONFIG, {}, ci: MINIMAL_CI.sub("if: always()", "if: success()"))
+    refute success
+    assert_includes stderr, "if: always()"
+  end
+
+  def test_rejects_continue_on_error_at_any_depth
+    job_level = MINIMAL_CI.sub("  changes:\n", "  changes:\n    continue-on-error: true\n")
+    step_level = MINIMAL_CI.sub('- run: "true"', "- run: \"true\"\n        continue-on-error: true")
+    [job_level, step_level].each do |ci|
+      refute_equal MINIMAL_CI, ci
+      success, stderr = verify(CONFIG, {}, ci: ci)
+      refute success
+      assert_includes stderr, "must not use continue-on-error"
+    end
   end
 
   def test_rejects_a_workflow_at_the_reserved_tap_path

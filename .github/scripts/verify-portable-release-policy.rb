@@ -156,6 +156,8 @@ PUBLISHERS = { ".github/workflows/release.yaml" => EXPECTED_RELEASE_WORKFLOW }.f
 # The tap publisher needs signing and its Environment, so nothing may occupy its
 # path until it is added to PUBLISHERS.
 RESERVED = %w[.github/workflows/tap.yaml .github/workflows/tap.yml].freeze
+CI_WORKFLOW = ".github/workflows/ci.yaml"
+CI_GATE = "ci-ok"
 
 unless ARGV.length == 2
   warn "usage: verify-portable-release-policy.rb GORELEASER_CONFIG REPOSITORY_ROOT"
@@ -236,6 +238,7 @@ errors << "no workflows found under .github/workflows" if workflows.empty?
 present = workflows.map { |candidate| relative_to_root.call(candidate) }
 PUBLISHERS.each_key { |publisher| errors << "missing publishing workflow #{publisher}" unless present.include?(publisher) }
 (RESERVED & present).each { |reserved| errors << "#{reserved} is reserved for a publisher that is not approved yet" }
+errors << "missing #{CI_WORKFLOW}" unless present.include?(CI_WORKFLOW)
 
 workflows.each do |candidate|
   relative = relative_to_root.call(candidate)
@@ -254,6 +257,25 @@ workflows.each do |candidate|
     next
   end
   errors << "#{relative} must set read-only permissions" unless workflow["permissions"] == { "contents" => "read" }
+  if relative == CI_WORKFLOW
+    jobs = workflow["jobs"].is_a?(Hash) ? workflow["jobs"] : {}
+    gate = jobs[CI_GATE]
+    if gate.is_a?(Hash)
+      errors << "#{CI_GATE} must keep its job id as its name" unless gate["name"] == CI_GATE
+      errors << "#{CI_GATE} must need every other job" unless Array(gate["needs"]).sort == (jobs.keys - [CI_GATE]).sort
+      errors << "#{CI_GATE} must run with if: always()" unless gate["if"] == "always()"
+    else
+      errors << "#{relative} has no #{CI_GATE} job"
+    end
+    forgiving = lambda do |value|
+      case value
+      when Hash then value.any? { |key, item| key.to_s == "continue-on-error" || forgiving.call(item) }
+      when Array then value.any? { |item| forgiving.call(item) }
+      else false
+      end
+    end
+    errors << "#{relative} must not use continue-on-error" if forgiving.call(jobs)
+  end
   walk = lambda do |value, nested_permissions = false|
     case value
     when Hash
