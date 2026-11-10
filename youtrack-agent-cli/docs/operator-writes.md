@@ -117,7 +117,7 @@ and selected field/target. Plans additionally bind credential generation, curren
 policy revision/hash, final payload/marker and notification policy. Offline
 prepare requires a snapshot less than 15 minutes old: perform snapshot and
 prepare consecutively before waiting for any necessary human review. Newly
-prepared **plan schemas v2 and v3 have no wall-clock expiry**, so the same plan ID,
+prepared **plan schemas v2, v3 and v4 have no wall-clock expiry**, so the same plan ID,
 marker and digest survive a delayed response. Offline prepare never accesses
 credentials, OAuth, browser, DNS or sockets. Apply validates consent, hash and local bindings before credentials,
 then verifies fresh account/remote preconditions. It consumes the local attempt
@@ -125,18 +125,22 @@ before dispatch and never restores it.
 
 ### Lifetime, compatibility and consent boundaries
 
-`capabilities` advertises the highest supported `plan_version: 3` and
-`plan_lifetime: until_consumed_or_stale`; its `plan_versions` map reports v2 for
-the existing operations and v3 for deletion. Plan/status/apply results report
-their actual plan version/lifetime. V2/v3 default JSON/raw results and serialized plans
+`capabilities` advertises the highest supported `plan_version: 4` and
+`plan_lifetime: until_consumed_or_stale`; its `plan_versions` map reports v4 for
+`issue.update`, v2 for creation and comment addition, and v3 for deletion. Plan/status/apply results report
+their actual plan version/lifetime. V2/v3/v4 default JSON/raw results and serialized plans
 omit `expires_at`. An explicit `--fields expires_at` projection retains the
-existing selectable field vocabulary and returns an empty string for v2/v3; use
+existing selectable field vocabulary and returns an empty string for v2/v3/v4; use
 `plan_version` and `plan_lifetime`, not that empty string, to select the policy.
 The unchanged `source`/lane name `operator-write-v1` identifies the operator
 storage namespace, not the nested plan schema or JSON envelope version.
 
-Existing operations continue to prepare v2 plans. V1/v2 bytes and hashes are
-preserved, and both versions reject deletion; v3 accepts only `comment.delete`.
+New `issue.update` plans are v4; creation and comment addition continue to
+prepare v2 plans. V1/v2 bytes and hashes are preserved, v2 plans remain
+accepted and appliable, and both versions reject deletion; v3 accepts only
+`comment.delete` and v4 only `issue.update`. Only v4 can encode a User field or
+an explicit `null` target (clear); v1-v3 plans refuse both. `snapshot` does not
+select either yet.
 Legacy plan schema v1 retains its exact bytes, digest, 15-minute expiry and
 claim validation; its results report `legacy_time_limited` and the original
 `expires_at`. Upgrading never migrates, extends or revives those plans. An old
@@ -152,13 +156,13 @@ replacement plan. Deliberately creating equivalent new plans is still not
 deduplicated across plan IDs. Unknown or consumed attempts never authorize a
 fresh equivalent plan or retry.
 
-Prepared v2/v3 plans remain in private local storage until consumed or made stale;
+Prepared v2/v3/v4 plans remain in private local storage until consumed or made stale;
 there is no new cancel command or automatic cleanup. A user cancellation must
 be honored by the cooperating agent; it does not cryptographically revoke a
 plan for another process. Changing the bound credential generation or project
 policy invalidates applicability through existing checks. This lane still
 does not resist a malicious same-user process or disk rollback. A clock before
-`created_at` is refused, even for v2/v3. Native receipt TTLs and the unavailable
+`created_at` is refused, even for v2/v3/v4. Native receipt TTLs and the unavailable
 native `mutation` authority path are unchanged.
 
 ## Issue creation

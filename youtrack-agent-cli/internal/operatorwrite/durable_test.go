@@ -9,15 +9,16 @@ import (
 	"time"
 )
 
-func TestVersion2PlansOutliveLegacyWindowForEveryWriteKind(t *testing.T) {
+func TestDurablePlansOutliveLegacyWindowForEveryWriteKind(t *testing.T) {
 	tests := []struct {
 		name     string
 		snapshot func(*testing.T) Snapshot
 		request  Request
+		version  int
 	}{
-		{"issue create", testCreateSnapshot, Request{Kind: KindIssueCreate, Summary: "Durable plan", Description: "Body"}},
-		{"issue update", func(t *testing.T) Snapshot { return testSnapshot(t, KindIssueUpdate) }, Request{Kind: KindIssueUpdate}},
-		{"comment add", func(t *testing.T) Snapshot { return testSnapshot(t, KindCommentAdd) }, Request{Kind: KindCommentAdd, CommentText: "Durable comment"}},
+		{"issue create", testCreateSnapshot, Request{Kind: KindIssueCreate, Summary: "Durable plan", Description: "Body"}, PlanVersion2},
+		{"issue update", func(t *testing.T) Snapshot { return testSnapshot(t, KindIssueUpdate) }, Request{Kind: KindIssueUpdate}, PlanVersion4},
+		{"comment add", func(t *testing.T) Snapshot { return testSnapshot(t, KindCommentAdd) }, Request{Kind: KindCommentAdd, CommentText: "Durable comment"}, PlanVersion2},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -26,7 +27,7 @@ func TestVersion2PlansOutliveLegacyWindowForEveryWriteKind(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.Version != PlanVersion2 || !plan.ExpiresAt.IsZero() || PlanLifetime(plan.Version) != CurrentPlanLifetime {
+			if plan.Version != test.version || !plan.ExpiresAt.IsZero() || PlanLifetime(plan.Version) != CurrentPlanLifetime {
 				t.Fatalf("durable metadata = %#v", plan)
 			}
 			raw, err := json.Marshal(plan)
@@ -34,11 +35,11 @@ func TestVersion2PlansOutliveLegacyWindowForEveryWriteKind(t *testing.T) {
 				t.Fatal(err)
 			}
 			if bytes.Contains(raw, []byte(`"expires_at"`)) {
-				t.Fatalf("v2 plan retained a legacy expiry: %s", raw)
+				t.Fatalf("durable plan retained a legacy expiry: %s", raw)
 			}
 			for _, delayed := range []time.Duration{LegacyPlanTTL + time.Nanosecond, 72 * time.Hour} {
 				if err := CheckFresh(plan, plan.CreatedAt.Add(delayed)); err != nil {
-					t.Fatalf("v2 plan was stale after %s: %v", delayed, err)
+					t.Fatalf("durable plan was stale after %s: %v", delayed, err)
 				}
 			}
 		})
@@ -51,7 +52,12 @@ func TestPlanValidationRejectsRedigestedInvalidVersionAndExpiryCombinations(t *t
 		mutate func(*Plan)
 	}{
 		{"unsupported version", func(plan *Plan) { plan.Version = 99 }},
-		{"v2 with expiry", func(plan *Plan) { plan.ExpiresAt = plan.CreatedAt.Add(LegacyPlanTTL) }},
+		{"durable with expiry", func(plan *Plan) { plan.ExpiresAt = plan.CreatedAt.Add(LegacyPlanTTL) }},
+		{"v3 for issue.update", func(plan *Plan) { plan.Version = PlanVersion3 }},
+		{"v4 for comment.add", func(plan *Plan) {
+			plan.Version = PlanVersion4
+			plan.Snapshot.Kind, plan.Snapshot.Field, plan.Request = KindCommentAdd, nil, Request{Kind: KindCommentAdd, CommentText: "x\n\n" + Marker(plan.ID)}
+		}},
 		{"v1 without expiry", func(plan *Plan) { plan.Version, plan.ExpiresAt = LegacyPlanVersion1, time.Time{} }},
 		{"v1 zero expiry with legacy-shaped dates", func(plan *Plan) {
 			plan.Version = LegacyPlanVersion1

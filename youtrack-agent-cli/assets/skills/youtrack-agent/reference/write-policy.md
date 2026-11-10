@@ -63,8 +63,9 @@ a batch, or an automatic retry after consumed/ambiguous results.
 
 ## Plan lifetime
 
-Check `plan_version` and `plan_lifetime` in the CLI result. Existing operations
-prepare v2 plans; exact deletion alone prepares v3. Both use
+Check `plan_version` and `plan_lifetime` in the CLI result. New `issue.update`
+plans are v4 (v2 plans are still accepted); creation and comment addition
+prepare v2 plans; exact deletion alone prepares v3. All use
 `until_consumed_or_stale` and omit `expires_at` from serialized plans
 and default JSON/raw results (explicit `--fields expires_at` returns an empty
 string). Waiting for a human does not change their ID, marker or digest. Keep
@@ -140,7 +141,7 @@ uses its legacy rules; request a released upgrade rather than bypassing them.
    changed it. Reconciliation never restores plan eligibility.
 
 Legacy-expired or stale plans fail before dispatch; inspect a fresh snapshot and
-obtain a new exact confirmation. Durable v2/v3 plans do not expire solely because
+obtain a new exact confirmation. Durable v2/v3/v4 plans do not expire solely because
 time passed. Consumed/rejected plans remain consumed.
 If dispatch is uncertain, stop for operator resolution. REST preflight and
 write are not atomic: disclose the remaining TOCTOU risk. Never run one

@@ -65,7 +65,7 @@ func ValidateSnapshot(s Snapshot) error {
 		// fit the client's identifier bound.
 		projectFields, globalFields, names := map[string]bool{}, map[string]bool{}, map[string]bool{}
 		for _, f := range s.Fields {
-			if f.IssueFieldID != "" || f.CurrentValue != nil || !validFieldSchema(f) || len(f.Name) > MaxCreateFieldNameBytes ||
+			if f.IssueFieldID != "" || f.CurrentValue != nil || f.Type == userIssueField || !validFieldSchema(f) || !validTarget(f) || len(f.Name) > MaxCreateFieldNameBytes ||
 				projectFields[f.ProjectFieldID] || globalFields[f.GlobalFieldID] || names[f.Name] {
 				return invalid()
 			}
@@ -74,7 +74,7 @@ func ValidateSnapshot(s Snapshot) error {
 	case KindIssueUpdate:
 		f := s.Field
 		if !validIssue(s.Issue) || s.Project != nil || s.Fields != nil || s.Comment != nil || f == nil || !protocolvalue.IsIdentifier(f.IssueFieldID) || !validFieldSchema(*f) ||
-			f.CurrentValue == nil && !f.CanBeEmpty || f.CurrentValue != nil && !validValue(*f.CurrentValue, f.Type) {
+			!validUpdateValues(*f) {
 			return invalid()
 		}
 	case KindCommentAdd:
@@ -150,20 +150,62 @@ func validIssue(i Issue) bool {
 		protocolvalue.IsIdentifier(i.ProjectID) && protocolvalue.IsProjectKey(i.ProjectKey) && i.Updated > 0
 }
 
-// validFieldSchema checks the touched single State/Enum schema and its
-// nonarchived target, shared by update and create fields.
+const (
+	stateIssueField = "StateIssueCustomField"
+	enumIssueField  = "SingleEnumIssueCustomField"
+	userIssueField  = "SingleUserIssueCustomField"
+)
+
+// validFieldSchema checks the touched single State, Enum, or User schema,
+// shared by update and create fields. It does not check the target value.
 func validFieldSchema(f Field) bool {
 	return protocolvalue.IsIdentifier(f.ProjectFieldID) && protocolvalue.IsIdentifier(f.GlobalFieldID) && validText(f.Name, 256, true) &&
-		(f.Type == "StateIssueCustomField" && f.ProjectFieldType == "StateProjectCustomField" && f.ValueType == "state" && f.BundleType == "StateBundle" ||
-			f.Type == "SingleEnumIssueCustomField" && f.ProjectFieldType == "EnumProjectCustomField" && f.ValueType == "enum" && f.BundleType == "EnumBundle") &&
-		!f.IsMultiValue && f.FieldTypeType == "FieldType" && protocolvalue.IsIdentifier(f.BundleID) && f.FieldTypeID == f.ValueType+"[1]" &&
-		validValue(f.TargetValue, f.Type) && !f.TargetValue.Archived
+		(f.Type == stateIssueField && f.ProjectFieldType == "StateProjectCustomField" && f.ValueType == "state" && f.BundleType == "StateBundle" ||
+			f.Type == enumIssueField && f.ProjectFieldType == "EnumProjectCustomField" && f.ValueType == "enum" && f.BundleType == "EnumBundle" ||
+			f.Type == userIssueField && f.ProjectFieldType == "UserProjectCustomField" && f.ValueType == "user" && f.BundleType == "UserBundle") &&
+		!f.IsMultiValue && f.FieldTypeType == "FieldType" && protocolvalue.IsIdentifier(f.BundleID) && f.FieldTypeID == f.ValueType+"[1]"
+}
+
+// validTarget requires a present, valid, nonarchived target value.
+func validTarget(f Field) bool {
+	return f.TargetValue != nil && validValue(*f.TargetValue, f.Type) && !f.TargetValue.Archived
+}
+
+// validUpdateValues checks an update field's current and target values. A nil
+// target clears the field: it needs a clearable field that currently holds a
+// value, because clearing an empty field is a no-op that reconciliation could
+// not tell from success.
+func validUpdateValues(f Field) bool {
+	if f.CurrentValue == nil && !f.CanBeEmpty || f.CurrentValue != nil && !validValue(*f.CurrentValue, f.Type) {
+		return false
+	}
+	if f.TargetValue == nil {
+		return f.CanBeEmpty && f.CurrentValue != nil
+	}
+	return validTarget(f)
+}
+
+// needsPlanVersion4 reports whether the snapshot carries a User field or a
+// null target, which only a version 4 plan may hold.
+func needsPlanVersion4(s Snapshot) bool {
+	return s.Field != nil && (s.Field.Type == userIssueField || s.Field.TargetValue == nil)
 }
 
 func validValue(v Value, fieldType string) bool {
-	expected := "StateBundleElement"
-	if fieldType == "SingleEnumIssueCustomField" {
+	var expected string
+	switch fieldType {
+	case stateIssueField:
+		expected = "StateBundleElement"
+	case enumIssueField:
 		expected = "EnumBundleElement"
+	case userIssueField:
+		// A user is never archived; only id, login (name), and type are frozen.
+		if v.Archived {
+			return false
+		}
+		expected = "User"
+	default:
+		return false
 	}
 	return protocolvalue.IsIdentifier(v.ID) && validText(v.Name, 256, true) && v.Type == expected
 }
@@ -266,11 +308,7 @@ func Prepare(snapshot Snapshot, request Request, now time.Time) (Plan, error) {
 	if err := json.Unmarshal(raw, &frozen); err != nil {
 		return Plan{}, invalid()
 	}
-	version := PlanVersion2
-	if request.Kind == KindCommentDelete {
-		version = PlanVersion3
-	}
-	plan := Plan{Version: version, Lane: Lane, ID: id, ConfirmationMode: ConfirmationMode, Notifications: Notifications,
+	plan := Plan{Version: PlanVersionFor(request.Kind), Lane: Lane, ID: id, ConfirmationMode: ConfirmationMode, Notifications: Notifications,
 		Snapshot: frozen, Request: request, CreatedAt: now.UTC()}
 	plan.SHA256, err = digest(plan)
 	if err != nil {
@@ -308,7 +346,14 @@ func ValidatePlan(p Plan) error {
 		if p.Snapshot.Kind != KindCommentDelete || !p.ExpiresAt.IsZero() {
 			return invalid()
 		}
+	case PlanVersion4:
+		if p.Snapshot.Kind != KindIssueUpdate || !p.ExpiresAt.IsZero() {
+			return invalid()
+		}
 	default:
+		return invalid()
+	}
+	if p.Version != PlanVersion4 && needsPlanVersion4(p.Snapshot) {
 		return invalid()
 	}
 	if !validRequest(p.Request) {

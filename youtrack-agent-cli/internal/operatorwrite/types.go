@@ -18,12 +18,15 @@ const (
 	LegacyPlanVersion1 = 1
 	PlanVersion2       = 2
 	PlanVersion3       = 3
-	Lane               = "operator-write-v1"
-	ConfirmationMode   = "operator_confirmed"
-	Notifications      = "youtrack-default"
-	PlanIDPrefix       = "YTOW-"
-	SnapshotTTL        = 15 * time.Minute
-	LegacyPlanTTL      = 15 * time.Minute
+	// PlanVersion4 is the issue.update plan that may carry a User field or an
+	// explicit null (clear) target. Earlier plans refuse both.
+	PlanVersion4     = 4
+	Lane             = "operator-write-v1"
+	ConfirmationMode = "operator_confirmed"
+	Notifications    = "youtrack-default"
+	PlanIDPrefix     = "YTOW-"
+	SnapshotTTL      = 15 * time.Minute
+	LegacyPlanTTL    = 15 * time.Minute
 	// Caps apply to complete JSON inputs/records, including escaping and metadata.
 	MaxSnapshotBytes              = 24 * 1024
 	MaxCommentDeleteSnapshotBytes = 64 * 1024
@@ -50,10 +53,34 @@ func PlanLifetime(version int) string {
 	switch version {
 	case LegacyPlanVersion1:
 		return LegacyPlanLifetime
-	case PlanVersion2, PlanVersion3:
+	case PlanVersion2, PlanVersion3, PlanVersion4:
 		return CurrentPlanLifetime
 	default:
 		return ""
+	}
+}
+
+// PlanVersionFor is the version a newly prepared plan of the kind carries.
+// It is the single place that maps a kind to its plan version.
+func PlanVersionFor(kind Kind) int {
+	switch kind {
+	case KindIssueUpdate:
+		return PlanVersion4
+	case KindCommentDelete:
+		return PlanVersion3
+	default:
+		return PlanVersion2
+	}
+}
+
+// durablePlanVersion reports whether version is an accepted plan version that
+// has no local expiry, so a claimed plan stays finalizable.
+func durablePlanVersion(version int) bool {
+	switch version {
+	case PlanVersion2, PlanVersion3, PlanVersion4:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -122,7 +149,43 @@ type Field struct {
 	CanBeEmpty       bool   `json:"can_be_empty"`
 	IsPublic         bool   `json:"is_public"`
 	CurrentValue     *Value `json:"current_value"`
-	TargetValue      Value  `json:"target_value"`
+	// TargetValue is nil, and encoded as an explicit null, only to clear an
+	// existing value. UnmarshalJSON requires the key so a missing member can
+	// never be read as a clear.
+	TargetValue *Value `json:"target_value"`
+}
+
+// UnmarshalJSON requires target_value to be present, retaining the distinction
+// between an absent member and an explicit null in an untrusted snapshot or plan.
+func (field *Field) UnmarshalJSON(raw []byte) error {
+	type plain Field
+	var wire struct {
+		plain
+		TargetValue json.RawMessage `json:"target_value"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	if len(wire.TargetValue) == 0 {
+		return errors.New("field requires target_value")
+	}
+	var target *Value
+	targetDecoder := json.NewDecoder(bytes.NewReader(wire.TargetValue))
+	targetDecoder.DisallowUnknownFields()
+	if err := targetDecoder.Decode(&target); err != nil {
+		return err
+	}
+	*field = Field(wire.plain)
+	field.TargetValue = target
+	return nil
 }
 
 // CommentVisibility freezes immutable identities rather than mutable display

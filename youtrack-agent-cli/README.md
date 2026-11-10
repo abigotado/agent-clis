@@ -213,10 +213,11 @@ separately declared `comment-delete` capability; existing profiles gain no
 new authority. A precise user request already authorizes that exact change; agents
 disclose the generated reconciliation marker without asking for a second
 marker/hash confirmation. If the payload or target still needs a decision, ask
-once before sending. Plan schemas v2 and v3 have no wall-clock expiry, so a delayed
+once before sending. Plan schemas v2, v3 and v4 have no wall-clock expiry, so a delayed
 reply does not require a new marker. The 15-minute snapshot-to-prepare window
 and live stale-state checks remain; legacy v1 plans keep their original expiry.
-Existing operations still prepare v2 plans; deletion alone prepares v3. Both
+New `issue.update` plans are v4; creation and comment addition still prepare v2
+plans, and deletion alone prepares v3. Existing v2 plans are still accepted. All
 historical formats retain their original bytes and hashes. A lost DELETE
 response requires GET-only reconciliation: a missing comment or `404` does not
 prove deletion and never authorizes a retry.

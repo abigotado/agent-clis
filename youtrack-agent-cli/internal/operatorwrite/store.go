@@ -168,7 +168,7 @@ func validAttempt(a Attempt, p Plan) bool {
 		a.ClaimedAt.Before(p.CreatedAt) || a.ClaimedAt.Location() != time.UTC {
 		return false
 	}
-	return p.Version == PlanVersion2 || p.Version == PlanVersion3 || p.Version == LegacyPlanVersion1 && a.ClaimedAt.Before(p.ExpiresAt)
+	return durablePlanVersion(p.Version) || p.Version == LegacyPlanVersion1 && a.ClaimedAt.Before(p.ExpiresAt)
 }
 
 func (s *Store) Claim(ctx context.Context, id, sha string, now time.Time) (Attempt, error) {

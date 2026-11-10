@@ -167,7 +167,7 @@ func (s *Service) SnapshotOperatorWrite(ctx context.Context, input OperatorSnaps
 			if err != nil {
 				return OperatorWriteInfo{}, err
 			}
-			field, err := freezeOperatorField(issue, schema, selection.ValueID, selection.ValueName)
+			field, err := freezeOperatorField(issue, schema, selection.ValueID, selection.ValueName, false)
 			if err != nil {
 				return OperatorWriteInfo{}, err
 			}
@@ -354,11 +354,11 @@ func freezeCreateField(schema youtrack.ProjectField, valueID, valueName string) 
 		}
 		seen[value.ID] = true
 		if valueID != "" && value.ID == valueID || valueName != "" && value.Name == valueName {
-			field.TargetValue = operatorwrite.Value{ID: value.ID, Name: value.Name, Archived: value.Archived, Type: value.Type}
+			field.TargetValue = &operatorwrite.Value{ID: value.ID, Name: value.Name, Archived: value.Archived, Type: value.Type}
 			targetMatches++
 		}
 	}
-	if targetMatches != 1 || field.TargetValue.Archived {
+	if targetMatches != 1 || field.TargetValue == nil || field.TargetValue.Archived {
 		return field, errx.Usage("the target value must be known, unique, and not archived")
 	}
 	if field.TargetValue.Type != valueType {
@@ -366,7 +366,11 @@ func freezeCreateField(schema youtrack.ProjectField, valueID, valueName string) 
 	}
 	return field, nil
 }
-func freezeOperatorField(issue youtrack.Issue, schema youtrack.ProjectField, valueID, valueName string) (operatorwrite.Field, error) {
+
+// freezeOperatorField freezes the touched issue field. With clearTarget set no target
+// value is selected and the frozen target stays nil (an explicit clear), which
+// needs a clearable field that currently holds a value.
+func freezeOperatorField(issue youtrack.Issue, schema youtrack.ProjectField, valueID, valueName string, clearTarget bool) (operatorwrite.Field, error) {
 	if schema.ID == "" || schema.Field.ID == "" || schema.Field.FieldType.IsMultiValue || schema.Bundle == nil || !supportedOperatorSchema(schema) {
 		return operatorwrite.Field{}, errx.Unsupported("OPERATOR_FIELD_UNSUPPORTED", "only single State and Enum fields are supported")
 	}
@@ -436,15 +440,22 @@ func freezeOperatorField(issue youtrack.Issue, schema youtrack.ProjectField, val
 			field.CurrentValue = &frozen
 			currentMatches++
 		}
-		if valueID != "" && value.ID == valueID || valueName != "" && value.Name == valueName {
-			field.TargetValue = frozen
+		if !clearTarget && (valueID != "" && value.ID == valueID || valueName != "" && value.Name == valueName) {
+			field.TargetValue = &frozen
 			targetMatches++
 		}
 	}
-	if current.ID != "" && currentMatches != 1 || targetMatches != 1 || field.TargetValue.Archived {
+	if current.ID != "" && currentMatches != 1 {
 		return field, errx.Usage("current and target values must be known and the unique target must not be archived")
 	}
-	if field.TargetValue.Type != valueType || field.CurrentValue != nil && field.CurrentValue.Type != valueType {
+	if clearTarget {
+		if !schema.CanBeEmpty || field.CurrentValue == nil {
+			return field, errx.Usage("only a clearable field that currently holds a value can be cleared")
+		}
+	} else if targetMatches != 1 || field.TargetValue == nil || field.TargetValue.Archived {
+		return field, errx.Usage("current and target values must be known and the unique target must not be archived")
+	}
+	if field.TargetValue != nil && field.TargetValue.Type != valueType || field.CurrentValue != nil && field.CurrentValue.Type != valueType {
 		return field, errx.Conflict("OPERATOR_FIELD_VALUE_INVALID", "selected field values have an incompatible bundle type")
 	}
 	if field.CurrentValue != nil && current.Name != "" && current.Name != field.CurrentValue.Name {
@@ -553,6 +564,13 @@ func (s *Service) ApplyOperatorWrite(ctx context.Context, input OperatorApplyInp
 			return OperatorWriteInfo{}, err
 		}
 	}
+	var updateInput youtrack.UpdateIssueInput
+	if plan.Snapshot.Kind == operatorwrite.KindIssueUpdate {
+		updateInput, err = operatorUpdateInput(plan)
+		if err != nil {
+			return OperatorWriteInfo{}, err
+		}
+	}
 	if plan.Snapshot.Kind == operatorwrite.KindCommentDelete {
 		if err := youtrack.ValidateDeleteCommentInput(youtrack.DeleteCommentInput{IssueID: plan.Snapshot.Issue.ID, CommentID: plan.Snapshot.Comment.ID}); err != nil {
 			return OperatorWriteInfo{}, err
@@ -597,7 +615,7 @@ func (s *Service) ApplyOperatorWrite(ctx context.Context, input OperatorApplyInp
 				return claimErr
 			}
 			// Claim releases its own ledger lock before this remote call.
-			remoteID, remoteReadableID, writeErr := dispatchOperatorWrite(ctx, client, plan)
+			remoteID, remoteReadableID, writeErr := dispatchOperatorWrite(ctx, client, plan, updateInput)
 			outcome := operatorwrite.Result{State: operatorwrite.StateApplied, Code: "WRITE_APPLIED", RemoteID: remoteID, RemoteReadableID: remoteReadableID}
 			if writeErr != nil {
 				outcome.State, outcome.Code = operatorwrite.StateUnknown, "WRITE_OUTCOME_UNKNOWN"
@@ -647,6 +665,9 @@ func verifyOperatorRemote(ctx context.Context, client *youtrack.Client, snapshot
 			if err != nil {
 				return err
 			}
+			if frozen.TargetValue == nil {
+				return errx.Conflict("OPERATOR_FIELD_STALE", "touched field schema or target changed").WithHint("inspect a new snapshot and prepare a fresh intent")
+			}
 			field, err := freezeCreateField(schema, frozen.TargetValue.ID, "")
 			if err != nil {
 				// The snapshot froze a valid field, so a refusal now is drift.
@@ -679,7 +700,11 @@ func verifyOperatorRemote(ctx context.Context, client *youtrack.Client, snapshot
 		if err != nil {
 			return err
 		}
-		field, err := freezeOperatorField(issue, schema, snapshot.Field.TargetValue.ID, "")
+		targetID := ""
+		if snapshot.Field.TargetValue != nil {
+			targetID = snapshot.Field.TargetValue.ID
+		}
+		field, err := freezeOperatorField(issue, schema, targetID, "", snapshot.Field.TargetValue == nil)
 		if err != nil {
 			// The snapshot froze a valid field, so a refusal now is drift.
 			return errx.Conflict("OPERATOR_FIELD_STALE", "touched field schema, current value, or target changed").WithHint("inspect a new snapshot and prepare a fresh intent")
@@ -721,22 +746,16 @@ func requireSameField(frozen, current operatorwrite.Field) error {
 }
 
 // dispatchOperatorWrite sends the plan's single POST and returns the remote
-// entity ID and, for a created issue, its readable ID.
-func dispatchOperatorWrite(ctx context.Context, client *youtrack.Client, plan operatorwrite.Plan) (string, string, error) {
+// entity ID and, for a created issue, its readable ID. update is the already
+// validated issue.update payload, built before the plan was claimed.
+func dispatchOperatorWrite(ctx context.Context, client *youtrack.Client, plan operatorwrite.Plan, update youtrack.UpdateIssueInput) (string, string, error) {
 	snapshot := plan.Snapshot
 	switch snapshot.Kind {
 	case operatorwrite.KindIssueCreate:
 		issue, err := client.CreateIssue(ctx, operatorCreateInput(plan))
 		return issue.ID, issue.IDReadable, err
 	case operatorwrite.KindIssueUpdate:
-		value, err := json.Marshal(struct {
-			ID string `json:"id"`
-		}{snapshot.Field.TargetValue.ID})
-		if err != nil {
-			return "", "", errx.Internal("encode frozen field value")
-		}
-		issue, err := client.UpdateIssue(ctx, youtrack.UpdateIssueInput{IssueID: snapshot.Issue.ID, ProjectID: snapshot.Issue.ProjectID, ProjectKey: snapshot.Issue.ProjectKey,
-			CustomFields: []youtrack.CustomFieldUpdate{{ID: snapshot.Field.IssueFieldID, Type: snapshot.Field.Type, Value: value}}})
+		issue, err := client.UpdateIssue(ctx, update)
 		return issue.ID, "", err
 	case operatorwrite.KindCommentAdd:
 		comment, err := client.AddComment(ctx, youtrack.AddCommentInput{IssueID: snapshot.Issue.ID, ExpectedAuthorID: snapshot.Binding.AccountID, ExpectedAuthorLogin: snapshot.Binding.AccountLogin, Text: plan.Request.CommentText})
@@ -766,9 +785,55 @@ func operatorCreateInput(plan operatorwrite.Plan) youtrack.CreateIssueInput {
 	input := youtrack.CreateIssueInput{ProjectID: snapshot.Project.ID, ProjectKey: snapshot.Project.Key, Summary: plan.Request.Summary, Description: &description,
 		ExpectedReporterID: snapshot.Binding.AccountID, ExpectedReporterLogin: snapshot.Binding.AccountLogin}
 	for _, field := range snapshot.Fields {
-		input.CustomFields = append(input.CustomFields, youtrack.CreateCustomField{ProjectFieldID: field.ProjectFieldID, Name: field.Name, Type: field.Type, ValueID: field.TargetValue.ID})
+		// A validated create field always has a target; an empty ID makes the
+		// client's validation refuse the payload instead of dereferencing nil.
+		valueID := ""
+		if field.TargetValue != nil {
+			valueID = field.TargetValue.ID
+		}
+		input.CustomFields = append(input.CustomFields, youtrack.CreateCustomField{ProjectFieldID: field.ProjectFieldID, Name: field.Name, Type: field.Type, ValueID: valueID})
 	}
 	return input
+}
+
+// operatorUpdateInput is the one issue.update payload: it is built and
+// validated before the plan is claimed and then dispatched unchanged. A bundle
+// or user target is sent as {"id":ID} only; a nil target clears with JSON null.
+func operatorUpdateInput(plan operatorwrite.Plan) (youtrack.UpdateIssueInput, error) {
+	snapshot := plan.Snapshot
+	if snapshot.Field == nil {
+		return youtrack.UpdateIssueInput{}, errx.Usage("issue.update plan has no field")
+	}
+	value := json.RawMessage("null")
+	if snapshot.Field.TargetValue != nil {
+		encoded, err := json.Marshal(struct {
+			ID string `json:"id"`
+		}{snapshot.Field.TargetValue.ID})
+		if err != nil {
+			return youtrack.UpdateIssueInput{}, errx.Internal("encode frozen field value")
+		}
+		value = encoded
+	}
+	input := youtrack.UpdateIssueInput{IssueID: snapshot.Issue.ID, ProjectID: snapshot.Issue.ProjectID, ProjectKey: snapshot.Issue.ProjectKey,
+		CustomFields: []youtrack.CustomFieldUpdate{{ID: snapshot.Field.IssueFieldID, Type: snapshot.Field.Type, Value: value}}}
+	if err := youtrack.ValidateUpdateIssueInput(input); err != nil {
+		return youtrack.UpdateIssueInput{}, err
+	}
+	return input, nil
+}
+
+// operatorFieldValueObserved reports whether an observed issue field value is
+// the plan's desired one: an exact JSON null for a clear, otherwise a value of
+// the frozen type (User for a user field) with the frozen ID.
+func operatorFieldValueObserved(frozen operatorwrite.Field, observed json.RawMessage) bool {
+	if frozen.TargetValue == nil {
+		return bytes.Equal(bytes.TrimSpace(observed), []byte("null"))
+	}
+	var value struct {
+		ID   string `json:"id"`
+		Type string `json:"$type"`
+	}
+	return json.Unmarshal(observed, &value) == nil && value.ID == frozen.TargetValue.ID && value.Type == frozen.TargetValue.Type
 }
 
 func operatorConsumedError() *errx.Error {
@@ -848,11 +913,7 @@ func (s *Service) ReconcileOperatorWrite(ctx context.Context, input OperatorReco
 		if snapshot.Kind == operatorwrite.KindIssueUpdate {
 			for _, field := range issue.CustomFields {
 				if field.ID == snapshot.Field.IssueFieldID && field.Type == snapshot.Field.Type {
-					var value struct {
-						ID   string `json:"id"`
-						Type string `json:"$type"`
-					}
-					if json.Unmarshal(field.Value, &value) == nil && value.ID == snapshot.Field.TargetValue.ID && value.Type == snapshot.Field.TargetValue.Type {
+					if operatorFieldValueObserved(*snapshot.Field, field.Value) {
 						evidence = "desired_value_observed_without_causal_proof"
 					}
 				}

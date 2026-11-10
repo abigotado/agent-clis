@@ -15,8 +15,8 @@ func testCreateSnapshot(t *testing.T) Snapshot {
 	s.Issue = Issue{}
 	s.Project = &Project{ID: "0-1", Key: "TAC"}
 	s.Fields = []Field{
-		{ProjectFieldID: "189-8", GlobalFieldID: "58-1", Name: "Stage", Type: "StateIssueCustomField", ProjectFieldType: "StateProjectCustomField", ValueType: "state", FieldTypeID: "state[1]", FieldTypeType: "FieldType", IsPublic: true, BundleID: "10-1", BundleType: "StateBundle", TargetValue: Value{ID: "20-2", Name: "In Progress", Type: "StateBundleElement"}},
-		{ProjectFieldID: "189-7", GlobalFieldID: "58-2", Name: "Priority", Type: "SingleEnumIssueCustomField", ProjectFieldType: "EnumProjectCustomField", ValueType: "enum", FieldTypeID: "enum[1]", FieldTypeType: "FieldType", IsPublic: true, BundleID: "11-1", BundleType: "EnumBundle", TargetValue: Value{ID: "21-3", Name: "Normal", Type: "EnumBundleElement"}},
+		{ProjectFieldID: "189-8", GlobalFieldID: "58-1", Name: "Stage", Type: "StateIssueCustomField", ProjectFieldType: "StateProjectCustomField", ValueType: "state", FieldTypeID: "state[1]", FieldTypeType: "FieldType", IsPublic: true, BundleID: "10-1", BundleType: "StateBundle", TargetValue: &Value{ID: "20-2", Name: "In Progress", Type: "StateBundleElement"}},
+		{ProjectFieldID: "189-7", GlobalFieldID: "58-2", Name: "Priority", Type: "SingleEnumIssueCustomField", ProjectFieldType: "EnumProjectCustomField", ValueType: "enum", FieldTypeID: "enum[1]", FieldTypeType: "FieldType", IsPublic: true, BundleID: "11-1", BundleType: "EnumBundle", TargetValue: &Value{ID: "21-3", Name: "Normal", Type: "EnumBundleElement"}},
 	}
 	return s
 }
@@ -126,7 +126,7 @@ func TestCreateSnapshotShapeIsKindExclusive(t *testing.T) {
 		{"create bad key", KindIssueCreate, func(s *Snapshot) { s.Project.Key = "tac" }},
 		{"create single field", KindIssueCreate, func(s *Snapshot) { s.Field = &s.Fields[0] }},
 		{"create issue field identity", KindIssueCreate, func(s *Snapshot) { s.Fields[0].IssueFieldID = "92-1" }},
-		{"create current value", KindIssueCreate, func(s *Snapshot) { s.Fields[0].CurrentValue = &s.Fields[0].TargetValue }},
+		{"create current value", KindIssueCreate, func(s *Snapshot) { s.Fields[0].CurrentValue = s.Fields[0].TargetValue }},
 		{"create duplicate project field", KindIssueCreate, func(s *Snapshot) { s.Fields[1].ProjectFieldID = s.Fields[0].ProjectFieldID }},
 		{"create duplicate global field", KindIssueCreate, func(s *Snapshot) { s.Fields[1].GlobalFieldID = s.Fields[0].GlobalFieldID }},
 		{"create duplicate field name", KindIssueCreate, func(s *Snapshot) { s.Fields[1].Name = s.Fields[0].Name }},
