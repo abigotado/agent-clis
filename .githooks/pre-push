@@ -21,8 +21,6 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
 repo_root=$(git rev-parse --show-toplevel) || fail "not inside a git checkout"
 cd "$repo_root"
 
-command -v go >/dev/null 2>&1 || fail "go is not on PATH"
-
 # Gate one checked-out tree. The caller runs it in a subshell with its working
 # directory at that tree's root and stdin closed.
 gate_tree() {
@@ -76,9 +74,15 @@ gate_tree() {
 
 # The provider compiler is the machine-local global harness, so CI cannot run
 # it. Its mirrors are git-ignored, so they exist only in the real checkout and
-# only describe the commit checked out there.
+# describe only the .agents tree checked out there: a pushed tip whose .agents
+# tree differs cannot be verified against them, so it fails closed.
 check_provider_mirrors() {
-  local python_bin="${AGENT_HARNESS_PYTHON:-python3}"
+  local commit=$1 python_bin="${AGENT_HARNESS_PYTHON:-python3}" tip_agents head_agents
+  tip_agents=$(git rev-parse --verify "${commit}:.agents" 2>/dev/null || true)
+  [ -n "$tip_agents" ] || return 0
+  head_agents=$(git rev-parse --verify 'HEAD:.agents' 2>/dev/null || true)
+  [ "$tip_agents" = "$head_agents" ] \
+    || fail "${commit:0:12}: .agents differs from the checked-out HEAD, so the provider mirrors cannot be verified; check this branch out and push it"
   [ -d .agents ] && "$python_bin" -c 'pass' >/dev/null 2>&1 || return 0
   local global_compiler="${HOME}/.agents/compiler.py"
   if [ -f "$global_compiler" ]; then
@@ -92,9 +96,10 @@ check_provider_mirrors() {
 # Read every pushed ref before running anything that could consume stdin.
 refs=$(cat)
 
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/pre-push.XXXXXX") || fail "cannot create a temporary directory"
+tmp=""
 cleanup() {
   local worktree
+  [ -n "$tmp" ] || return 0
   for worktree in "$tmp"/wt-*; do
     [ -e "$worktree" ] && git worktree remove --force "$worktree" >/dev/null 2>&1
   done
@@ -104,10 +109,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-head_commit=$(git rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)
 seen=" "
 gated=0
-mirrors_checked=0
 while IFS=' ' read -r -u 3 local_ref local_sha remote_ref remote_sha _extra; do
   [ -n "${local_ref}${local_sha}" ] || continue
   [ -n "$local_ref" ] && [ -n "$local_sha" ] && [ -n "$remote_ref" ] && [ -n "$remote_sha" ] \
@@ -122,16 +125,20 @@ while IFS=' ' read -r -u 3 local_ref local_sha remote_ref remote_sha _extra; do
   case "$seen" in *" $commit "*) continue ;; esac
   seen="$seen$commit "
 
+  # Only a push that adds or updates a ref needs Go and scratch space.
+  command -v go >/dev/null 2>&1 || fail "go is not on PATH"
+  if [ -z "$tmp" ]; then
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/pre-push.XXXXXX") || fail "cannot create a temporary directory"
+  fi
   worktree="$tmp/wt-$gated"
-  git worktree add --quiet --detach "$worktree" "$commit" >/dev/null \
+  # The pushed commit may carry its own hooks; the checkout must not run them.
+  git -c core.hooksPath=/dev/null worktree add --quiet --detach "$worktree" "$commit" >/dev/null \
     || fail "$local_ref: cannot check out $commit"
+  [ -z "$(git -C "$worktree" status --porcelain)" ] \
+    || fail "$local_ref: the checkout of $commit is not clean"
   (cd "$worktree" && gate_tree "${commit:0:12}" </dev/null) || exit 1
   gated=$((gated + 1))
-
-  if [ "$commit" = "$head_commit" ] && [ "$mirrors_checked" -eq 0 ]; then
-    check_provider_mirrors
-    mirrors_checked=1
-  fi
+  check_provider_mirrors "$commit"
 done 3<<<"$refs"
 
 [ "$gated" -gt 0 ] && echo "pre-push: ok" || echo "pre-push: nothing to validate"

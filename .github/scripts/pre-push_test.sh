@@ -63,9 +63,34 @@ refs/heads/y $good refs/heads/y $zero"
 check "duplicate tips are gated once" 0 "$status"
 test "$(grep -c 'mod_a vet' "$GO_LOG")" -eq 1 && echo "ok   gated once" || { echo "FAIL gated once" >&2; failures=$((failures + 1)); }
 
+git commit -q --allow-empty -m second
+second=$(git rev-parse HEAD)
+run <<<"refs/heads/x $good refs/heads/x $zero
+refs/heads/y $second refs/heads/y $zero"
+check "two distinct tips pass" 0 "$status"
+test "$(grep -c 'mod_a vet' "$GO_LOG")" -eq 2 && echo "ok   every tip gated" || { echo "FAIL every tip gated" >&2; failures=$((failures + 1)); }
+git reset -q --hard "$good"
+
 run <<<"(delete) $zero refs/heads/x $good"
 check "deleting a ref is a no-op" 0 "$status"
 test ! -s "$GO_LOG" && echo "ok   delete ran nothing" || { echo "FAIL delete ran go" >&2; failures=$((failures + 1)); }
+
+# A deletion needs neither Go nor scratch space.
+set +e
+PATH="/usr/bin:/bin" TMPDIR=/nonexistent bash .githooks/pre-push origin url <<<"(delete) $zero refs/heads/x $good" >"$work/out" 2>&1
+status=$?
+set -e
+if PATH="/usr/bin:/bin" command -v go >/dev/null 2>&1; then echo "skip delete-without-go (go in /usr/bin)"; else check "deletion needs no go or tmp" 0 "$status"; fi
+
+# A pushed commit must not run its own checkout hooks.
+mkdir -p .hooks-evil
+printf '#!/bin/sh\necho evil >mod_a/evil.txt\n' >.hooks-evil/post-checkout
+chmod +x .hooks-evil/post-checkout
+git config core.hooksPath .hooks-evil
+run <<<"refs/heads/x $good refs/heads/x $zero"
+check "checkout hooks do not run" 0 "$status"
+git config --unset core.hooksPath
+rm -rf .hooks-evil
 
 run <<<"refs/heads/x $(printf 'f%.0s' {1..40}) refs/heads/x $zero"
 check "unresolvable sha fails closed" 1 "$status"
