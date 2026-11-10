@@ -435,7 +435,8 @@ func decode(r io.Reader, limit int, dst any) error {
 	if d.Decode(&extra) != io.EOF {
 		return invalid()
 	}
-	// JSON duplicate keys are not canonical and could mislead a human reader.
+	// JSON duplicate keys and case-variant member names are not canonical and
+	// could mislead a human reader.
 	if hasDuplicateKeys(raw) {
 		return invalid()
 	}
@@ -457,6 +458,28 @@ func hasEmptyEditMember(raw []byte) bool {
 	return false
 }
 
+// exactWireKey reports whether a member name is spelled only with the
+// lowercase snake_case alphabet every wire name uses. encoding/json matches
+// struct fields case-insensitively (and folds some non-ASCII runes), so any
+// other spelling of a known member would be decoded as that member while
+// evading exact-name checks and duplicate detection. No wire type has a map or
+// a mixed-case member, so rejecting such names changes no valid document.
+func exactWireKey(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c != '_' && (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// hasDuplicateKeys reports a malformed document, a duplicate member name, or a
+// member name that is not an exact lowercase wire name. Because every accepted
+// name is already lowercase, exact comparison also catches case aliases.
 func hasDuplicateKeys(raw []byte) bool {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	var walk func() bool
@@ -477,7 +500,7 @@ func hasDuplicateKeys(raw []byte) bool {
 					return true
 				}
 				s, ok := key.(string)
-				if !ok || seen[s] {
+				if !ok || !exactWireKey(s) || seen[s] {
 					return true
 				}
 				seen[s] = true

@@ -272,3 +272,74 @@ func TestIssueEditPrepareBindsTextAndHashes(t *testing.T) {
 		}
 	})
 }
+
+func TestDecodeRequestRefusesCaseVariantMembers(t *testing.T) {
+	tests := []struct {
+		name  string
+		raw   string
+		valid bool
+	}{
+		{"exact edit summary", `{"kind":"issue.edit","summary":"New"}`, true},
+		{"exact edit description", `{"kind":"issue.edit","description":"Body"}`, true},
+		{"exact comment add", `{"kind":"comment.add","comment_text":"c"}`, true},
+		{"exact issue update", `{"kind":"issue.update"}`, true},
+		{"capitalized null description with valid summary", `{"kind":"issue.edit","summary":"New","Description":null}`, false},
+		{"capitalized empty description with valid summary", `{"kind":"issue.edit","summary":"New","Description":""}`, false},
+		{"capitalized description value", `{"kind":"issue.edit","summary":"New","Description":"Body"}`, false},
+		{"capitalized null summary", `{"kind":"issue.edit","Summary":null,"description":"X"}`, false},
+		{"capitalized empty summary", `{"kind":"issue.edit","Summary":"","description":"X"}`, false},
+		{"capitalized summary value", `{"kind":"issue.edit","Summary":"New"}`, false},
+		{"upper summary null", `{"kind":"issue.edit","SUMMARY":null,"description":"X"}`, false},
+		{"upper summary value", `{"kind":"issue.edit","SUMMARY":"New"}`, false},
+		{"upper description null", `{"kind":"issue.edit","summary":"X","DESCRIPTION":null}`, false},
+		{"upper description empty", `{"kind":"issue.edit","summary":"X","DESCRIPTION":""}`, false},
+		{"upper description value", `{"kind":"issue.edit","DESCRIPTION":"Body"}`, false},
+		{"long s alias", "{\"kind\":\"issue.edit\",\"ſummary\":\"New\"}", false},
+		{"capitalized kind", `{"Kind":"issue.edit","summary":"New"}`, false},
+		{"upper kind", `{"KIND":"issue.edit","summary":"New"}`, false},
+		{"duplicate summary via capital alias", `{"kind":"issue.edit","summary":"a","Summary":"b"}`, false},
+		{"duplicate description via upper alias", `{"kind":"issue.edit","description":"a","DESCRIPTION":"b"}`, false},
+		{"duplicate summary via alias first", `{"kind":"issue.edit","Summary":"a","summary":"b"}`, false},
+		{"capitalized comment_text", `{"kind":"comment.add","Comment_Text":"c"}`, false},
+		{"comment add duplicate via alias", `{"kind":"comment.add","comment_text":"c","COMMENT_TEXT":"d"}`, false},
+		{"comment add capitalized empty summary", `{"kind":"comment.add","comment_text":"c","Summary":""}`, false},
+		{"comment add capitalized null description", `{"kind":"comment.add","comment_text":"c","Description":null}`, false},
+		{"issue update capitalized summary", `{"kind":"issue.update","Summary":"x"}`, false},
+		{"issue update upper description null", `{"kind":"issue.update","DESCRIPTION":null}`, false},
+		{"issue update capitalized kind duplicate", `{"kind":"issue.update","Kind":"issue.update"}`, false},
+		{"issue create capitalized description", `{"kind":"issue.create","summary":"T","Description":"B"}`, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			q, err := DecodeRequest(strings.NewReader(test.raw))
+			if (err == nil) != test.valid {
+				t.Fatalf("DecodeRequest() = %+v, %v; want valid=%v", q, err, test.valid)
+			}
+		})
+	}
+}
+
+func TestDecodePlanRefusesCaseVariantMembers(t *testing.T) {
+	s := editSnapshot(t)
+	p, err := prepareEdit(t, s, Request{Kind: KindIssueEdit, Summary: "New title"})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := DecodePlan(bytes.NewReader(raw)); err != nil {
+		t.Fatalf("exact plan refused: %v", err)
+	}
+	for _, alias := range []string{`"Lane":`, `"LANE":`, `"Sha256":`} {
+		name := strings.ToLower(strings.Trim(alias, `":`))
+		mutated := bytes.Replace(raw, []byte(`"`+name+`":`), []byte(alias), 1)
+		if bytes.Equal(mutated, raw) {
+			t.Fatalf("alias %s was not applied", alias)
+		}
+		if _, err := DecodePlan(bytes.NewReader(mutated)); err == nil {
+			t.Fatalf("plan with %s accepted", alias)
+		}
+	}
+}
