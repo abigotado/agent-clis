@@ -156,13 +156,48 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
     end
   end
 
-  def test_accepts_the_approved_goreleaser_lines
+  REAL_CI = File.read(File.join(ROOT, ".github/workflows/ci.yaml"), encoding: "UTF-8")
+  REHEARSAL_NAME = "      - name: goreleaser check and portable build rehearsal\n"
+
+  def test_accepts_the_real_ci_workflow
+    success, stderr = verify(CONFIG, {}, ci: REAL_CI)
+    assert success, stderr
+  end
+
+  def test_rejects_approved_lines_outside_the_pinned_steps
     success, stderr = verify(CONFIG, {}, ci: with_run_block(
       "go install github.com/goreleaser/goreleaser/v2@v2.17.1",
       "goreleaser check --config .goreleaser.yaml",
-      "goreleaser build --config .goreleaser.yaml --snapshot --clean --id portable-readonly",
     ))
-    assert success, stderr
+    refute success
+    assert_includes stderr, "not the pinned step"
+  end
+
+  def test_rejects_the_rehearsal_in_another_working_directory
+    step_level = REAL_CI.sub(REHEARSAL_NAME, "#{REHEARSAL_NAME}        working-directory: alternate\n")
+    job_level = REAL_CI.sub("        working-directory: youtrack-agent-cli\n", "        working-directory: alternate\n")
+    [step_level, job_level].each do |ci|
+      refute_equal REAL_CI, ci
+      success, stderr = verify(CONFIG, {}, ci: ci)
+      refute success
+      assert_match(/not the pinned step|must keep defaults/, stderr)
+    end
+  end
+
+  def test_rejects_the_rehearsal_copied_into_another_job
+    rehearsal = REAL_CI[/#{Regexp.escape(REHEARSAL_NAME)}.*?\n\n/m]
+    refute_nil rehearsal
+    extra_job = "  other:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: alternate\n    steps:\n#{rehearsal}"
+    ci = REAL_CI.sub("  ci-ok:\n", "#{extra_job}  ci-ok:\n").sub("needs: [changes, repo, youtrack, youtrack-windows]", "needs: [changes, repo, youtrack, youtrack-windows, other]")
+    success, stderr = verify(CONFIG, {}, ci: ci)
+    refute success
+    assert_includes stderr, "job other has a GoReleaser step that is not the pinned step"
+  end
+
+  def test_rejects_goreleaser_outside_ci_yaml
+    success, stderr = verify(CONFIG, { "youtrack-agent-cli/packaging/build.sh" => "goreleaser check --config .goreleaser.yaml\n" })
+    refute success
+    assert_includes stderr, "packaging/build.sh:1 mentions GoReleaser outside the approved lines"
   end
 
   def test_every_approved_goreleaser_line_is_used

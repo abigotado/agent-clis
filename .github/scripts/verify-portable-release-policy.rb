@@ -176,6 +176,35 @@ GORELEASER_LINES = [
   "goreleaser check --config .goreleaser.yaml",
   "goreleaser build --config .goreleaser.yaml --snapshot --clean --id portable-readonly",
 ].freeze
+# The approved lines only count inside these exact ci.yaml steps, and the
+# rehearsal only inside a job pinned to the CLI's module directory: an approved
+# line run from another working directory would load an unchecked config.
+CI_GORELEASER_JOB = "youtrack"
+CI_GORELEASER_JOB_DEFAULTS = { "run" => { "working-directory" => "youtrack-agent-cli" } }.freeze
+CI_GORELEASER_STEPS = {
+  "repo" => {
+    "name" => "Release policy and change selection",
+    "run" => <<~'SH',
+      set -euo pipefail
+      ruby .github/scripts/verify-portable-release-policy_test.rb
+      ruby .github/scripts/verify-portable-release-policy.rb youtrack-agent-cli/.goreleaser.yaml .
+      ruby .github/scripts/ci-changes_test.rb
+    SH
+  },
+  CI_GORELEASER_JOB => {
+    "name" => "goreleaser check and portable build rehearsal",
+    "if" => "runner.os == 'Linux'",
+    "env" => { "GOTOOLCHAIN" => "auto", "CLI_VERSION" => "0.0.0" },
+    "run" => <<~'SH',
+      set -euo pipefail
+      go install github.com/goreleaser/goreleaser/v2@v2.17.1
+      goreleaser check --config .goreleaser.yaml
+      goreleaser build --config .goreleaser.yaml --snapshot --clean --id portable-readonly
+      binary="$(ls -d dist/portable-readonly_linux_amd64*/)youtrack-agent-cli"
+      test "$("${binary}" version -o json | jq -r '.data.version')" = "${CLI_VERSION}"
+    SH
+  },
+}.freeze
 
 unless ARGV.length == 2
   warn "usage: verify-portable-release-policy.rb GORELEASER_CONFIG REPOSITORY_ROOT"
@@ -252,9 +281,10 @@ surface.each do |candidate|
   # Every line that mentions GoReleaser must be an approved line. A pattern for
   # "has --config" can be dodged by continuations, prefixes or comments; without
   # --config, GoReleaser prefers .config/goreleaser.y*ml or .goreleaser.yml.
+  # Outside ci.yaml nothing may mention it at all; inside, the steps are pinned below.
   content.each_line.with_index(1) do |line, number|
     next unless line.match?(/goreleaser/i)
-    next if GORELEASER_LINES.include?(line.strip)
+    next if relative == CI_WORKFLOW && GORELEASER_LINES.include?(line.strip)
     errors << "#{relative}:#{number} mentions GoReleaser outside the approved lines: #{line.strip}"
   end
 end
@@ -321,6 +351,23 @@ workflows.each do |candidate|
       end
     end
     errors << "#{relative} must not use continue-on-error" if forgiving.call(jobs)
+    jobs.each do |job_id, job|
+      next unless job.is_a?(Hash)
+      if YAML.dump(job.reject { |key, _| key == "steps" }).match?(/goreleaser/i)
+        errors << "#{relative} job #{job_id} mentions GoReleaser outside its steps"
+      end
+      Array(job["steps"]).each do |step|
+        next unless YAML.dump(step).match?(/goreleaser/i)
+        next if CI_GORELEASER_STEPS[job_id] == step
+        errors << "#{relative} job #{job_id} has a GoReleaser step that is not the pinned step: #{step.is_a?(Hash) ? step["name"] : step}"
+      end
+    end
+    rehearsal = jobs[CI_GORELEASER_JOB]
+    if rehearsal.is_a?(Hash) && Array(rehearsal["steps"]).include?(CI_GORELEASER_STEPS[CI_GORELEASER_JOB])
+      unless rehearsal["defaults"] == CI_GORELEASER_JOB_DEFAULTS
+        errors << "#{relative} job #{CI_GORELEASER_JOB} must keep defaults.run.working-directory: youtrack-agent-cli"
+      end
+    end
   end
   walk = lambda do |value, nested_permissions = false|
     case value
