@@ -301,7 +301,12 @@ func resolveOperatorField(ctx context.Context, client *youtrack.Client, projectI
 				return youtrack.ProjectField{}, err
 			}
 			if len(fields) > 100 {
-				return youtrack.ProjectField{}, errx.Conflict("OPERATOR_SCHEMA_TRUNCATED", "bounded field lookup is truncated").WithHint("use exact --field-id and --value-id")
+				// --clear-value takes no --value-id, so its exact retry differs.
+				hint := "use exact --field-id and --value-id"
+				if selection.Clear {
+					hint = "use exact --field-id with --clear-value"
+				}
+				return youtrack.ProjectField{}, errx.Conflict("OPERATOR_SCHEMA_TRUNCATED", "bounded field lookup is truncated").WithHint("%s", hint)
 			}
 			*listed = fields
 		}

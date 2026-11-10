@@ -535,3 +535,33 @@ func TestValidateOperatorTargetRefusesClearOnCreate(t *testing.T) {
 	err := validateOperatorTarget(operatorwrite.KindIssueCreate, OperatorSnapshotInput{Kind: "issue.create", ProjectID: "0-3", Fields: []OperatorFieldSelection{{FieldName: "Stage", Clear: true}}})
 	requireRefusal(t, err, "USAGE", errx.CodeUsage)
 }
+
+func TestOperatorTruncatedFieldLookupHintMatchesTheSelection(t *testing.T) {
+	tests := []struct {
+		name   string
+		fields []OperatorFieldSelection
+		hint   string
+	}{
+		{"clear by name", []OperatorFieldSelection{{FieldName: "Assignee", Clear: true}}, "use exact --field-id with --clear-value"},
+		{"set by name", userSet("bob"), "use exact --field-id and --value-id"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			f := newOperatorFixture(t)
+			f.useUserField(currentBob, true, defaultUsers())
+			entries := make([]string, 101)
+			for index := range entries {
+				entries[index] = f.schema
+			}
+			f.mu.Lock()
+			f.fieldList = "[" + strings.Join(entries, ",") + "]"
+			f.mu.Unlock()
+			_, err := f.snapshotUpdate(t, test.fields)
+			requireRefusal(t, err, "OPERATOR_SCHEMA_TRUNCATED", errx.CodeConflict)
+			var typed *errx.Error
+			if !errors.As(err, &typed) || typed.Hint != test.hint {
+				t.Fatalf("hint=%q, want %q", typed.Hint, test.hint)
+			}
+		})
+	}
+}
