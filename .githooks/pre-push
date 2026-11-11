@@ -57,7 +57,9 @@ gate_tree() {
   # The agent harness is compiled, not hand-written. A drifted mirror means the
   # canonical .agents/ inputs changed without recompiling.
   local python_bin="${AGENT_HARNESS_PYTHON:-python3}"
-  if [ -d .agents ] && "$python_bin" -c 'pass' >/dev/null 2>&1; then
+  if [ -d .agents ]; then
+    "$python_bin" -c 'pass' >/dev/null 2>&1 \
+      || fail "$label: .agents needs a working $python_bin (set AGENT_HARNESS_PYTHON) to run the harness checks"
     echo "pre-push: $label: agent harness"
     "$python_bin" .agents/scripts/sync-rules.py --check || fail "Cursor rule mirrors are out of sync"
     "$python_bin" -m unittest discover -s .agents/tests -p 'test_*.py' -q \
@@ -79,13 +81,15 @@ gate_tree() {
 check_provider_mirrors() {
   local commit=$1 python_bin="${AGENT_HARNESS_PYTHON:-python3}" tip_agents head_agents
   tip_agents=$(git rev-parse --verify "${commit}:.agents" 2>/dev/null || true)
-  [ -n "$tip_agents" ] || return 0
   head_agents=$(git rev-parse --verify 'HEAD:.agents' 2>/dev/null || true)
+  [ -n "$tip_agents$head_agents" ] || return 0
   [ "$tip_agents" = "$head_agents" ] \
     || fail "${commit:0:12}: .agents differs from the checked-out HEAD, so the provider mirrors cannot be verified; check this branch out and push it"
   # The compiler reads the working tree, so it must equal HEAD's .agents.
-  git diff --quiet HEAD -- .agents && [ -z "$(git ls-files --others --exclude-standard -- .agents)" ] \
-    || fail ".agents has uncommitted changes; commit or discard them before pushing"
+  local untracked
+  git diff --quiet HEAD -- .agents || fail ".agents has uncommitted changes; commit or discard them before pushing"
+  untracked=$(git ls-files --others --exclude-standard -- .agents) || fail "cannot inspect untracked files under .agents"
+  [ -z "$untracked" ] || fail ".agents has untracked files; commit or discard them before pushing"
   [ -d .agents ] && "$python_bin" -c 'pass' >/dev/null 2>&1 || return 0
   local global_compiler="${HOME}/.agents/compiler.py"
   if [ -f "$global_compiler" ]; then

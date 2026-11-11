@@ -28,7 +28,8 @@ SHIM
 chmod +x "$work/bin/go"
 export GO_LOG="$work/go.log"
 export PATH="$work/bin:$PATH"
-export AGENT_HARNESS_PYTHON=false
+# `true` accepts any arguments, so the harness steps run as no-ops.
+export AGENT_HARNESS_PYTHON=true
 
 cd "$work/repo"
 git init -q -b main
@@ -83,14 +84,14 @@ set -e
 if PATH="/usr/bin:/bin" command -v go >/dev/null 2>&1; then echo "skip delete-without-go (go in /usr/bin)"; else check "deletion needs no go or tmp" 0 "$status"; fi
 
 # A pushed commit must not run its own checkout hooks.
-mkdir -p .hooks-evil
-printf '#!/bin/sh\necho evil >mod_a/evil.txt\n' >.hooks-evil/post-checkout
-chmod +x .hooks-evil/post-checkout
-git config core.hooksPath .hooks-evil
+mkdir -p "$work/hooks-evil"
+printf '#!/bin/sh\necho evil >mod_a/evil.txt\n' >"$work/hooks-evil/post-checkout"
+chmod +x "$work/hooks-evil/post-checkout"
+git config core.hooksPath "$work/hooks-evil"
 run <<<"refs/heads/x $good refs/heads/x $zero"
 check "checkout hooks do not run" 0 "$status"
 git config --unset core.hooksPath
-rm -rf .hooks-evil
+rm -rf "$work/hooks-evil"
 
 run <<<"refs/heads/x $(printf 'f%.0s' {1..40}) refs/heads/x $zero"
 check "unresolvable sha fails closed" 1 "$status"
@@ -129,6 +130,16 @@ echo three >.agents/r.md
 run <<<"refs/heads/x $(git rev-parse HEAD) refs/heads/x $zero"
 check "uncommitted .agents changes fail closed" 1 "$status"
 git checkout -q -- .agents/r.md
+AGENT_HARNESS_PYTHON=false run <<<"refs/heads/x $(git rev-parse HEAD) refs/heads/x $zero"
+check "an unusable harness python fails closed" 1 "$status"
+with_agents=$(git rev-parse HEAD)
+git rm -rq .agents && git commit -qm noagents
+without_agents=$(git rev-parse HEAD)
+git checkout -q "$with_agents"
+run <<<"refs/heads/x $without_agents refs/heads/x $zero"
+check "a tip dropping .agents fails closed" 1 "$status"
+git checkout -q main
+git reset -q --hard "$with_agents"
 
 # Cleanup must not prune worktrees the hook does not own.
 git worktree add -q --detach "$work/other" HEAD
