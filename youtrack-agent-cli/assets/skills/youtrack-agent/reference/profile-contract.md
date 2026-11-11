@@ -48,7 +48,8 @@ capabilities. `capabilities --profile NAME -o json` reports local readiness,
 not server rights. Native-presence approval is a different, unavailable mode.
 
 Capabilities use canonical order `read`, `issue-create`, `issue-update`,
-`comment-add`, `comment-delete`, `issue-edit`, `issue-link`, omitting unneeded write kinds. Deletion,
+`comment-add`, `comment-delete`, `issue-edit`, `issue-link` (after `issue-edit`, and after
+`issue-create-user-fields` where that capability exists), omitting unneeded write kinds. Deletion,
 summary/description editing and issue linking are explicit opt-ins. Adding any changes profile identity and invalidates old
 credential/policy/default bindings; re-authenticate and explicitly re-establish
 the exact project allowlist and any stale saved selection with operator

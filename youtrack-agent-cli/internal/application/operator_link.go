@@ -373,7 +373,14 @@ func observeIssueLink(ctx context.Context, client *youtrack.Client, snapshot ope
 	for _, frozen := range []operatorwrite.Issue{snapshot.Issue, link.Target} {
 		issue, err := client.GetIssue(ctx, frozen.ID)
 		if err != nil {
-			return "", err
+			switch errx.ExitCode(err) {
+			case errx.CodeAuth, errx.CodePermission, errx.CodeNotFound:
+				// A deleted or inaccessible issue cannot show the link and
+				// proves neither application nor non-application of the POST.
+				return "linked_issue_unavailable", nil
+			default:
+				return "", err
+			}
 		}
 		if issue.Project.ID != frozen.ProjectID || issue.Project.ShortName != frozen.ProjectKey {
 			return "", errx.Conflict("OPERATOR_PROJECT_CHANGED", "a linked issue moved from its frozen project")
@@ -381,11 +388,13 @@ func observeIssueLink(ctx context.Context, client *youtrack.Client, snapshot ope
 	}
 	issues, err := client.ListLinkedIssues(ctx, snapshot.Issue.ID, link.LinkID, youtrack.PageOptions{Top: limit + 1, Skip: offset})
 	if err != nil {
-		if errx.ExitCode(err) == errx.CodeNotFound {
-			// A vanished entry cannot show the link.
+		switch errx.ExitCode(err) {
+		case errx.CodeAuth, errx.CodePermission, errx.CodeNotFound:
+			// A vanished or inaccessible entry cannot show the link.
 			return "inconclusive", nil
+		default:
+			return "", err
 		}
-		return "", err
 	}
 	if len(issues) > limit {
 		issues = issues[:limit]

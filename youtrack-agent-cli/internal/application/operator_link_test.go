@@ -262,7 +262,7 @@ func TestOperatorIssueLinkPrepareIsOfflineAndDigestMismatchPrecedesCredentials(t
 	}
 }
 
-func TestOperatorIssueLinkRemovedTargetProjectIsRefusedByApplyAndReconcile(t *testing.T) {
+func TestOperatorIssueLinkRemovedTargetProjectIsRefusedByApplyAndUnresolvedReconcile(t *testing.T) {
 	removeOPS := func(t *testing.T, f *linkFixture) {
 		t.Helper()
 		selected, err := f.service.Profiles.Get(t.Context(), "work")
@@ -287,7 +287,7 @@ func TestOperatorIssueLinkRemovedTargetProjectIsRefusedByApplyAndReconcile(t *te
 			t.Fatalf("posts=%d requests=%d status=%#v %v", f.postCount(), f.requestCount()-before, status, statusErr)
 		}
 	})
-	t.Run("reconcile", func(t *testing.T) {
+	t.Run("unresolved reconcile", func(t *testing.T) {
 		f := newLinkFixture(t)
 		plan := f.prepare(t, nil)
 		if _, err := f.service.OperatorWrites.Claim(t.Context(), plan.PlanID, plan.IntentSHA256, f.service.currentTime()); err != nil {
@@ -303,6 +303,33 @@ func TestOperatorIssueLinkRemovedTargetProjectIsRefusedByApplyAndReconcile(t *te
 			t.Fatalf("reconcile reached the server: %d new requests", f.requestCount()-before)
 		}
 	})
+}
+
+// A terminal record returns its preserved local outcome for every kind, with
+// no policy check, credential access or network request, so removing a project
+// from the allowlist does not change a verified result.
+func TestOperatorIssueLinkAppliedRecordReconcilesOfflineAfterProjectLeavesPolicy(t *testing.T) {
+	f := newLinkFixture(t)
+	plan := f.prepare(t, nil)
+	applied, err := f.apply(t, plan)
+	if err != nil || applied.State != string(operatorwrite.StateApplied) || f.postCount() != 1 {
+		t.Fatalf("apply=%#v err=%v posts=%d", applied, err, f.postCount())
+	}
+	selected, err := f.service.Profiles.Get(t.Context(), "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.Policies.Set(t.Context(), selected, []writepolicy.Project{{ID: "0-3", Key: "APP"}}); err != nil {
+		t.Fatal(err)
+	}
+	before := f.requestCount()
+	result, err := f.service.ReconcileOperatorWrite(t.Context(), OperatorReconcileInput{Profile: "work", PlanID: plan.PlanID, Limit: 20})
+	if err != nil || result.State != string(operatorwrite.StateApplied) || result.Evidence != "verified_terminal_record_preserved" {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	if f.requestCount() != before || f.postCount() != 1 {
+		t.Fatalf("terminal reconcile reached the server: %d new requests, posts=%d", f.requestCount()-before, f.postCount())
+	}
 }
 
 func TestOperatorIssueLinkApplyDriftIsConflictWithZeroPostAndPlanUnconsumed(t *testing.T) {
@@ -481,6 +508,8 @@ func TestOperatorIssueLinkReconcileIsGETOnlyAndNeverProvesCausation(t *testing.T
 			f.entry("2-12", "105-1", "OUTWARD").issues = append(append([]string{}, fillers...), "2-19")
 		}, limit: 2, offset: 2, wantEvidence: "desired_link_observed_without_causal_proof"},
 		{name: "entry vanished", setup: func(f *linkFixture, _ []string) { f.entries["2-12"] = nil }, limit: 20, wantEvidence: "inconclusive"},
+		{name: "target deleted after unknown POST", setup: func(f *linkFixture, _ []string) { delete(f.issues, "2-19") }, limit: 20, wantEvidence: "linked_issue_unavailable"},
+		{name: "source deleted after unknown POST", setup: func(f *linkFixture, _ []string) { delete(f.issues, "2-12") }, limit: 20, wantEvidence: "linked_issue_unavailable"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

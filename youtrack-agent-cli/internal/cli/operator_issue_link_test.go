@@ -29,6 +29,17 @@ func TestIssueLinkCLISnapshotRoutingAndConflicts(t *testing.T) {
 		{"direction on issue.update", []string{"--kind", "issue.update", "--id", "APP-12", "--field", "Stage", "--value", "Done", "--direction", "depends on"}, errx.CodeUsage, "USAGE"},
 		{"link type on comment.add", []string{"--kind", "comment.add", "--id", "APP-12", "--link-type", "Depend"}, errx.CodeUsage, "USAGE"},
 		{"link type id on issue.create", []string{"--kind", "issue.create", "--project", "APP", "--link-type-id", "105-1"}, errx.CodeUsage, "USAGE"},
+		{"empty project on issue.link", with("--project", ""), errx.CodeUsage, "USAGE"},
+		{"empty comment id on issue.link", with("--comment-id", ""), errx.CodeUsage, "USAGE"},
+		{"empty field on issue.link", with("--field", ""), errx.CodeUsage, "USAGE"},
+		{"empty value id on issue.link", with("--value-id", ""), errx.CodeUsage, "USAGE"},
+		{"clear value false on issue.link", with("--clear-value=false"), errx.CodeUsage, "USAGE"},
+		{"link type with empty link type id", with("--link-type-id", ""), errx.CodeUsage, "USAGE"},
+		{"link type id with empty link type", []string{"--kind", "issue.link", "--id", "APP-12", "--target-id", "OPS-7", "--link-type", "", "--link-type-id", "105-1", "--direction", "depends on"}, errx.CodeUsage, "USAGE"},
+		{"empty target id on issue.edit", []string{"--kind", "issue.edit", "--id", "APP-12", "--target-id", ""}, errx.CodeUsage, "USAGE"},
+		{"empty link type on issue.update", []string{"--kind", "issue.update", "--id", "APP-12", "--field", "Stage", "--value", "Done", "--link-type", ""}, errx.CodeUsage, "USAGE"},
+		{"empty link type id on comment.add", []string{"--kind", "comment.add", "--id", "APP-12", "--link-type-id", ""}, errx.CodeUsage, "USAGE"},
+		{"empty direction on comment.delete", []string{"--kind", "comment.delete", "--id", "APP-12", "--comment-id", "4-1", "--direction", ""}, errx.CodeUsage, "USAGE"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

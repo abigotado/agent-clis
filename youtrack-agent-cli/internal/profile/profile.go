@@ -302,13 +302,13 @@ func ValidateCapabilities(capabilities []Capability) error {
 	order := map[Capability]int{
 		CapabilityRead: 0, CapabilityIssueCreate: 1,
 		CapabilityIssueUpdate: 2, CapabilityCommentAdd: 3,
-		CapabilityCommentDelete: 4, CapabilityIssueEdit: 5, CapabilityIssueLink: 6,
+		CapabilityCommentDelete: 4, CapabilityIssueEdit: 5, CapabilityIssueLink: 7,
 	}
 	previous := -1
 	for _, capability := range capabilities {
 		position, ok := order[capability]
 		if !ok || position <= previous {
-			return invalid("capabilities must be a unique canonical subset ordered read, issue-create, issue-update, comment-add, comment-delete, issue-edit, issue-link")
+			return invalid("capabilities must be a unique canonical subset ordered read, issue-create, issue-update, comment-add, comment-delete, issue-edit, issue-link (issue-link after issue-edit, and after issue-create-user-fields where that capability exists)")
 		}
 		previous = position
 	}
@@ -405,7 +405,8 @@ func capabilityRank(value Capability) int {
 	case CapabilityIssueEdit:
 		return 5
 	case CapabilityIssueLink:
-		return 6
+		// Rank 6 belongs to issue-create-user-fields on a parallel branch.
+		return 7
 	default:
 		return 100
 	}

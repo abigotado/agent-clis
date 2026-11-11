@@ -28,7 +28,7 @@ func TestIssueLinkCapabilityIsExplicitAndCanonical(t *testing.T) {
 			}
 		})
 	}
-	if capabilityRank(CapabilityIssueLink) != 6 || capabilityRank(CapabilityIssueEdit) != 5 {
+	if capabilityRank(CapabilityIssueLink) != 7 || capabilityRank(CapabilityIssueEdit) != 5 {
 		t.Fatalf("ranks link=%d edit=%d", capabilityRank(CapabilityIssueLink), capabilityRank(CapabilityIssueEdit))
 	}
 }
@@ -56,5 +56,35 @@ func TestIssueLinkCapabilityRequiresExplicitProfileChange(t *testing.T) {
 	}
 	if CredentialIdentity(withEdit) == CredentialIdentity(link) || SelectionIdentity(withEdit) == SelectionIdentity(link) {
 		t.Fatal("identity did not bind the explicit issue-link grant")
+	}
+}
+
+func TestEveryCapabilityHasADistinctCanonicalRank(t *testing.T) {
+	canonical := []Capability{
+		CapabilityRead, CapabilityIssueCreate, CapabilityIssueUpdate, CapabilityCommentAdd,
+		CapabilityCommentDelete, CapabilityIssueEdit, CapabilityIssueLink,
+	}
+	seen := map[int]Capability{}
+	previous := -1
+	for _, capability := range canonical {
+		t.Run(string(capability), func(t *testing.T) {
+			rank := capabilityRank(capability)
+			if rank >= 100 {
+				t.Fatalf("capabilityRank(%q) = %d, the unknown-capability rank", capability, rank)
+			}
+			if other, dup := seen[rank]; dup {
+				t.Fatalf("capabilityRank(%q) = %d duplicates %q", capability, rank, other)
+			}
+			if rank <= previous {
+				t.Fatalf("capabilityRank(%q) = %d does not exceed the previous rank %d", capability, rank, previous)
+			}
+			seen[rank], previous = capability, rank
+		})
+	}
+	if err := ValidateCapabilities(canonical); err != nil {
+		t.Fatalf("ValidateCapabilities(canonical order) = %v", err)
+	}
+	if capabilityRank(Capability("unknown")) < previous {
+		t.Fatal("an unknown capability ranks below a known one")
 	}
 }

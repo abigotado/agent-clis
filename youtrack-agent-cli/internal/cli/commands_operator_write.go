@@ -120,10 +120,22 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 		if input.Kind == "issue.edit" && (len(fieldNames) != 0 || len(valueNames) != 0 || len(fieldIDs) != 0 || len(valueIDs) != 0 || input.ProjectID != "" || input.CommentID != "") {
 			return errx.Usage("issue.edit snapshot takes only --id and --out; no field, value, --project, or --comment-id")
 		}
-		if input.Kind == "issue.link" && (len(fieldNames) != 0 || len(valueNames) != 0 || len(fieldIDs) != 0 || len(valueIDs) != 0 || clearValue || input.ProjectID != "" || input.CommentID != "") {
+		// Presence, not value: an explicitly passed empty flag is still a selector.
+		changed := func(names ...string) bool {
+			for _, name := range names {
+				if cmd.Flags().Changed(name) {
+					return true
+				}
+			}
+			return false
+		}
+		if input.Kind == "issue.link" && changed("field", "value", "field-id", "value-id", "clear-value", "project", "comment-id") {
 			return errx.Usage("issue.link snapshot takes only --id, --target-id, a link type, --direction, and --out; no field, value, --project, or --comment-id")
 		}
-		if input.Kind != "issue.link" && (input.TargetID != "" || input.LinkType != "" || input.LinkTypeID != "" || input.Direction != "") {
+		if input.Kind == "issue.link" && changed("link-type") && changed("link-type-id") {
+			return errx.Usage("issue.link snapshot takes exactly one of --link-type and --link-type-id")
+		}
+		if input.Kind != "issue.link" && changed("target-id", "link-type", "link-type-id", "direction") {
 			return errx.Usage("--target-id, --link-type, --link-type-id, and --direction are accepted only with --kind issue.link")
 		}
 		fields, err := operatorFieldSelections(input.Kind, fieldNames, valueNames, fieldIDs, valueIDs, clearValue)

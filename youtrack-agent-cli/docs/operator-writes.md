@@ -301,7 +301,8 @@ fields show them on request.
 ## Linking issues
 
 `issue.link` adds one link between two existing issues. It needs a separately
-declared `issue-link` capability (canonical order: after `issue-edit`); no
+declared `issue-link` capability (canonical order: after `issue-edit`, and after
+`issue-create-user-fields` where that capability exists); no
 existing profile gains it, and adding it changes the credential identity, so log
 in again and set the project allowlist again before preparing a plan. Both
 issues' projects must be on the allowlist: a link to an issue in a project
@@ -330,7 +331,8 @@ directed type whose two phrases are identical is refused with
 `OPERATOR_LINK_DIRECTION_AMBIGUOUS` (exit 2). `--field`, `--value`,
 `--clear-value`, `--project` and `--comment-id` are usage errors (exit 2), and
 `--target-id`, `--link-type`, `--link-type-id` and `--direction` are usage
-errors with any other kind. The request is exactly `{"kind":"issue.link"}`.
+errors with any other kind. The request is `{"kind":"issue.link"}` with no other member; empty text members
+(`"summary":""`) are treated as absent, as for the other kinds.
 
 Snapshot reads, in bounded single pages after verifying the account: both
 issues, the link types (`GET /api/issueLinkTypes`, or the exact type by ID), the
@@ -346,7 +348,8 @@ exists is `OPERATOR_LINK_ALREADY_PRESENT` (exit 2, "nothing to change; do not
 retry unchanged"). For an aggregation type (Subtask) whose would-be child
 already has a parent, `OPERATOR_LINK_PARENT_EXISTS` (exit 2) refuses the link,
 because YouTrack silently replaces the parent otherwise and the old link would
-be lost.
+be lost. The guard is checked at snapshot and again inside the apply lock, but it
+is not atomic with the POST (see the remaining race below).
 
 Apply checks consent, digest and the two-project binding before credentials,
 then re-checks everything inside the final lock, before the durable claim and
@@ -359,7 +362,10 @@ timestamps are deliberately not compared. Any drift is `OPERATOR_ISSUE_STALE` or
 when the POST echoes exactly the target's database and readable IDs and reads
 then show both issues in their frozen projects and the target in the entry;
 anything else is `WRITE_OUTCOME_UNKNOWN`. Removing either project from the
-allowlist after prepare makes apply and reconcile refuse.
+allowlist after prepare makes apply refuse, and makes reconcile refuse whenever
+it needs remote reads. A record already applied, rejected or reconciled returns
+its preserved local outcome offline
+(`verified_terminal_record_preserved`) for every kind, without a policy check.
 
 Disclose before applying: a Duplicate link may trigger a workflow that resolves
 the source issue; a Subtask link sets the parent of the child; both issues'
@@ -367,11 +373,22 @@ watchers may be notified (`youtrack-default`). A concurrent identical link added
 between the in-lock check and the POST leaves the end state as requested and is
 recorded as applied. `capabilities` lists `issue.link`; the plan is v4.
 
+Remaining race: the checks run in the apply lock, but YouTrack has no
+conditional link add. If another actor gives the child a parent between the
+in-lock probe and the POST, YouTrack silently replaces that parent with the new
+Subtask link, and the CLI cannot detect it. `OPERATOR_LINK_PARENT_EXISTS` is
+therefore a guard against the state observed at snapshot and apply time, not
+against a concurrent reparent.
+
 Reconcile is one GET-only, bounded page (`--limit`, `--offset`) of the entry's
 issues. If the target is listed it reports `operator_resolution_required` with
 evidence `desired_link_observed_without_causal_proof`: the link may have been
 added by someone else. A missing or truncated observation is
-`operator_resolution_required` with evidence `inconclusive`. Reconcile never
+`operator_resolution_required` with evidence `inconclusive`. If either issue
+answers 404 or an authentication or permission refusal (deleted or no longer
+readable), the evidence is `linked_issue_unavailable`, again
+`operator_resolution_required`, and the record stays resolvable by the
+operator; it is not an error. Reconcile never
 POSTs and never restores eligibility; a moved issue is `OPERATOR_PROJECT_CHANGED`.
 
 ## Exact permanent comment deletion
