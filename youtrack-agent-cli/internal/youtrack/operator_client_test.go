@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -91,6 +92,68 @@ func TestOperatorExactReadsRejectInvalidReturnedShape(t *testing.T) {
 			}
 			if err == nil {
 				t.Fatal("unverified exact read succeeded")
+			}
+		})
+	}
+}
+
+func TestExactProjectFieldValidatesBundleByType(t *testing.T) {
+	const userField = `{"id":"92-1","$type":"UserProjectCustomField","project":{"id":"0-3"},"field":{"id":"42-1","name":"Assignee","fieldType":{"id":"user[1]","valueType":"user","isMultiValue":false,"$type":"FieldType"}},"canBeEmpty":true,"isPublic":true,"bundle":{"id":"100-1","$type":"UserBundle"%s}}`
+	owned := func(values string) string {
+		response := strings.Replace(exactProjectFieldJSON, `"$type":"StateBundle"`, `"$type":"OwnedBundle"`, 1)
+		return strings.Replace(response, `"values":[{"id":"101-1","name":"Open","archived":false,"$type":"StateBundleElement"}]`, values, 1)
+	}
+	tests := []struct {
+		name, response string
+		wantErr        bool
+		check          func(t *testing.T, field ProjectField)
+	}{
+		{name: "user bundle without values", response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"id":"1-5","login":"bob","banned":true}]`),
+			check: func(t *testing.T, field ProjectField) {
+				if len(field.Bundle.Values) != 0 || len(field.Bundle.AggregatedUsers) != 1 || !field.Bundle.AggregatedUsers[0].Banned || field.Bundle.AggregatedUsers[0].Login != "bob" {
+					t.Fatalf("bundle=%#v", field.Bundle)
+				}
+			}},
+		{name: "user bundle values lacking archived are ignored", response: fmt.Sprintf(userField, `,"values":[{"id":"1-5","login":"bob","$type":"User"}],"aggregatedUsers":[{"id":"1-5","login":"bob","banned":false}]`),
+			check: func(t *testing.T, field ProjectField) {
+				if len(field.Bundle.Values) != 0 || len(field.Bundle.AggregatedUsers) != 1 || field.Bundle.AggregatedUsers[0].Banned {
+					t.Fatalf("bundle=%#v", field.Bundle)
+				}
+			}},
+		{name: "user bundle without aggregated users", response: fmt.Sprintf(userField, ``)},
+		{name: "aggregated user without id", wantErr: true, response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"login":"bob","banned":false}]`)},
+		{name: "aggregated user with malformed id", wantErr: true, response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"id":"../bad","login":"bob","banned":false}]`)},
+		{name: "aggregated user with blank login", wantErr: true, response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"id":"1-5","login":"  ","banned":false}]`)},
+		{name: "aggregated user without login", wantErr: true, response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"id":"1-5","banned":false}]`)},
+		{name: "aggregated user without banned", wantErr: true, response: fmt.Sprintf(userField, `,"aggregatedUsers":[{"id":"1-5","login":"bob"}]`)},
+		{name: "state value missing archived", wantErr: true, response: strings.Replace(exactProjectFieldJSON, `"archived":false,`, "", 1)},
+		{name: "state value blank name", wantErr: true, response: strings.Replace(exactProjectFieldJSON, `"name":"Open"`, `"name":" "`, 1)},
+		{name: "enum value missing archived", wantErr: true, response: strings.Replace(strings.Replace(exactProjectFieldJSON, "StateBundle", "EnumBundle", 1), `"archived":false,`, "", 1)},
+		{name: "other bundle type with lax values", response: owned(`"values":[{"id":"101-1"},{"login":"x"}]`),
+			check: func(t *testing.T, field ProjectField) {
+				if field.Bundle.Type != "OwnedBundle" || len(field.Bundle.Values) != 0 || len(field.Bundle.AggregatedUsers) != 0 {
+					t.Fatalf("bundle=%#v", field.Bundle)
+				}
+			}},
+		{name: "other bundle type with non-array values", response: owned(`"values":"opaque"`)},
+		{name: "other bundle type still needs a valid bundle id", wantErr: true, response: strings.Replace(owned(`"values":[]`), `"id":"100-1"`, `"id":""`, 1)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(writer, test.response) }))
+			defer server.Close()
+			field, err := newTestClient(t, server).GetProjectField(context.Background(), "0-3", "92-1")
+			if test.wantErr {
+				if err == nil || errx.ExitCode(err) != errx.CodeInternal {
+					t.Fatalf("malformed response: err=%v code=%d", err, errx.ExitCode(err))
+				}
+				return
+			}
+			if err != nil || field.Bundle == nil {
+				t.Fatalf("field=%#v err=%v", field, err)
+			}
+			if test.check != nil {
+				test.check(t, field)
 			}
 		})
 	}
@@ -265,6 +328,39 @@ func TestUpdateIssueVerifiesTouchedFieldIdentityTypeAndValue(t *testing.T) {
 			}
 			if calls.Load() != 1 {
 				t.Fatalf("calls=%d", calls.Load())
+			}
+		})
+	}
+}
+
+func TestUpdateIssueVerifiesSingleUserNestedType(t *testing.T) {
+	const userType = "SingleUserIssueCustomField"
+	field := func(value string) string {
+		return `[{"id":"issue-field-1","name":"Assignee","$type":"` + userType + `","value":` + value + `}]`
+	}
+	tests := []struct {
+		name, expected, returned string
+		wantUnknown              bool
+	}{
+		{"user type matches", `{"id":"1-6"}`, field(`{"id":"1-6","login":"carol","$type":"User"}`), false},
+		{"group type contradicts", `{"id":"1-6"}`, field(`{"id":"1-6","$type":"Group"}`), true},
+		{"missing type", `{"id":"1-6"}`, field(`{"id":"1-6","login":"carol"}`), true},
+		{"user id mismatch", `{"id":"1-6"}`, field(`{"id":"1-7","$type":"User"}`), true},
+		{"non-object value", `{"id":"1-6"}`, field(`"carol"`), true},
+		{"clear to null", `null`, field(`null`), false},
+		{"clear but still set", `null`, field(`{"id":"1-6","$type":"User"}`), true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				_, _ = io.WriteString(writer, strings.Replace(validIssueJSON("APP-12", "Summary"), `"customFields":[]`, `"customFields":`+test.returned, 1))
+			}))
+			defer server.Close()
+			_, err := newTestClient(t, server).UpdateIssue(context.Background(), UpdateIssueInput{IssueID: "2-12", ProjectID: "0-3", ProjectKey: "APP", CustomFields: []CustomFieldUpdate{{ID: "issue-field-1", Type: userType, Value: json.RawMessage(test.expected)}}})
+			if test.wantUnknown {
+				assertError(t, err, errx.CodeConflict, "WRITE_OUTCOME_UNKNOWN")
+			} else if err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

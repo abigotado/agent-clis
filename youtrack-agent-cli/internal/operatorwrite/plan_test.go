@@ -23,7 +23,7 @@ func testSnapshot(t *testing.T, kind Kind) Snapshot {
 			OAuthClientID: "cli", OAuthIssuerURL: "https://hub.example", OAuthAuthorizationEndpoint: "https://hub.example/api/rest/oauth2/auth", OAuthTokenEndpoint: "https://hub.example/api/rest/oauth2/token",
 			PolicySHA256: strings.Repeat("b", 64), PolicyRevision: 1}, Issue: Issue{ID: "2-3", ReadableID: "BGR-1073", ProjectID: "0-1", ProjectKey: "BGR", Updated: 100}}
 	if kind == KindIssueUpdate {
-		s.Field = &Field{IssueFieldID: "92-1", ProjectFieldID: "94-1", GlobalFieldID: "58-1", Name: "Stage", Type: "StateIssueCustomField", ProjectFieldType: "StateProjectCustomField", ValueType: "state", FieldTypeID: "state[1]", FieldTypeType: "FieldType", IsPublic: true, BundleID: "10-1", BundleType: "StateBundle", CurrentValue: &Value{ID: "20-1", Name: "Open", Type: "StateBundleElement"}, TargetValue: Value{ID: "20-2", Name: "PR Review", Type: "StateBundleElement"}}
+		s.Field = &Field{IssueFieldID: "92-1", ProjectFieldID: "94-1", GlobalFieldID: "58-1", Name: "Stage", Type: "StateIssueCustomField", ProjectFieldType: "StateProjectCustomField", ValueType: "state", FieldTypeID: "state[1]", FieldTypeType: "FieldType", IsPublic: true, BundleID: "10-1", BundleType: "StateBundle", CurrentValue: &Value{ID: "20-1", Name: "Open", Type: "StateBundleElement"}, TargetValue: &Value{ID: "20-2", Name: "PR Review", Type: "StateBundleElement"}}
 	}
 	return s
 }
@@ -57,7 +57,7 @@ func TestPrepareFrozenBoundedPlan(t *testing.T) {
 			if err := ValidatePlan(p); err != nil {
 				t.Fatal(err)
 			}
-			if p.Version != PlanVersion2 || !p.ExpiresAt.IsZero() || p.ConfirmationMode != ConfirmationMode || p.Notifications != Notifications {
+			if p.Version != PlanVersionFor(kind) || p.Version != map[Kind]int{KindIssueUpdate: PlanVersion4, KindCommentAdd: PlanVersion2}[kind] || !p.ExpiresAt.IsZero() || p.ConfirmationMode != ConfirmationMode || p.Notifications != Notifications {
 				t.Fatalf("incorrect plan metadata: %+v", p)
 			}
 			if kind == KindIssueUpdate {

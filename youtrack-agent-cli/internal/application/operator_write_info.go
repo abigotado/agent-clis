@@ -15,6 +15,9 @@ const (
 // or by immutable project-field and bundle-value IDs, never a mix.
 type OperatorFieldSelection struct {
 	FieldName, ValueName, FieldID, ValueID string
+	// Clear empties the field instead of selecting a value; it carries a field
+	// selector only.
+	Clear bool
 }
 
 // OperatorSnapshotInput selects an exact issue for issue.update/comment.add,
@@ -71,10 +74,7 @@ type OperatorWriteInfo struct {
 
 func operatorSnapshotInfo(snapshot operatorwrite.Snapshot) OperatorWriteInfo {
 	projectID, projectKey := snapshot.ProjectRef()
-	version := operatorwrite.PlanVersion2
-	if snapshot.Kind == operatorwrite.KindCommentDelete {
-		version = operatorwrite.PlanVersion3
-	}
+	version := operatorwrite.PlanVersionFor(snapshot.Kind)
 	result := OperatorWriteInfo{PlanVersion: version, PlanLifetime: operatorwrite.PlanLifetime(version),
 		State: "snapshot", Kind: string(snapshot.Kind), ConfirmationMode: operatorwrite.ConfirmationMode, Notifications: operatorwrite.Notifications,
 		Profile: snapshot.Binding.ProfileName, Instance: snapshot.Binding.InstanceURL, AccountID: snapshot.Binding.AccountID,

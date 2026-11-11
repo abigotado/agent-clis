@@ -37,7 +37,7 @@ wins and `internal/errx` is the thing that gets fixed.
   takes the largest bump the series allows — minor while `0.x`, major from
   `1.0.0`. The reverse does not hold: renaming a flag breaks the command
   contract and leaves `v` untouched.
-- The envelope key set is pinned by `TestEnvelopeKeySetIsPinned` in
+- The envelope key set is pinned by `TestJSONEnvelopeKeySetsArePinned` in
   `internal/output`. It fails on any rename, removal, or addition, so an
   envelope change cannot happen by accident: editing that list is the moment to
   decide about `v`.
@@ -145,6 +145,25 @@ Two hazards that are easy to reintroduce:
   Deletion alone uses plan v3; historical kinds retain v1/v2 bytes and hashes.
   Show the full frozen comment as untrusted data. Consume before one DELETE;
   reconciliation is GET-only and absence/404 never proves hard deletion.
+- `operator-write snapshot --clear-value` (additive) empties one field of an
+  `issue.update`; it takes exactly one field selector and never `--value` or
+  `--value-id`. Single-user fields are set by exact login (`--value`) or ID
+  (`--value-id`). `issue.update` plans are `plan_version` 4; previously prepared v2
+  `issue.update` plans stay accepted but cannot carry user fields or a null
+  `target_value` (v3 is `comment.delete` only).
+- Operator-write refusals with exit 2 carry stable `error.code` values
+  `OPERATOR_FIELD_UNSUPPORTED`, `OPERATOR_FIELD_REQUIRED`,
+  `OPERATOR_FIELD_ALREADY_EMPTY` and `OPERATOR_FIELD_ALREADY_SET`.
+  `OPERATOR_FIELD_UNSUPPORTED` replaces the former `USAGE` `error.code` for
+  unsupported field schemas (exit stays 2; the hint changed): callers matching
+  `error.code == "USAGE"` for this case must migrate.
+- Apply-time re-freeze refusals for `issue.update` now all report `error.code`
+  `OPERATOR_FIELD_STALE` at exit 9. Cases that previously reported
+  `OPERATOR_FIELD_VALUE_INVALID`, `OPERATOR_BUNDLE_INVALID` or
+  `OPERATOR_FIELD_MAPPING_INVALID` at exit 9 changed code with the same exit;
+  cases that previously exited 2 moved to 9. A stored plan whose target already
+  equals the current value is now refused at apply as `OPERATOR_FIELD_STALE`
+  instead of sending a no-op POST.
 - `capabilities` describes local configuration, not Keychain availability or
   verified server permissions.
 

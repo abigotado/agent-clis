@@ -6,7 +6,7 @@ Status: accepted decision. Source support is not an installed release; check
 ## Decision and threat model
 
 The standard macOS CLI has a distinct `operator-write` path for one single-value
-state/enum field update, one public comment addition, one exact permanent
+state/enum or single-user field update (set or clear), one public comment addition, one exact permanent
 comment deletion, or one new issue in an allowlisted project. An operator authorizes the exact change; the agent binds that consent
 to the stored plan with `--confirm-intent SHA256 --yes`. An explicit request
 with a complete target and payload is already authorization for that operation,
@@ -107,17 +107,54 @@ be applied as a stored plan.
 Direct `--field-id PROJECT_FIELD_ID --value-id VALUE_ID` avoids name discovery.
 Name resolution is one bounded page and refuses ambiguity or truncation. Exact
 schema retrieval cross-checks issue-field, project-field and global prototype IDs;
-they are not interchangeable. Only single state/enum fields are supported. Current
-null requires `canBeEmpty`; the selected target must be a known nonarchived value.
-Only touched schema is frozen, not the whole project. This follows
+they are not interchangeable. Supported fields are single state/enum fields and
+single user fields (for example Assignee). Current
+null requires `canBeEmpty`; the selected state/enum target must be a known
+nonarchived value. Only touched schema is frozen, not the whole project. This follows
 [JetBrains' custom-field contract](https://www.jetbrains.com/help/youtrack/devportal/api-how-to-update-custom-fields-values.html).
+
+### User fields and clearing
+
+A single user field (`SingleUserIssueCustomField`, `UserBundle`) is set with
+`--value LOGIN` (exact login, matched against the field's bundle users) or
+`--value-id USER_ID`; a banned or ambiguous target is refused. `--clear-value`
+(only `--kind issue.update`, exactly one `--field`/`--field-id`, never with
+`--value`/`--value-id`) empties the field; it requires `canBeEmpty` and a
+currently set value. `--value ""` still means "no selector", never clear. A
+user value freezes only `id`, `login` and type (no name or email), and the
+current holder need not still be in the bundle. The plan's `target_value` is
+`null` for a clear; the key is always present. Dispatch sends `{"id":...}` for a
+user and `null` for a clear.
+
+Refusals, all exit 2 with a distinct `error.code`: `OPERATOR_FIELD_UNSUPPORTED`
+(field schema the CLI cannot write; it replaces the former `USAGE` `error.code`,
+exit stays 2, the hint changed),
+`OPERATOR_FIELD_REQUIRED` (clear on a field that cannot be empty),
+`OPERATOR_FIELD_ALREADY_EMPTY` (clear on an empty field) and
+`OPERATOR_FIELD_ALREADY_SET` (target equals the current value). Do not retry
+these unchanged.
+
+Changing an assignee can notify a third party, and profiles with the
+`issue-update` capability gain this authority: they previously could not touch
+user fields. Review the profile's capabilities before relying on it.
+
+Contract change: all refusals from the apply-time re-freeze of the field for
+`issue.update` (for example an archived target) now report `error.code`
+`OPERATOR_FIELD_STALE` with exit 9 (conflict, re-read). Cases that previously
+reported `OPERATOR_FIELD_VALUE_INVALID`, `OPERATOR_BUNDLE_INVALID` or
+`OPERATOR_FIELD_MAPPING_INVALID` at exit 9 changed code with the same exit;
+cases that previously exited 2 moved to exit 9. A stored plan whose target
+already equals the current value is now refused at apply as
+`OPERATOR_FIELD_STALE` instead of sending a no-op POST. Errors from reading the issue or project
+field pass through unchanged. The `inspect schema` request now also asks for
+`banned` on `aggregatedUsers`; its output is unchanged.
 
 Snapshots bind account/profile, immutable issue/project identity, current state
 and selected field/target. Plans additionally bind credential generation, current
 policy revision/hash, final payload/marker and notification policy. Offline
 prepare requires a snapshot less than 15 minutes old: perform snapshot and
 prepare consecutively before waiting for any necessary human review. Newly
-prepared **plan schemas v2 and v3 have no wall-clock expiry**, so the same plan ID,
+prepared **plan schemas v2, v3 and v4 have no wall-clock expiry**, so the same plan ID,
 marker and digest survive a delayed response. Offline prepare never accesses
 credentials, OAuth, browser, DNS or sockets. Apply validates consent, hash and local bindings before credentials,
 then verifies fresh account/remote preconditions. It consumes the local attempt
@@ -125,18 +162,22 @@ before dispatch and never restores it.
 
 ### Lifetime, compatibility and consent boundaries
 
-`capabilities` advertises the highest supported `plan_version: 3` and
-`plan_lifetime: until_consumed_or_stale`; its `plan_versions` map reports v2 for
-the existing operations and v3 for deletion. Plan/status/apply results report
-their actual plan version/lifetime. V2/v3 default JSON/raw results and serialized plans
+`capabilities` advertises the highest supported `plan_version: 4` and
+`plan_lifetime: until_consumed_or_stale`; its `plan_versions` map reports v4 for
+`issue.update` (previously prepared v2 `issue.update` plans are still accepted but cannot carry
+user fields or a null target), v2 for creation and comment addition, and v3 for deletion. Plan/status/apply results report
+their actual plan version/lifetime. V2/v3/v4 default JSON/raw results and serialized plans
 omit `expires_at`. An explicit `--fields expires_at` projection retains the
-existing selectable field vocabulary and returns an empty string for v2/v3; use
+existing selectable field vocabulary and returns an empty string for v2/v3/v4; use
 `plan_version` and `plan_lifetime`, not that empty string, to select the policy.
 The unchanged `source`/lane name `operator-write-v1` identifies the operator
 storage namespace, not the nested plan schema or JSON envelope version.
 
-Existing operations continue to prepare v2 plans. V1/v2 bytes and hashes are
-preserved, and both versions reject deletion; v3 accepts only `comment.delete`.
+New `issue.update` plans are v4; creation and comment addition continue to
+prepare v2 plans. V1/v2 bytes and hashes are preserved, v2 plans remain
+accepted and appliable, and both versions reject deletion; v3 accepts only
+`comment.delete` and v4 only `issue.update`. Only v4 can encode a User field or
+an explicit `null` target (clear); v1-v3 plans refuse both.
 Legacy plan schema v1 retains its exact bytes, digest, 15-minute expiry and
 claim validation; its results report `legacy_time_limited` and the original
 `expires_at`. Upgrading never migrates, extends or revives those plans. An old
@@ -152,13 +193,13 @@ replacement plan. Deliberately creating equivalent new plans is still not
 deduplicated across plan IDs. Unknown or consumed attempts never authorize a
 fresh equivalent plan or retry.
 
-Prepared v2/v3 plans remain in private local storage until consumed or made stale;
+Prepared v2/v3/v4 plans remain in private local storage until consumed or made stale;
 there is no new cancel command or automatic cleanup. A user cancellation must
 be honored by the cooperating agent; it does not cryptographically revoke a
 plan for another process. Changing the bound credential generation or project
 policy invalidates applicability through existing checks. This lane still
 does not resist a malicious same-user process or disk rollback. A clock before
-`created_at` is refused, even for v2/v3. Native receipt TTLs and the unavailable
+`created_at` is refused, even for v2/v3/v4. Native receipt TTLs and the unavailable
 native `mutation` authority path are unchanged.
 
 ## Issue creation

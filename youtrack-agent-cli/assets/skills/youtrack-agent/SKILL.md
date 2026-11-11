@@ -8,8 +8,8 @@ description: Safely read named JetBrains YouTrack instances and perform explicit
 Use the standard `youtrack-agent-cli` for bounded reads and guarded mutations;
 it needs no connector. The YouTrack MCP connector may also be used for reads and
 writes, with no separate permission question about the tool, and the CLI need
-not be tried first. Pick whichever can do the job: for example, the CLI cannot
-set Assignee, an MCP write tool can. The portable and macOS identity editions
+not be tried first. Pick whichever can do the job: for example, links and tags
+need an MCP write tool, while the CLI can set or clear Assignee. The portable and macOS identity editions
 remain Remote-MCP-only. Do not call YouTrack through model-authored `curl` or a
 generic REST client.
 

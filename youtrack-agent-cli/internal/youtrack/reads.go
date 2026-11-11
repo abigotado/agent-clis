@@ -17,7 +17,7 @@ const (
 	projectFields       = "id,shortName,name,archived"
 	issueFields         = "id,idReadable,summary,description,project(id,shortName,name,archived),reporter(id,login,name,fullName),created,updated,commentsCount,customFields(id,name,$type,projectCustomField(id,field(id)),value(id,name,login,fullName,text,presentation,isResolved,$type))"
 	issueSummaryFields  = "id,idReadable,summary,project(id,shortName,name,archived),updated,customFields(name,$type,value(name,login))"
-	projectFieldFields  = "id,$type,field(id,name,fieldType(id,valueType,isMultiValue,$type)),canBeEmpty,isPublic,bundle(id,$type,values(id,name,localizedName,archived,$type),aggregatedUsers(id,login,name,fullName))"
+	projectFieldFields  = "id,$type,field(id,name,fieldType(id,valueType,isMultiValue,$type)),canBeEmpty,isPublic,bundle(id,$type,values(id,name,localizedName,archived,$type),aggregatedUsers(id,login,name,fullName,banned))"
 	commentFields       = "id,author(id,login,name,fullName),created,updated,deleted,text,visibility($type,permittedGroups(id,name),permittedUsers(id,name,login))"
 	commentDeleteFields = "id,issue(id),author(id,login),created,updated,deleted,pinned,text,visibility($type,permittedGroups(id,name),permittedUsers(id,name,login)),attachments(id)"
 )
@@ -81,11 +81,43 @@ type exactProjectFieldResponse struct {
 	} `json:"field"`
 	Bundle *struct {
 		Bundle
-		Values []struct {
-			BundleValue
-			Archived *bool `json:"archived"`
-		} `json:"values"`
+		// Values stay raw: only State and Enum bundles are interpreted, so a
+		// valid UserBundle or unsupported bundle type cannot fail the read.
+		Values json.RawMessage `json:"values"`
+		// AggregatedUsers shadows the embedded field so a missing banned flag
+		// is detectable: the write path must not treat it as not banned.
+		AggregatedUsers []struct {
+			User
+			Banned *bool `json:"banned"`
+		} `json:"aggregatedUsers"`
 	} `json:"bundle"`
+}
+
+// strictBundleValue is one State or Enum bundle element. Archived must be
+// present because the write path refuses archived targets.
+type strictBundleValue struct {
+	BundleValue
+	Archived *bool `json:"archived"`
+}
+
+// decodeStrictBundleValues validates the values of a State or Enum bundle.
+func decodeStrictBundleValues(raw json.RawMessage) ([]BundleValue, error) {
+	var decoded []strictBundleValue
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			return nil, invalidReadResponse()
+		}
+	}
+	values := make([]BundleValue, 0, len(decoded))
+	for _, value := range decoded {
+		if value.Archived == nil {
+			return nil, invalidReadResponse()
+		}
+		entry := value.BundleValue
+		entry.Archived = *value.Archived
+		values = append(values, entry)
+	}
+	return values, nil
 }
 
 // CurrentUser reads the authenticated account identity.
@@ -193,14 +225,30 @@ func (client *Client) GetProjectField(ctx context.Context, projectID, projectFie
 	field.Field.FieldType.IsMultiValue = *response.Field.FieldType.IsMultiValue
 	if response.Bundle != nil {
 		bundle := response.Bundle.Bundle
-		bundle.Values = make([]BundleValue, 0, len(response.Bundle.Values))
-		for _, value := range response.Bundle.Values {
-			if value.Archived == nil {
-				return ProjectField{}, invalidReadResponse()
+		bundle.Values = nil
+		switch bundle.Type {
+		case "StateBundle", "EnumBundle":
+			values, err := decodeStrictBundleValues(response.Bundle.Values)
+			if err != nil {
+				return ProjectField{}, err
 			}
-			entry := value.BundleValue
-			entry.Archived = *value.Archived
-			bundle.Values = append(bundle.Values, entry)
+			bundle.Values = values
+			bundle.AggregatedUsers = nil
+		case "UserBundle":
+			// A user bundle's membership is its aggregated users; the raw
+			// values (groups and users) are never interpreted.
+			bundle.AggregatedUsers = nil
+			for _, user := range response.Bundle.AggregatedUsers {
+				if user.Banned == nil {
+					return ProjectField{}, invalidReadResponse()
+				}
+				entry := user.User
+				entry.Banned = *user.Banned
+				bundle.AggregatedUsers = append(bundle.AggregatedUsers, entry)
+			}
+		default:
+			// Unsupported bundle types are refused by the caller, not here.
+			bundle.AggregatedUsers = nil
 		}
 		field.Bundle = &bundle
 	}
@@ -216,6 +264,11 @@ func (client *Client) GetProjectField(ctx context.Context, projectID, projectFie
 		}
 		for _, value := range field.Bundle.Values {
 			if !validEntityID(value.ID) || strings.TrimSpace(value.Name) == "" || validateTypeName(value.Type) != nil {
+				return ProjectField{}, invalidReadResponse()
+			}
+		}
+		for _, user := range field.Bundle.AggregatedUsers {
+			if !validEntityID(user.ID) || strings.TrimSpace(user.Login) == "" {
 				return ProjectField{}, invalidReadResponse()
 			}
 		}

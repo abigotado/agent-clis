@@ -33,11 +33,16 @@ type CapabilitiesInfo struct {
 // Capabilities reports build support and, optionally, one explicit profile's
 // non-secret local generation and current identity-bound policy.
 func (s *Service) Capabilities(ctx context.Context, name string) (CapabilitiesInfo, error) {
+	kinds := []operatorwrite.Kind{operatorwrite.KindIssueCreate, operatorwrite.KindIssueUpdate, operatorwrite.KindCommentAdd, operatorwrite.KindCommentDelete}
+	versions, highest := make(map[string]int, len(kinds)), 0
+	for _, kind := range kinds {
+		versions[string(kind)] = operatorwrite.PlanVersionFor(kind)
+		highest = max(highest, versions[string(kind)])
+	}
 	result := CapabilitiesInfo{Edition: "standard", OperatorWriteSupported: s.OperatorBackendSupported(),
-		ConfirmationMode: "operator_confirmed", PlanVersion: operatorwrite.PlanVersion3,
-		PlanLifetime: operatorwrite.PlanLifetime(operatorwrite.PlanVersion3),
-		PlanVersions: map[string]int{"issue.create": operatorwrite.PlanVersion2, "issue.update": operatorwrite.PlanVersion2, "comment.add": operatorwrite.PlanVersion2, "comment.delete": operatorwrite.PlanVersion3},
-		Kinds:        []string{}, ReadinessScope: "local_configuration_only"}
+		ConfirmationMode: "operator_confirmed", PlanVersion: highest,
+		PlanLifetime: operatorwrite.PlanLifetime(highest), PlanVersions: versions,
+		Kinds: []string{}, ReadinessScope: "local_configuration_only"}
 	if name == "" {
 		return result, nil
 	}

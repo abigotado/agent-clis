@@ -369,7 +369,7 @@ func (client *Client) UpdateIssue(ctx context.Context, input UpdateIssueInput) (
 				continue
 			}
 			matches++
-			if actual.Type != expected.Type || !customFieldValueMatches(expected.Value, actual.Value) {
+			if actual.Type != expected.Type || !customFieldValueMatches(expected.Type, expected.Value, actual.Value) {
 				return Issue{}, errx.WriteOutcomeUnknown("issue.update")
 			}
 		}
@@ -380,7 +380,11 @@ func (client *Client) UpdateIssue(ctx context.Context, input UpdateIssueInput) (
 	return result, nil
 }
 
-func customFieldValueMatches(expectedJSON, actualJSON json.RawMessage) bool {
+// singleUserFieldType is the only field type whose nested value type is
+// verified: an ID alone cannot distinguish a User from another entity kind.
+const singleUserFieldType = "SingleUserIssueCustomField"
+
+func customFieldValueMatches(fieldType string, expectedJSON, actualJSON json.RawMessage) bool {
 	var expected, actual any
 	expectedDecoder := json.NewDecoder(bytes.NewReader(expectedJSON))
 	expectedDecoder.UseNumber()
@@ -388,6 +392,12 @@ func customFieldValueMatches(expectedJSON, actualJSON json.RawMessage) bool {
 	actualDecoder.UseNumber()
 	if expectedDecoder.Decode(&expected) != nil || actualDecoder.Decode(&actual) != nil {
 		return false
+	}
+	if fieldType == singleUserFieldType && expected != nil {
+		actualEntity, ok := actual.(map[string]any)
+		if !ok || actualEntity["$type"] != "User" {
+			return false
+		}
 	}
 	return customFieldValueEqual(expected, actual)
 }

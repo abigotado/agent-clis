@@ -535,10 +535,10 @@ func TestOperatorCreateSnapshotRejectsFieldsThatCannotBeFrozen(t *testing.T) {
 		{"archived target value", createStageFields, func(s string) string {
 			return strings.Replace(s, `"name":"Done","$type":"StateBundleElement","archived":false`, `"name":"Done","$type":"StateBundleElement","archived":true`, 1)
 		}, "USAGE", errx.CodeUsage},
-		{"multi-value field", createStageFields, func(s string) string { return strings.Replace(s, `"isMultiValue":false`, `"isMultiValue":true`, 1) }, "USAGE", errx.CodeUsage},
+		{"multi-value field", createStageFields, func(s string) string { return strings.Replace(s, `"isMultiValue":false`, `"isMultiValue":true`, 1) }, "OPERATOR_FIELD_UNSUPPORTED", errx.CodeUsage},
 		{"unsupported project field type", createStageFields, func(s string) string {
 			return strings.Replace(s, "StateProjectCustomField", "SimpleProjectCustomField", 1)
-		}, "USAGE", errx.CodeUsage},
+		}, "OPERATOR_FIELD_UNSUPPORTED", errx.CodeUsage},
 		{"target value of the wrong bundle type", createStageFields, func(s string) string {
 			return strings.Replace(s, `"name":"Done","$type":"StateBundleElement"`, `"name":"Done","$type":"EnumBundleElement"`, 1)
 		}, "OPERATOR_FIELD_VALUE_INVALID", errx.CodeConflict},
