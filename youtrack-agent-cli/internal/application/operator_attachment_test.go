@@ -3,8 +3,10 @@ package application
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"hash/crc32"
 	"io"
 	"io/fs"
 	"mime"
@@ -26,8 +28,20 @@ import (
 
 const attachmentTokenSentinel = "perm:OPERATOR_ATTACHMENT_SENTINEL"
 
-// pngBytes is a minimal accepted PNG signature plus a distinguishing tail.
-func pngBytes(tail string) []byte { return append([]byte("\x89PNG\r\n\x1a\n"), tail...) }
+// pngBytes builds a structurally valid PNG (IHDR, a tEXt chunk carrying the distinguishing tail, IEND)
+// so the strict attachment type check accepts it.
+func pngBytes(tail string) []byte {
+	chunk := func(kind string, data []byte) []byte {
+		out := binary.BigEndian.AppendUint32(nil, uint32(len(data)))
+		out = append(out, kind...)
+		out = append(out, data...)
+		return binary.BigEndian.AppendUint32(out, crc32.ChecksumIEEE(out[4:]))
+	}
+	out := []byte("\x89PNG\r\n\x1a\n")
+	out = append(out, chunk("IHDR", []byte{0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0})...)
+	out = append(out, chunk("tEXt", []byte(tail))...)
+	return append(out, chunk("IEND", nil)...)
+}
 
 type uploadedPart struct {
 	Name, ContentType, PartName string

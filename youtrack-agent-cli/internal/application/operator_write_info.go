@@ -11,11 +11,11 @@ const (
 	MaxOperatorRequestBytes  = operatorwrite.MaxRequestBytes
 )
 
-// OperatorFieldSelection names one target field value either by exact names
-// or by immutable project-field and bundle-value IDs, never a mix.
 // OperatorAttachment is the frozen local file of an attachment.add plan.
 type OperatorAttachment = operatorwrite.Attachment
 
+// OperatorFieldSelection names one target field value either by exact names
+// or by immutable project-field and bundle-value IDs, never a mix.
 type OperatorFieldSelection struct {
 	FieldName, ValueName, FieldID, ValueID string
 	// Clear empties the field instead of selecting a value; it carries a field

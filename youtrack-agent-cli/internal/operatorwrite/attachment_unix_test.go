@@ -28,8 +28,8 @@ func TestReadAttachmentSource(t *testing.T) {
 		return path
 	}
 	regular := write("shot.png", pngBytes)
-	atCap := write("cap.png", append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, MaxAttachmentBytes-8)...))
-	overCap := write("big.png", append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, MaxAttachmentBytes-7)...))
+	atCap := write("cap.png", minimalPNGOfSize(MaxAttachmentBytes))
+	overCap := write("big.png", minimalPNGOfSize(MaxAttachmentBytes+1))
 	empty := write("empty.png", nil)
 	text := write("note.txt", []byte("plain text"))
 	link := filepath.Join(dir, "link.png")

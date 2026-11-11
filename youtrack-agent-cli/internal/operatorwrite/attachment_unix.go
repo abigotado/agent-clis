@@ -4,7 +4,7 @@ package operatorwrite
 
 import (
 	"context"
-	"fmt"
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 	"io"
 	"os"
 	"path/filepath"
@@ -22,13 +22,24 @@ import (
 // content hash, not the path, is the guard. No returned error carries the path.
 func ReadAttachmentSource(ctx context.Context, path string) (AttachmentSource, error) {
 	if err := ctx.Err(); err != nil {
-		return AttachmentSource{}, fmt.Errorf("read attachment source: %w", err)
+		return AttachmentSource{}, errx.Translate(err)
 	}
 	if path == "" {
 		return AttachmentSource{}, attachmentSourceInvalid("attachment source path is empty")
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil || !validAttachmentPath(abs) {
+		return AttachmentSource{}, attachmentSourceInvalid("attachment source path is not an acceptable absolute path")
+	}
+	// Resolve intermediate symlinks so the stored path names the real location
+	// the operator approves; the final component stays unresolved so a symlink
+	// there is refused by Lstat and O_NOFOLLOW.
+	parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		return AttachmentSource{}, attachmentSourceInvalid("attachment source cannot be inspected")
+	}
+	abs = filepath.Join(parent, filepath.Base(abs))
+	if !validAttachmentPath(abs) {
 		return AttachmentSource{}, attachmentSourceInvalid("attachment source path is not an acceptable absolute path")
 	}
 	var linked unix.Stat_t
@@ -71,7 +82,7 @@ func ReadAttachmentSource(ctx context.Context, path string) (AttachmentSource, e
 		return AttachmentSource{}, attachmentSourceInvalid("attachment source changed while reading")
 	}
 	if err := ctx.Err(); err != nil {
-		return AttachmentSource{}, fmt.Errorf("read attachment source: %w", err)
+		return AttachmentSource{}, errx.Translate(err)
 	}
 	contentType, ok := DetectAttachmentType(raw)
 	if !ok {

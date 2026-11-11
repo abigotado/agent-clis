@@ -5,7 +5,9 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
+	"hash/crc32"
 	"io"
 	"log/slog"
 	"mime"
@@ -21,7 +23,22 @@ import (
 	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 )
 
-var attachmentBytes = append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0x01, 0x00, '\r', '\n'}, 64)...)
+var attachmentBytes = validPNG(bytes.Repeat([]byte{0x01, 0x00, '\r', '\n'}, 64))
+
+// validPNG builds a structurally valid PNG (IHDR, a tEXt chunk carrying tail, IEND)
+// so the strict attachment type check accepts it.
+func validPNG(tail []byte) []byte {
+	chunk := func(kind string, data []byte) []byte {
+		out := binary.BigEndian.AppendUint32(nil, uint32(len(data)))
+		out = append(out, kind...)
+		out = append(out, data...)
+		return binary.BigEndian.AppendUint32(out, crc32.ChecksumIEEE(out[4:]))
+	}
+	out := []byte("\x89PNG\r\n\x1a\n")
+	out = append(out, chunk("IHDR", []byte{0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0})...)
+	out = append(out, chunk("tEXt", tail)...)
+	return append(out, chunk("IEND", nil)...)
+}
 
 const attachmentOKJSON = `[{"id":"8-5","name":"shot.png","size":%d,"mimeType":"image/png","created":1700000000000,"removed":false,"author":{"id":"1-2","login":"alice"}}]`
 

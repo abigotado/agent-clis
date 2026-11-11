@@ -13,11 +13,6 @@ import (
 	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/protocolvalue"
 )
 
-var (
-	pngBytes  = []byte("\x89PNG\r\n\x1a\n" + "body")
-	webpBytes = []byte("RIFF\x10\x00\x00\x00WEBPVP8 body")
-)
-
 func TestDetectAttachmentType(t *testing.T) {
 	tests := []struct {
 		name string
@@ -26,19 +21,58 @@ func TestDetectAttachmentType(t *testing.T) {
 		ok   bool
 	}{
 		{"png", pngBytes, "image/png", true},
-		{"jpeg", []byte("\xff\xd8\xff\xe0data"), "image/jpeg", true},
-		{"gif87a", []byte("GIF87adata"), "image/gif", true},
-		{"gif89a", []byte("GIF89adata"), "image/gif", true},
+		{"jpeg", minimalJPEG, "image/jpeg", true},
+		{"gif89a", minimalGIF, "image/gif", true},
+		{"gif87a", append([]byte("GIF87a"), minimalGIF[6:]...), "image/gif", true},
+		{"gif with global color table and image", gifWithImage(), "image/gif", true},
 		{"webp", webpBytes, "image/webp", true},
-		{"pdf", []byte("%PDF-1.7\n"), "application/pdf", true},
+		{"webp VP8L", withFourCC(minimalWebP, "VP8L"), "image/webp", true},
+		{"webp VP8X", withFourCC(minimalWebP, "VP8X"), "image/webp", true},
+		{"webp odd size with pad byte", oddWebP(), "image/webp", true},
+		{"pdf", minimalPDF, "application/pdf", true},
+		{"pdf with trailing whitespace", append(append([]byte{}, minimalPDF...), "\r\n \n"...), "application/pdf", true},
 		{"svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), "", false},
 		{"html", []byte("<!DOCTYPE html><html></html>"), "", false},
 		{"text", []byte("hello world"), "", false},
 		{"zip", []byte("PK\x03\x04data"), "", false},
 		{"elf", []byte("\x7fELF\x02\x01\x01"), "", false},
+		{"riff wave", []byte("RIFF\x10\x00\x00\x00WAVEfmt "), "", false},
+
+		{"gif magic with html body", []byte("GIF89a<!doctype html><html></html>"), "", false},
+		{"gif magic with html body ending in trailer byte", []byte("GIF89a<!doctype html><script>x</script>;"), "", false},
+		{"gif without trailer", minimalGIF[:len(minimalGIF)-1], "", false},
+		{"gif trailer not last", append(append([]byte{}, minimalGIF...), "<svg/>"...), "", false},
+		{"gif color table beyond file", []byte("GIF89a\x01\x00\x01\x00\xf7\x00\x00;"), "", false},
+		{"png at the dimension cap", pngWithSize(8000, 8000), "image/png", true},
+		{"png declaring 100000x100000", pngWithSize(100000, 100000), "", false},
+		{"png width over the cap", pngWithSize(16385, 1), "", false},
+		{"png area over the cap", pngWithSize(16384, 16384), "", false},
+		{"png zero width", pngWithSize(0, 1), "", false},
+		{"jpeg declaring 65535x65535", sizedJPEG(minimalJPEG, 0xff), "", false},
+		{"png then svg", append(append([]byte{}, pngBytes...), `<svg xmlns="http://www.w3.org/2000/svg"/>`...), "", false},
+		{"png signature then svg", append([]byte("\x89PNG\r\n\x1a\n"), `<svg xmlns="http://www.w3.org/2000/svg"/>`...), "", false},
+		{"png bad crc in text chunk", flipByte(pngBytes, 8+25+8), "", false},
+		{"png bad crc in ihdr", flipByte(pngBytes, 8+8+3), "", false},
+		{"png data after iend", append(append([]byte{}, pngBytes...), 0), "", false},
+		{"png without iend", pngBytes[:len(pngBytes)-12], "", false},
+		{"png first chunk not ihdr", append([]byte("\x89PNG\r\n\x1a\n"), pngChunk("tEXt", []byte("x"))...), "", false},
+		{"png ihdr wrong length", append(append([]byte("\x89PNG\r\n\x1a\n"), pngChunk("IHDR", make([]byte, 12))...), pngChunk("IEND", nil)...), "", false},
+		{"png chunk length beyond buffer", append(append([]byte{}, pngBytes[:33]...), 0x7f, 0xff, 0xff, 0xff, 't', 'E', 'X', 't'), "", false},
+		{"png iend with data", append(append([]byte{}, pngBytes[:len(pngBytes)-12]...), pngChunk("IEND", []byte{1})...), "", false},
+		{"jpeg without eoi", []byte("\xff\xd8\xff\xe0\x00\x02<html>"), "", false},
+		{"jpeg bytes after eoi", append(append([]byte{}, minimalJPEG...), 0), "", false},
+		{"jpeg magic only", []byte("\xff\xd8\xff"), "", false},
+		{"webp size too small", sizedWebP(minimalWebP, 0x14), "", false},
+		{"webp size too large", sizedWebP(minimalWebP, 0x18), "", false},
+		{"webp trailing bytes", append(append([]byte{}, minimalWebP...), "<svg/>"...), "", false},
+		{"webp unknown first chunk", withFourCC(minimalWebP, "JUNK"), "", false},
+		{"webp first chunk beyond riff", append(append([]byte{}, minimalWebP[:16]...), 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), "", false},
+		{"pdf without eof marker", []byte("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n"), "", false},
+		{"pdf with data after eof", append(append([]byte{}, minimalPDF...), "<html>"...), "", false},
+		{"pdf eof outside final 1024 bytes", append(append([]byte{}, minimalPDF...), bytes.Repeat([]byte("x"), 1100)...), "", false},
+		{"pdf wrong version", []byte("%PDF-2.0\n%%EOF"), "", false},
 		{"truncated png magic", []byte("\x89PNG\r\n\x1a"), "", false},
 		{"truncated webp", []byte("RIFF\x10\x00\x00\x00WEBPV"), "", false},
-		{"riff wave", []byte("RIFF\x10\x00\x00\x00WAVEfmt "), "", false},
 		{"truncated pdf", []byte("%PDF"), "", false},
 		{"empty", nil, "", false},
 	}
@@ -50,6 +84,66 @@ func TestDetectAttachmentType(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDetectAttachmentTypeRejectsEveryTruncation(t *testing.T) {
+	for name, full := range map[string][]byte{"png": pngBytes, "jpeg": minimalJPEG, "gif": gifWithImage(), "webp": minimalWebP, "pdf": minimalPDF} {
+		if _, ok := DetectAttachmentType(full); !ok {
+			t.Fatalf("%s fixture is not accepted", name)
+		}
+		for n := 0; n < len(full); n++ {
+			if got, ok := DetectAttachmentType(full[:n]); ok && name != "pdf" {
+				t.Fatalf("%s truncated to %d bytes accepted as %q", name, n, got)
+			}
+		}
+	}
+	// A PDF is complete once its %%EOF marker is present; only a cut before it fails.
+	for n := 0; n < bytes.Index(minimalPDF, []byte("%%EOF"))+5; n++ {
+		if _, ok := DetectAttachmentType(minimalPDF[:n]); ok {
+			t.Fatalf("pdf truncated to %d bytes accepted", n)
+		}
+	}
+}
+
+func gifWithImage() []byte {
+	out := []byte("GIF89a\x01\x00\x01\x00\x80\x00\x00")
+	out = append(out, 0, 0, 0, 255, 255, 255)          // 2-entry global color table
+	out = append(out, 0x21, 0xf9, 0x04, 0, 0, 0, 0, 0) // graphic control extension
+	out = append(out, 0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0) // image descriptor
+	out = append(out, 2, 2, 0x44, 0x01, 0)             // LZW size, one data sub-block, terminator
+	return append(out, ';')
+}
+
+// sizedJPEG rewrites the SOF0 height and width to the same 16-bit value.
+func sizedJPEG(b []byte, v byte) []byte {
+	out := append([]byte{}, b...)
+	i := bytes.Index(out, []byte("\xff\xc0"))
+	copy(out[i+5:i+9], []byte{v, v, v, v})
+	return out
+}
+
+func withFourCC(b []byte, fourcc string) []byte {
+	out := append([]byte{}, b...)
+	copy(out[12:16], fourcc)
+	return out
+}
+
+func sizedWebP(b []byte, size byte) []byte {
+	out := append([]byte{}, b...)
+	out[4] = size
+	return out
+}
+
+// oddWebP is a WebP whose odd RIFF size is followed by one pad byte.
+func oddWebP() []byte {
+	out := []byte("RIFF\x15\x00\x00\x00WEBPVP8 \x09\x00\x00\x00012345678")
+	return append(out, 0)
+}
+
+func flipByte(b []byte, i int) []byte {
+	out := append([]byte{}, b...)
+	out[i] ^= 0xff
+	return out
 }
 
 func TestValidateAttachmentName(t *testing.T) {

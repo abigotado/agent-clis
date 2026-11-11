@@ -258,9 +258,16 @@ func (client *Client) AddAttachment(ctx context.Context, input AddAttachmentInpu
 		identity.ID = response.ID
 	}
 	attachment, ok := response.attachment()
-	if !ok || attachment.Name != input.Name || attachment.Size != int64(len(input.Content)) || attachment.Removed ||
+	if !ok || attachment.Name != input.Name || attachment.Size != int64(len(input.Content)) || attachment.Removed || AttachmentMimeConflicts(attachment.MimeType, input.ContentType) ||
 		attachment.Author == nil || attachment.Author.ID != input.ExpectedAuthorID || attachment.Author.Login != input.ExpectedAuthorLogin {
 		return identity, unknown
 	}
 	return attachment, nil
+}
+
+// AttachmentMimeConflicts reports a server-reported media type that differs from
+// the confirmed one. An absent value cannot be checked and is not a conflict.
+func AttachmentMimeConflicts(observed, confirmed string) bool {
+	observed, _, _ = strings.Cut(strings.ToLower(strings.TrimSpace(observed)), ";")
+	return strings.TrimSpace(observed) != "" && strings.TrimSpace(observed) != confirmed
 }

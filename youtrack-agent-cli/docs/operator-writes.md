@@ -346,12 +346,14 @@ risk); it is limited to allowlisted projects and the operator must approve the
 exact path.
 
 ```sh
-youtrack-agent-cli operator-write snapshot --kind attachment.add \
+youtrack-agent-cli operator-write snapshot --profile work-write --kind attachment.add \
   --id APP-123 --file /abs/path/shot.png [--name shot.png] \
   --out "$youtrack_operation_dir/snapshot.json"
-youtrack-agent-cli operator-write prepare --offline \
-  --snapshot "$youtrack_operation_dir/snapshot.json"
-youtrack-agent-cli operator-write apply --plan-id PLAN_ID \
+printf '%s' '{"kind":"attachment.add"}' |
+  youtrack-agent-cli operator-write prepare --offline --profile work-write \
+  --snapshot "$youtrack_operation_dir/snapshot.json" --request-stdin \
+  --out "$youtrack_operation_dir/plan.json"
+youtrack-agent-cli operator-write apply --profile work-write --plan-id PLAN_ID \
   --confirm-intent SHA256 --yes
 ```
 
@@ -359,7 +361,12 @@ Limits, all refused offline at snapshot before any credential or network access:
 
 - Size 1 byte to 10 MiB (`OPERATOR_ATTACHMENT_TOO_LARGE`). YouTrack's own limit
   may be lower; a server 413 after the claim is a consumed rejection.
-- Type by magic bytes: png, jpeg, gif, webp or pdf only, and the file or
+- Type by content: png, jpeg, gif, webp or pdf only. The whole file must be well
+  formed for its type (PNG chunk CRCs and IEND, JPEG EOI, GIF trailer, WebP RIFF
+  length, PDF `%%EOF`; image dimensions capped at 16384 and 64 megapixels, header
+  only, never decoded). This rejects `GIF89a` + HTML style files but is not a
+  full polyglot defence: a valid PNG text chunk or a PDF body can still carry
+  other content. The file or
   `--name` extension must match the detected type (`.png`, `.jpg`/`.jpeg`, `.gif`,
   `.webp`, `.pdf`, case-insensitive). Anything else, including SVG and HTML, is
   `OPERATOR_ATTACHMENT_TYPE_UNSUPPORTED` (exit 2). The CLI never renames.

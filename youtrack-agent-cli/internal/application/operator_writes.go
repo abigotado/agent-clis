@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -413,7 +412,7 @@ func operatorAttachmentInput(ctx context.Context, plan operatorwrite.Plan) (yout
 	source, err := operatorwrite.ReadAttachmentSource(ctx, frozen.SourcePath)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return youtrack.AddAttachmentInput{}, fmt.Errorf("verify attachment source: %w", ctxErr)
+			return youtrack.AddAttachmentInput{}, errx.Translate(ctxErr)
 		}
 		return youtrack.AddAttachmentInput{}, errAttachmentSourceStale()
 	}
@@ -1150,7 +1149,7 @@ func dispatchOperatorWrite(ctx context.Context, client *youtrack.Client, plan op
 		}
 		observed, err := client.GetIssueAttachment(ctx, snapshot.Issue.ID, uploaded.ID)
 		if err != nil || observed.ID != uploaded.ID || observed.Name != snapshot.Attachment.Name || observed.Size != snapshot.Attachment.Size ||
-			observed.Removed || observed.Author == nil || observed.Author.ID != snapshot.Binding.AccountID || observed.Author.Login != snapshot.Binding.AccountLogin {
+			observed.Removed || youtrack.AttachmentMimeConflicts(observed.MimeType, snapshot.Attachment.ContentType) || observed.Author == nil || observed.Author.ID != snapshot.Binding.AccountID || observed.Author.Login != snapshot.Binding.AccountLogin {
 			return uploaded.ID, "", operatorUnknownError()
 		}
 		return uploaded.ID, "", nil
@@ -1423,7 +1422,8 @@ func (s *Service) ReconcileOperatorWrite(ctx context.Context, input OperatorReco
 				matches++
 			}
 		}
-		if matches == 1 {
+		// Uniqueness is only known for the first page, so a paged read proves nothing.
+		if matches == 1 && input.Offset == 0 {
 			evidence = "matching_attachment_observed_without_causal_proof"
 		}
 	case operatorwrite.KindCommentDelete:
@@ -1539,6 +1539,6 @@ func operatorCommentMatches(comment youtrack.Comment, plan operatorwrite.Plan) b
 
 func operatorAttachmentMatches(attachment youtrack.IssueAttachment, plan operatorwrite.Plan) bool {
 	binding, frozen := plan.Snapshot.Binding, plan.Snapshot.Attachment
-	return frozen != nil && attachment.ID != "" && !attachment.Removed && attachment.Name == frozen.Name && attachment.Size == frozen.Size &&
+	return frozen != nil && attachment.ID != "" && !attachment.Removed && !youtrack.AttachmentMimeConflicts(attachment.MimeType, frozen.ContentType) && attachment.Name == frozen.Name && attachment.Size == frozen.Size &&
 		attachment.Author != nil && attachment.Author.ID == binding.AccountID && attachment.Author.Login == binding.AccountLogin
 }
