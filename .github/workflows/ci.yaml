@@ -108,6 +108,7 @@ jobs:
           ruby .github/scripts/verify-portable-release-policy_test.rb
           ruby .github/scripts/verify-portable-release-policy.rb youtrack-agent-cli/.goreleaser.yaml .
           ruby .github/scripts/ci-changes_test.rb
+          bash .github/scripts/pre-push_test.sh
 
       - name: Generated mirrors must stay untracked
         run: |
@@ -286,7 +287,12 @@ jobs:
         run: |
           set -euo pipefail
           go test -tags portable_readonly ./...
-          test -z "$(go list -tags portable_readonly -deps ./cmd/youtrack-agent-cli | grep -E '/internal/(auth|application|journal|mutation|operatorwrite|youtrack)$' || true)"
+          deps="$(go list -tags portable_readonly -deps ./cmd/youtrack-agent-cli)"
+          test -n "${deps}"
+          rc=0
+          forbidden="$(grep -E '^net/http(/|$)|/internal/(approval|auth|application|intent|journal|mutation|oauth|oauthrecovery|operatorwrite|writepolicy|youtrack)(/|$)' <<<"${deps}")" || rc=$?
+          test "${rc}" -le 1
+          if [ -n "${forbidden}" ]; then echo "portable build links forbidden packages:" >&2; echo "${forbidden}" >&2; exit 1; fi
           go build -tags portable_readonly -o "${RUNNER_TEMP}/portable-readonly" ./cmd/youtrack-agent-cli
           "${RUNNER_TEMP}/portable-readonly" --help | grep -Eq '^  profile +Manage non-secret read-only Remote MCP profiles$'
           ! "${RUNNER_TEMP}/portable-readonly" --help | grep -Eiq 'auth|inspect|mutation|operator-write'
