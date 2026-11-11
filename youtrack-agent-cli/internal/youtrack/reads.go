@@ -413,7 +413,7 @@ func (client *Client) DiscoverIssues(ctx context.Context, queryText string, opti
 	}
 	query.Set("query", queryText)
 	var responses []issueSummaryResponse
-	if err := client.readJSON(ctx, request{path: "/issues", query: query, operation: "issues.discover", pageReducible: options.CanReduce}, &responses); err != nil {
+	if err := client.readJSON(ctx, request{path: "/issues", query: query, operation: "issues.discover", pageReducible: options.CanReduce, callerQuery: true}, &responses); err != nil {
 		return nil, err
 	}
 	if responses == nil {

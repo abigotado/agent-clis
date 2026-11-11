@@ -285,3 +285,36 @@ func TestInspectIssuesSelectsAndRendersStageAndAssigneeFields(t *testing.T) {
 		})
 	}
 }
+
+func TestInspectIssuesReportsARejectedQueryAsUsage(t *testing.T) {
+	searches := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/users/me":
+			_, _ = io.WriteString(w, `{"id":"1-2","login":"alice"}`)
+		case "/api/issues":
+			searches++
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":"invalid_query","error_description":"Can't parse search query SENTINEL-QUERY-TEXT"}`)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	app, _, _, _, stdout, stderr := testApp(t)
+	service, _ := commentsTestService(t, server)
+	app.service = service
+
+	code := runApp(app, "inspect", "issues", "--profile", "work", "--query", "project: Application", "-o", "json")
+
+	envelope := decode(t, stdout)
+	failure, _ := envelope["error"].(map[string]any)
+	hint, _ := envelope["hint"].(string)
+	if code != errx.CodeUsage || searches != 1 || envelope["ok"] != false || failure["code"] != "QUERY_REJECTED" || !strings.Contains(hint, "--query") {
+		t.Fatalf("code=%d searches=%d stdout=%s stderr=%s", code, searches, stdout, stderr)
+	}
+	if strings.Contains(stdout.String()+stderr.String(), "SENTINEL") {
+		t.Fatalf("server text leaked: stdout=%s stderr=%s", stdout, stderr)
+	}
+}

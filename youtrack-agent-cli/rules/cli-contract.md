@@ -156,6 +156,10 @@ Two hazards that are easy to reintroduce:
   `OPERATOR_FIELD_UNSUPPORTED` replaces the former `USAGE` `error.code` for
   unsupported field schemas (exit stays 2; the hint changed): callers matching
   `error.code == "USAGE"` for this case must migrate.
+- `inspect issues` reports YouTrack's HTTP 400 `invalid_query` answer as
+  `error.code` `QUERY_REJECTED` at exit 2; it used to be `INTERNAL` at exit 1.
+  The server's text is not echoed. Any other 400 on discovery, and every 400 on
+  other reads (which send only CLI-built parameters), stays `INTERNAL` at exit 1.
 - Apply-time re-freeze refusals for `issue.update` now all report `error.code`
   `OPERATOR_FIELD_STALE` at exit 9. Cases that previously reported
   `OPERATOR_FIELD_VALUE_INVALID`, `OPERATOR_BUNDLE_INVALID` or
