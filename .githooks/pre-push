@@ -22,10 +22,11 @@ repo_root=$(git rev-parse --show-toplevel) || fail "not inside a git checkout"
 cd "$repo_root"
 
 # The harness interpreter must be a real Python 3.8+, not merely a command that
-# exits 0: it prints its own version, and that output is what is checked.
+# exits 0: it prints its own version, and that output is what is checked. The minimum
+# is an explicit exit, not an assert, which PYTHONOPTIMIZE would strip.
 harness_python_ok() {
   local version
-  version=$("$1" -c 'import sys; assert sys.version_info >= (3, 8); print("py%d.%d" % sys.version_info[:2])' 2>/dev/null) \
+  version=$("$1" -c 'import sys; sys.version_info >= (3, 8) or sys.exit(1); print("py%d.%d" % sys.version_info[:2])' 2>/dev/null) \
     && [[ "$version" =~ ^py3\.[0-9]+$ ]]
 }
 
@@ -67,6 +68,8 @@ gate_tree() {
   local python_bin="${AGENT_HARNESS_PYTHON:-python3}"
   # Every pushed tree carries the harness; one without it cannot be validated.
   [ -d .agents ] || fail "$label: the tree has no .agents, so the harness checks cannot run"
+  # A symlink resolves outside the pushed tree, so it would run another harness.
+  [ ! -L .agents ] || fail "$label: .agents is a symlink, so the harness checks would run code outside the pushed tree"
   harness_python_ok "$python_bin" \
     || fail "$label: the harness needs a real Python 3.8+ (got $python_bin; set AGENT_HARNESS_PYTHON)"
   echo "pre-push: $label: agent harness"

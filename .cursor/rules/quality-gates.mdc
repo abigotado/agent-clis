@@ -13,7 +13,7 @@ module's tracked `.go` files (must be empty), then `go vet ./...`,
 tracked module fails. It gates each pushed tip, not the working tree: every
 distinct tip is checked out into a temporary worktree (checkout hooks disabled)
 and gated there, a ref deletion is a no-op, and anything it cannot resolve
-fails, as does a tree without `.agents` or a harness interpreter that is not a real Python 3.8+ (`AGENT_HARNESS_PYTHON`). The compiler-mirror check reads the real checkout, so a tip whose
+fails, as does a tree without `.agents` (or with `.agents` as a symlink) or a harness interpreter that is not a real Python 3.8+ (`AGENT_HARNESS_PYTHON`). The compiler-mirror check reads the real checkout, so a tip whose
 `.agents` differs from HEAD's, or a dirty `.agents`, is refused until that
 branch is checked out clean. After that it runs the agent-harness checks. It is the
 last check before a change leaves the machine.

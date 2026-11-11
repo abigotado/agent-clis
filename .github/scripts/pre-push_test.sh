@@ -37,6 +37,15 @@ exit 0
 PY
 chmod +x "$work/bin/fakepy"
 export AGENT_HARNESS_PYTHON="$work/bin/fakepy"
+# A Python 3.7 stand-in: real interpreter, but it reports an old version.
+cat >"$work/bin/oldpy" <<'PY'
+#!/usr/bin/env bash
+if [ "$1" = -c ]; then
+  exec python3 -c 'import sys; sys.version_info = (3, 7, 0, "final", 0); exec(sys.argv[1])' "$2"
+fi
+exit 0
+PY
+chmod +x "$work/bin/oldpy"
 
 cd "$work/repo"
 git init -q -b main
@@ -141,6 +150,10 @@ AGENT_HARNESS_PYTHON=true run <<<"refs/heads/x $(git rev-parse HEAD) refs/heads/
 check "a command that merely exits 0 is not a harness python" 1 "$status"
 AGENT_HARNESS_PYTHON=false run <<<"refs/heads/x $(git rev-parse HEAD) refs/heads/x $zero"
 check "a failing harness python fails closed" 1 "$status"
+PYTHONOPTIMIZE=1 AGENT_HARNESS_PYTHON="$work/bin/oldpy" run <<<"refs/heads/x $(git rev-parse HEAD) refs/heads/x $zero"
+check "python 3.7 is refused even with assertions stripped" 1 "$status"
+AGENT_HARNESS_PYTHON="$work/bin/oldpy" run <<<"refs/heads/x $(git rev-parse HEAD) refs/heads/x $zero"
+check "python 3.7 is refused" 1 "$status"
 with_agents=$(git rev-parse HEAD)
 git rm -rq .agents && git commit -qm noagents
 without_agents=$(git rev-parse HEAD)
@@ -152,6 +165,17 @@ git reset -q --hard "$without_agents"
 run <<<"refs/heads/x $without_agents refs/heads/x $zero"
 check "pushing a HEAD with no .agents fails closed" 1 "$status"
 contains "missing harness is explained" "$work/out" "has no .agents"
+git reset -q --hard "$with_agents"
+
+# A symlinked .agents is not the pushed harness: it resolves outside the tree.
+mkdir -p "$work/external-agents"
+git rm -rq .agents
+ln -s "$work/external-agents" .agents
+git add .agents && git commit -qm symlinked-agents
+symlinked=$(git rev-parse HEAD)
+run <<<"refs/heads/x $symlinked refs/heads/x $zero"
+check "a symlinked .agents fails closed" 1 "$status"
+contains "symlinked harness is explained" "$work/out" "symlink"
 git reset -q --hard "$with_agents"
 
 # Cleanup must not prune worktrees the hook does not own.
