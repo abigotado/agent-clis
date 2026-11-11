@@ -21,6 +21,14 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
 repo_root=$(git rev-parse --show-toplevel) || fail "not inside a git checkout"
 cd "$repo_root"
 
+# The harness interpreter must be a real Python 3.8+, not merely a command that
+# exits 0: it prints its own version, and that output is what is checked.
+harness_python_ok() {
+  local version
+  version=$("$1" -c 'import sys; assert sys.version_info >= (3, 8); print("py%d.%d" % sys.version_info[:2])' 2>/dev/null) \
+    && [[ "$version" =~ ^py3\.[0-9]+$ ]]
+}
+
 # Gate one checked-out tree. The caller runs it in a subshell with its working
 # directory at that tree's root and stdin closed.
 gate_tree() {
@@ -57,20 +65,20 @@ gate_tree() {
   # The agent harness is compiled, not hand-written. A drifted mirror means the
   # canonical .agents/ inputs changed without recompiling.
   local python_bin="${AGENT_HARNESS_PYTHON:-python3}"
-  if [ -d .agents ]; then
-    "$python_bin" -c 'pass' >/dev/null 2>&1 \
-      || fail "$label: .agents needs a working $python_bin (set AGENT_HARNESS_PYTHON) to run the harness checks"
-    echo "pre-push: $label: agent harness"
-    "$python_bin" .agents/scripts/sync-rules.py --check || fail "Cursor rule mirrors are out of sync"
-    "$python_bin" -m unittest discover -s .agents/tests -p 'test_*.py' -q \
-      || fail "harness unit tests failed"
+  # Every pushed tree carries the harness; one without it cannot be validated.
+  [ -d .agents ] || fail "$label: the tree has no .agents, so the harness checks cannot run"
+  harness_python_ok "$python_bin" \
+    || fail "$label: the harness needs a real Python 3.8+ (got $python_bin; set AGENT_HARNESS_PYTHON)"
+  echo "pre-push: $label: agent harness"
+  "$python_bin" .agents/scripts/sync-rules.py --check || fail "Cursor rule mirrors are out of sync"
+  "$python_bin" -m unittest discover -s .agents/tests -p 'test_*.py' -q \
+    || fail "harness unit tests failed"
 
-    local tracked
-    tracked=$(git ls-files .claude .codex)
-    if [ -n "$tracked" ]; then
-      echo "$tracked" >&2
-      fail "generated provider mirrors are committed; remove them"
-    fi
+  local tracked
+  tracked=$(git ls-files .claude .codex)
+  if [ -n "$tracked" ]; then
+    echo "$tracked" >&2
+    fail "generated provider mirrors are committed; remove them"
   fi
 }
 
@@ -90,7 +98,6 @@ check_provider_mirrors() {
   git diff --quiet HEAD -- .agents || fail ".agents has uncommitted changes; commit or discard them before pushing"
   untracked=$(git ls-files --others --exclude-standard -- .agents) || fail "cannot inspect untracked files under .agents"
   [ -z "$untracked" ] || fail ".agents has untracked files; commit or discard them before pushing"
-  [ -d .agents ] && "$python_bin" -c 'pass' >/dev/null 2>&1 || return 0
   local global_compiler="${HOME}/.agents/compiler.py"
   if [ -f "$global_compiler" ]; then
     "$python_bin" "$global_compiler" --source .agents --root . --scope project --check \

@@ -28,14 +28,22 @@ SHIM
 chmod +x "$work/bin/go"
 export GO_LOG="$work/go.log"
 export PATH="$work/bin:$PATH"
-# `true` accepts any arguments, so the harness steps run as no-ops.
-export AGENT_HARNESS_PYTHON=true
+# A real interpreter for the version probe; the harness scripts the fixture does
+# not have run as no-ops.
+cat >"$work/bin/fakepy" <<'PY'
+#!/usr/bin/env bash
+if [ "$1" = -c ]; then exec python3 "$@"; fi
+exit 0
+PY
+chmod +x "$work/bin/fakepy"
+export AGENT_HARNESS_PYTHON="$work/bin/fakepy"
 
 cd "$work/repo"
 git init -q -b main
 git config user.email t@example.invalid
 git config user.name t
-mkdir -p .githooks mod_a mod_b
+mkdir -p .githooks mod_a mod_b .agents
+echo one >.agents/r.md
 cp "$hook" .githooks/pre-push
 for module in mod_a mod_b; do
   printf 'module example.invalid/%s\n\ngo 1.22\n' "$module" >"$module/go.mod"
@@ -118,8 +126,7 @@ git checkout -q -- mod_a/x.go
 
 # Provider-mirror branch: the compiler is absent here (HOME is a scratch dir).
 export HOME="$work/home"; mkdir -p "$HOME"
-mkdir -p .agents && echo one >.agents/r.md && git add -A && git commit -qm agents1
-agents1=$(git rev-parse HEAD)
+agents1=$good
 echo two >.agents/r.md && git commit -qam agents2
 run <<<"refs/heads/x $agents1 refs/heads/x $zero"
 check "a tip whose .agents differs from HEAD fails closed" 1 "$status"
@@ -130,8 +137,10 @@ echo three >.agents/r.md
 run <<<"refs/heads/x $(git rev-parse HEAD) refs/heads/x $zero"
 check "uncommitted .agents changes fail closed" 1 "$status"
 git checkout -q -- .agents/r.md
+AGENT_HARNESS_PYTHON=true run <<<"refs/heads/x $(git rev-parse HEAD) refs/heads/x $zero"
+check "a command that merely exits 0 is not a harness python" 1 "$status"
 AGENT_HARNESS_PYTHON=false run <<<"refs/heads/x $(git rev-parse HEAD) refs/heads/x $zero"
-check "an unusable harness python fails closed" 1 "$status"
+check "a failing harness python fails closed" 1 "$status"
 with_agents=$(git rev-parse HEAD)
 git rm -rq .agents && git commit -qm noagents
 without_agents=$(git rev-parse HEAD)
@@ -139,6 +148,10 @@ git checkout -q "$with_agents"
 run <<<"refs/heads/x $without_agents refs/heads/x $zero"
 check "a tip dropping .agents fails closed" 1 "$status"
 git checkout -q main
+git reset -q --hard "$without_agents"
+run <<<"refs/heads/x $without_agents refs/heads/x $zero"
+check "pushing a HEAD with no .agents fails closed" 1 "$status"
+contains "missing harness is explained" "$work/out" "has no .agents"
 git reset -q --hard "$with_agents"
 
 # Cleanup must not prune worktrees the hook does not own.
