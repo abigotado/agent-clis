@@ -2,6 +2,7 @@ package youtrack
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -107,5 +108,51 @@ func TestDiscoverIssuesToleratesOddCustomFields(t *testing.T) {
 	}
 	if stage := values[0].CustomFields[1]; stage.Name != "Stage" || string(stage.Value) != `{"name":"Open"}` {
 		t.Errorf("stage=%#v", stage)
+	}
+}
+
+// YouTrack answers an unparseable query with 400 invalid_query. Its body is
+// untrusted server text, so the sentinel must never reach the error.
+const invalidQueryBody = `{"error":"invalid_query","error_description":"Can't parse search query SENTINEL-QUERY-TEXT","error_field":"query"}`
+
+func TestIssueQueriesMapABadRequestByWhoWroteTheQuery(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		search     func(*Client) error
+		wantCode   errx.Code
+		wantReason string
+	}{
+		{"caller-written discovery query is a usage error", func(client *Client) error {
+			_, err := client.DiscoverIssues(context.Background(), "project: Application", PageOptions{Top: 2})
+			return err
+		}, errx.CodeUsage, "QUERY_REJECTED"},
+		{"CLI-built reconciliation query stays internal", func(client *Client) error {
+			_, err := client.SearchIssues(context.Background(), "project: APP", PageOptions{Top: 2})
+			return err
+		}, errx.CodeInternal, "INTERNAL"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, invalidQueryBody)
+			}))
+			defer server.Close()
+
+			err := test.search(newTestClient(t, server))
+
+			var typed *errx.Error
+			if !errors.As(err, &typed) || typed.Code != test.wantCode || typed.Reason != test.wantReason {
+				t.Fatalf("error=%#v", err)
+			}
+			if requests != 1 {
+				t.Errorf("requests=%d, a rejected query must not be retried", requests)
+			}
+			if strings.Contains(typed.Message+typed.Hint, "SENTINEL") {
+				t.Errorf("server text leaked: %q %q", typed.Message, typed.Hint)
+			}
+		})
 	}
 }

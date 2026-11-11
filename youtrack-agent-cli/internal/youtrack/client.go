@@ -261,6 +261,11 @@ func (client *Client) handleReadResponse(response *http.Response, request reques
 }
 
 func (client *Client) translateReadStatus(response *http.Response, operation string) (time.Duration, bool, error) {
+	// Only discovery carries caller-written query text. Every other read sends
+	// CLI-built parameters, so a 400 there stays a CLI defect.
+	if response.StatusCode == http.StatusBadRequest && operation == discoverIssuesOperation {
+		return 0, false, errx.QueryRejected()
+	}
 	switch response.StatusCode {
 	case http.StatusUnauthorized:
 		return 0, false, errx.Auth("AUTHENTICATION_FAILED", "YouTrack rejected the credential")

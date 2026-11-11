@@ -110,6 +110,17 @@ func Unsupported(reason, format string, args ...any) *Error {
 	return &Error{Code: CodeUsage, Reason: reason, Message: fmt.Sprintf(format, args...), Hint: "choose a supported target; do not retry unchanged"}
 }
 
+// QueryRejected reports that YouTrack refused a caller-written search query.
+// The server's explanation is untrusted text and is deliberately not echoed.
+func QueryRejected() *Error {
+	return &Error{
+		Code:    CodeUsage,
+		Reason:  "QUERY_REJECTED",
+		Message: "YouTrack could not parse the search query",
+		Hint:    "fix --query: use the project short name and exact field and value names, and wrap multi-word values in braces; then retry",
+	}
+}
+
 // ProfileRequired reports that the command has no authorized profile selection.
 func ProfileRequired() *Error {
 	return &Error{
