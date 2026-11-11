@@ -26,7 +26,7 @@ func TestCapabilitiesReportsPlanVersionByKind(t *testing.T) {
 			}
 			versions, ok := data["plan_versions"].(map[string]any)
 			if !ok || versions["issue.create"] != float64(operatorwrite.PlanVersion2) || versions["issue.update"] != float64(operatorwrite.PlanVersion4) ||
-				versions["comment.add"] != float64(operatorwrite.PlanVersion2) || versions["comment.delete"] != float64(operatorwrite.PlanVersion3) || versions["issue.edit"] != float64(operatorwrite.PlanVersion4) || len(versions) != 5 {
+				versions["comment.add"] != float64(operatorwrite.PlanVersion2) || versions["comment.delete"] != float64(operatorwrite.PlanVersion3) || versions["issue.edit"] != float64(operatorwrite.PlanVersion4) || versions["issue.link"] != float64(operatorwrite.PlanVersion4) || len(versions) != 6 {
 				t.Fatalf("plan_versions=%#v", data["plan_versions"])
 			}
 		})

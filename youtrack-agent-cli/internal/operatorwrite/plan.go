@@ -124,6 +124,9 @@ func validLink(link Link, source Issue) bool {
 		!validText(t.Name, 256, true) || !validText(t.SourceToTarget, 256, true) || !validText(t.TargetToSource, 256, true) {
 		return false
 	}
+	if t.Aggregation && !t.Directed {
+		return false
+	}
 	switch link.Direction {
 	case LinkUndirected:
 		return !t.Directed && link.Phrase == t.SourceToTarget
