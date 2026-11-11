@@ -148,6 +148,7 @@ func TestOperatorCreateUserFieldRefusals(t *testing.T) {
 		{"clear a user field that cannot be empty", func(f *createFixture) { f.useAssignee(false, defaultUsers()) }, []OperatorFieldSelection{{FieldName: "Assignee", Clear: true}}, "OPERATOR_FIELD_REQUIRED", errx.CodeUsage},
 		{"clear a state field that cannot be empty", func(f *createFixture) { f.useStageRequired() }, []OperatorFieldSelection{{FieldName: "Stage", Clear: true}}, "OPERATOR_FIELD_REQUIRED", errx.CodeUsage},
 		{"same field set and cleared", nil, []OperatorFieldSelection{{FieldName: "Stage", ValueName: "Done"}, {FieldName: "Stage", Clear: true}}, "USAGE", errx.CodeUsage},
+		{"same field cleared twice", nil, []OperatorFieldSelection{{FieldName: "Stage", Clear: true}, {FieldName: "Stage", Clear: true}}, "USAGE", errx.CodeUsage},
 		{"clear mixed with field ids", nil, []OperatorFieldSelection{{FieldName: "Stage", Clear: true}, {FieldID: "93-1", ValueID: "1-6"}}, "USAGE", errx.CodeUsage},
 		{"clear with a value", nil, []OperatorFieldSelection{{FieldName: "Stage", ValueName: "Done", Clear: true}}, "USAGE", errx.CodeUsage},
 		{"clear with a name and an id", nil, []OperatorFieldSelection{{FieldName: "Stage", FieldID: "92-1", Clear: true}}, "USAGE", errx.CodeUsage},
