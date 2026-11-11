@@ -361,12 +361,15 @@ Limits, all refused offline at snapshot before any credential or network access:
 
 - Size 1 byte to 10 MiB (`OPERATOR_ATTACHMENT_TOO_LARGE`). YouTrack's own limit
   may be lower; a server 413 after the claim is a consumed rejection.
-- Type by content: png, jpeg, gif, webp or pdf only. The whole file must be well
-  formed for its type (PNG chunk CRCs and IEND, JPEG EOI, GIF trailer, WebP RIFF
-  length, PDF `%%EOF`; image dimensions capped at 16384 and 64 megapixels, header
-  only, never decoded). This rejects `GIF89a` + HTML style files but is not a
-  full polyglot defence: a valid PNG text chunk or a PDF body can still carry
-  other content. The file or
+- Type by content: png, jpeg, gif, webp or pdf only. The file must be well
+  formed for its type: PNG is walked chunk by chunk (CRCs, IEND last); JPEG and
+  GIF are header-decoded and must end with their EOI/trailer byte; WebP needs a
+  consistent RIFF length; PDF is `%PDF-1.x`/`%PDF-2.x` with `%%EOF` at the end.
+  PNG, JPEG and GIF dimensions are capped at 16384 and 64 megapixels from the
+  header only (never decoded); WebP dimensions are not capped. This rejects
+  `GIF89a` + HTML style files but is not a full polyglot defence: JPEG, GIF and
+  WebP bodies are not walked, and a valid PNG text chunk or a PDF body can still
+  carry other content. The file or
   `--name` extension must match the detected type (`.png`, `.jpg`/`.jpeg`, `.gif`,
   `.webp`, `.pdf`, case-insensitive). Anything else, including SVG and HTML, is
   `OPERATOR_ATTACHMENT_TYPE_UNSUPPORTED` (exit 2). The CLI never renames.

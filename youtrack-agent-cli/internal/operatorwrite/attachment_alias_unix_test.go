@@ -33,7 +33,7 @@ func TestReadAttachmentSourceStoresResolvedDirectory(t *testing.T) {
 	}
 	source, err := ReadAttachmentSource(context.Background(), filepath.Join(alias, "report.pdf"))
 	if err != nil {
-		t.Skipf("fixture not accepted by the type sniffer: %v", err)
+		t.Fatalf("ReadAttachmentSource through an aliased directory: %v", err)
 	}
 	if want := filepath.Join(real, "report.pdf"); source.Path != want {
 		t.Fatalf("Path = %q, want resolved %q", source.Path, want)

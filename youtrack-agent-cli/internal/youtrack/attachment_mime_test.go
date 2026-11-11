@@ -11,6 +11,7 @@ func TestAttachmentMimeConflicts(t *testing.T) {
 		{"equal", "image/png", "image/png", false},
 		{"case and parameters ignored", " IMAGE/PNG; charset=binary", "image/png", false},
 		{"html replaces png", "text/html", "image/png", true},
+		{"malformed nonempty", "; charset=binary", "image/png", true},
 		{"other image type", "image/jpeg", "image/png", true},
 	}
 	for _, tt := range tests {

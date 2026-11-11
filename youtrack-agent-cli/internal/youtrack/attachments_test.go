@@ -157,6 +157,12 @@ func TestAddAttachmentUnverifiedResponseIsUnknown(t *testing.T) {
 		{name: "missing author", body: attachmentResponseJSON(func(s string) string {
 			return strings.Replace(s, `,"author":{"id":"1-2","login":"alice"}`, ``, 1)
 		}), wantID: "8-5"},
+		{name: "mime conflict", body: attachmentResponseJSON(func(s string) string {
+			return strings.Replace(s, `"mimeType":"image/png"`, `"mimeType":"text/html"`, 1)
+		}), wantID: "8-5"},
+		{name: "malformed mime", body: attachmentResponseJSON(func(s string) string {
+			return strings.Replace(s, `"mimeType":"image/png"`, `"mimeType":"; charset=binary"`, 1)
+		}), wantID: "8-5"},
 		{name: "removed", body: attachmentResponseJSON(func(s string) string { return strings.Replace(s, `"removed":false`, `"removed":true`, 1) }), wantID: "8-5"},
 		{name: "missing removed", body: attachmentResponseJSON(func(s string) string { return strings.Replace(s, `"removed":false,`, ``, 1) }), wantID: "8-5"},
 		{name: "null removed", body: attachmentResponseJSON(func(s string) string { return strings.Replace(s, `"removed":false`, `"removed":null`, 1) }), wantID: "8-5"},

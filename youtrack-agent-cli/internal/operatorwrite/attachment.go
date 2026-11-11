@@ -116,7 +116,7 @@ func DetectAttachmentType(b []byte) (string, bool) {
 		contentType, valid = "image/gif", validGIF(b)
 	case hasPrefix(b, "RIFF"):
 		contentType, valid = "image/webp", validWebP(b)
-	case hasPrefix(b, "%PDF-1."):
+	case hasPrefix(b, "%PDF-1."), hasPrefix(b, "%PDF-2."):
 		contentType, valid = "application/pdf", validPDF(b)
 	}
 	if !valid {

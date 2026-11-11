@@ -4,13 +4,13 @@ package operatorwrite
 
 import (
 	"context"
-	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 	"io"
 	"os"
 	"path/filepath"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/protocolvalue"
 )
 
@@ -83,6 +83,13 @@ func ReadAttachmentSource(ctx context.Context, path string) (AttachmentSource, e
 	}
 	if err := ctx.Err(); err != nil {
 		return AttachmentSource{}, errx.Translate(err)
+	}
+	// A directory swapped for a symlink during the read would make the stored path
+	// name a different file than the one hashed; re-resolve and compare identity.
+	var again unix.Stat_t
+	if recheck, err := filepath.EvalSymlinks(filepath.Dir(abs)); err != nil || filepath.Join(recheck, filepath.Base(abs)) != abs ||
+		unix.Lstat(abs, &again) != nil || again.Ino != opened.Ino || again.Dev != opened.Dev {
+		return AttachmentSource{}, attachmentSourceInvalid("attachment source changed while reading")
 	}
 	contentType, ok := DetectAttachmentType(raw)
 	if !ok {

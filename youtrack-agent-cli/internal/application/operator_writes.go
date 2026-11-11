@@ -416,7 +416,7 @@ func operatorAttachmentInput(ctx context.Context, plan operatorwrite.Plan) (yout
 		}
 		return youtrack.AddAttachmentInput{}, errAttachmentSourceStale()
 	}
-	if source.Size != frozen.Size || source.SHA256 != frozen.SHA256 || source.ContentType != frozen.ContentType {
+	if source.Path != frozen.SourcePath || source.Size != frozen.Size || source.SHA256 != frozen.SHA256 || source.ContentType != frozen.ContentType {
 		return youtrack.AddAttachmentInput{}, errAttachmentSourceStale()
 	}
 	snapshot := plan.Snapshot

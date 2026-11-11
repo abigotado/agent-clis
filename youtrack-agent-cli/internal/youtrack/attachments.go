@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -268,6 +269,9 @@ func (client *Client) AddAttachment(ctx context.Context, input AddAttachmentInpu
 // AttachmentMimeConflicts reports a server-reported media type that differs from
 // the confirmed one. An absent value cannot be checked and is not a conflict.
 func AttachmentMimeConflicts(observed, confirmed string) bool {
-	observed, _, _ = strings.Cut(strings.ToLower(strings.TrimSpace(observed)), ";")
-	return strings.TrimSpace(observed) != "" && strings.TrimSpace(observed) != confirmed
+	if strings.TrimSpace(observed) == "" {
+		return false
+	}
+	parsed, _, err := mime.ParseMediaType(observed)
+	return err != nil || parsed != confirmed
 }
