@@ -68,7 +68,7 @@ func ValidateSnapshot(s Snapshot) error {
 		// fit the client's identifier bound.
 		projectFields, globalFields, names := map[string]bool{}, map[string]bool{}, map[string]bool{}
 		for _, f := range s.Fields {
-			if f.IssueFieldID != "" || f.CurrentValue != nil || f.Type == userIssueField || !validFieldSchema(f) || !validTarget(f) || len(f.Name) > MaxCreateFieldNameBytes ||
+			if f.IssueFieldID != "" || f.CurrentValue != nil || !validFieldSchema(f) || !validCreateTarget(f) || len(f.Name) > MaxCreateFieldNameBytes ||
 				projectFields[f.ProjectFieldID] || globalFields[f.GlobalFieldID] || names[f.Name] {
 				return invalid()
 			}
@@ -179,6 +179,15 @@ func validTarget(f Field) bool {
 	return f.TargetValue != nil && validValue(*f.TargetValue, f.Type) && !f.TargetValue.Archived
 }
 
+// validCreateTarget accepts a create field's nonarchived target value, or a
+// nil target that clears it, which needs a field that can be empty.
+func validCreateTarget(f Field) bool {
+	if f.TargetValue == nil {
+		return f.CanBeEmpty
+	}
+	return validTarget(f)
+}
+
 // validUpdateValues checks an update field's current and target values. A nil
 // target clears the field: it needs a clearable field that currently holds a
 // value, because clearing an empty field is a no-op that reconciliation could
@@ -194,9 +203,18 @@ func validUpdateValues(f Field) bool {
 }
 
 // needsPlanVersion4 reports whether the snapshot carries a User field or a
-// null target, which only a version 4 plan may hold.
+// null target, in the update field or in any create field, which only a
+// version 4 plan may hold.
 func needsPlanVersion4(s Snapshot) bool {
-	return s.Field != nil && (s.Field.Type == userIssueField || s.Field.TargetValue == nil)
+	if s.Field != nil && (s.Field.Type == userIssueField || s.Field.TargetValue == nil) {
+		return true
+	}
+	for _, f := range s.Fields {
+		if f.Type == userIssueField || f.TargetValue == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func validValue(v Value, fieldType string) bool {
@@ -363,7 +381,7 @@ func ValidatePlan(p Plan) error {
 			return invalid()
 		}
 	case PlanVersion4:
-		if p.Snapshot.Kind != KindIssueUpdate && p.Snapshot.Kind != KindIssueEdit || !p.ExpiresAt.IsZero() {
+		if p.Snapshot.Kind != KindIssueUpdate && p.Snapshot.Kind != KindIssueEdit && p.Snapshot.Kind != KindIssueCreate || !p.ExpiresAt.IsZero() {
 			return invalid()
 		}
 	default:
