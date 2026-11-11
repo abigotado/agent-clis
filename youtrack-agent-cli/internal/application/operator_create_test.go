@@ -89,6 +89,7 @@ type createFixture struct {
 	mu           sync.Mutex
 	project      string
 	schema       string
+	extra        map[string]string
 	issues       map[string]string
 	search       string
 	postStatus   int
@@ -196,7 +197,13 @@ func (f *createFixture) serve(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == projects+"0-3/customFields/92-1":
 		_, _ = io.WriteString(w, f.schema)
 	case r.URL.Path == projects+"0-3/customFields":
-		_, _ = io.WriteString(w, "["+f.schema+"]")
+		list := f.schema
+		for _, extra := range f.extra {
+			list += "," + extra
+		}
+		_, _ = io.WriteString(w, "["+list+"]")
+	case f.extra[strings.TrimPrefix(r.URL.Path, projects+"0-3/customFields/")] != "":
+		_, _ = io.WriteString(w, f.extra[strings.TrimPrefix(r.URL.Path, projects+"0-3/customFields/")])
 	case strings.HasPrefix(r.URL.Path, projects) && !strings.Contains(strings.TrimPrefix(r.URL.Path, projects), "/"):
 		_, _ = io.WriteString(w, f.project)
 	case r.URL.Path == "/api/issues":
