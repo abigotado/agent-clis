@@ -41,7 +41,8 @@ func TestPlanVersionFor(t *testing.T) {
 		kind Kind
 		want int
 	}{
-		{KindIssueCreate, PlanVersion2},
+		{KindIssueCreate, PlanVersion4},
+		{KindIssueEdit, PlanVersion4},
 		{KindIssueUpdate, PlanVersion4},
 		{KindCommentAdd, PlanVersion2},
 		{KindCommentDelete, PlanVersion3},
@@ -156,8 +157,8 @@ func TestClearTargetValidation(t *testing.T) {
 		{"not clearable", clearSnapshot, func(s *Snapshot) { s.Field.CanBeEmpty = false }, false},
 		{"already empty", clearSnapshot, func(s *Snapshot) { s.Field.CurrentValue = nil }, false},
 		{"clearable set to value", func(t *testing.T) Snapshot { return testSnapshot(t, KindIssueUpdate) }, func(s *Snapshot) { s.Field.CanBeEmpty = true }, true},
-		{"create with null target", testCreateSnapshot, func(s *Snapshot) { s.Fields[0].TargetValue = nil }, false},
-		{"create with null target on clearable field", testCreateSnapshot, func(s *Snapshot) { s.Fields[0].CanBeEmpty, s.Fields[0].TargetValue = true, nil }, false},
+		{"create with null target on a required field", testCreateSnapshot, func(s *Snapshot) { s.Fields[0].TargetValue = nil }, false},
+		{"create with null target on clearable field", testCreateSnapshot, func(s *Snapshot) { s.Fields[0].CanBeEmpty, s.Fields[0].TargetValue = true, nil }, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := test.build(t)
@@ -208,15 +209,6 @@ func TestUserFieldValidation(t *testing.T) {
 		s.Field.TargetValue = nil
 		if plan, err := prepareSnapshot(s); err != nil || plan.Version != PlanVersion4 {
 			t.Fatalf("user clear: version=%d err=%v", plan.Version, err)
-		}
-	})
-	t.Run("create refuses a user field", func(t *testing.T) {
-		s := testCreateSnapshot(t)
-		user := userSnapshot(t).Field
-		user.IssueFieldID, user.CurrentValue = "", nil
-		s.Fields = []Field{*user}
-		if _, err := Prepare(s, Request{Kind: KindIssueCreate, Summary: "S"}, s.CapturedAt.Add(time.Minute)); err == nil {
-			t.Fatal("create accepted a user field")
 		}
 	})
 }

@@ -15,7 +15,6 @@ import (
 
 	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
 	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/operatorwrite"
-	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/youtrack"
 )
 
 const (
@@ -235,14 +234,6 @@ func TestOperatorUserCurrentValueMustBeAUser(t *testing.T) {
 	f.useUserField(`null`, false, defaultUsers())
 	_, err := f.snapshotUpdate(t, userSet("carol"))
 	requireRefusal(t, err, "OPERATOR_FIELD_VALUE_INVALID", errx.CodeConflict)
-}
-
-func TestOperatorUserFieldIsRefusedOnCreate(t *testing.T) {
-	schema := youtrack.ProjectField{ID: "92-1", Type: "UserProjectCustomField", Field: youtrack.FieldDefinition{ID: "42-1", Name: "Assignee",
-		FieldType: youtrack.FieldType{ID: "user[1]", ValueType: "user", Type: "FieldType"}}, Bundle: &youtrack.Bundle{ID: "100-9", Type: "UserBundle",
-		AggregatedUsers: []youtrack.User{{ID: "1-6", Login: "carol"}}}}
-	_, err := freezeCreateField(schema, "", "carol")
-	requireRefusal(t, err, "OPERATOR_FIELD_UNSUPPORTED", errx.CodeUsage)
 }
 
 func TestOperatorUserFieldSchemaVariantsStayUnsupported(t *testing.T) {
@@ -526,14 +517,6 @@ func TestSnapshotOperatorWriteClearSelectionValidation(t *testing.T) {
 			}
 		})
 	}
-}
-
-// The fixture profile lacks issue-create, so the capability check would pre-empt
-// the selection check through SnapshotOperatorWrite; validateOperatorTarget runs
-// before any credential or network access and is exercised directly.
-func TestValidateOperatorTargetRefusesClearOnCreate(t *testing.T) {
-	err := validateOperatorTarget(operatorwrite.KindIssueCreate, OperatorSnapshotInput{Kind: "issue.create", ProjectID: "0-3", Fields: []OperatorFieldSelection{{FieldName: "Stage", Clear: true}}})
-	requireRefusal(t, err, "USAGE", errx.CodeUsage)
 }
 
 func TestOperatorTruncatedFieldLookupHintMatchesTheSelection(t *testing.T) {

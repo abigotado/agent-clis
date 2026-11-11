@@ -30,14 +30,16 @@ type CustomFieldUpdate struct {
 	Value json.RawMessage `json:"value"`
 }
 
-// CreateCustomField sets one bundle-valued field on a new issue. A new issue
-// has no issue-field identity, so the payload addresses the field by its
-// project-unique Name and Type; ProjectFieldID verifies the response.
+// CreateCustomField sets or clears one single-valued field on a new issue. A
+// new issue has no issue-field identity, so the payload addresses the field by
+// its project-unique Name and Type; ProjectFieldID verifies the response.
+// Exactly one of ValueID and Clear is set: Clear sends an explicit JSON null.
 type CreateCustomField struct {
 	ProjectFieldID string
 	Name           string
 	Type           string
 	ValueID        string
+	Clear          bool
 }
 
 // CreateIssueInput is the complete supported issue.create payload. ProjectKey
@@ -103,10 +105,12 @@ type createIssuePayload struct {
 	CustomFields []createFieldPayload `json:"customFields,omitempty"`
 }
 
+// createFieldPayload keeps the value a pointer without omitempty, so a clear
+// encodes as an explicit null and a set value as {"id":ID}.
 type createFieldPayload struct {
-	Name  string           `json:"name"`
-	Type  string           `json:"$type"`
-	Value projectReference `json:"value"`
+	Name  string            `json:"name"`
+	Type  string            `json:"$type"`
+	Value *projectReference `json:"value"`
 }
 
 type updateIssuePayload struct {
@@ -147,8 +151,13 @@ func ValidateCreateIssueInput(input CreateIssueInput) error {
 		if err := validateIdentifier("project custom field", field.ProjectFieldID); err != nil {
 			return err
 		}
-		if err := validateIdentifier("custom field value", field.ValueID); err != nil {
-			return err
+		if field.Clear && field.ValueID != "" {
+			return errx.Usage("a cleared custom field cannot also set a value")
+		}
+		if !field.Clear {
+			if err := validateIdentifier("custom field value", field.ValueID); err != nil {
+				return err
+			}
 		}
 		if err := validateRequiredText("custom field name", field.Name, maxIdentifierBytes); err != nil {
 			return err
@@ -288,7 +297,11 @@ func (client *Client) CreateIssue(ctx context.Context, input CreateIssueInput) (
 		Project: projectReference{ID: input.ProjectID}, Summary: input.Summary, Description: input.Description,
 	}
 	for _, field := range input.CustomFields {
-		payload.CustomFields = append(payload.CustomFields, createFieldPayload{Name: field.Name, Type: field.Type, Value: projectReference{ID: field.ValueID}})
+		entry := createFieldPayload{Name: field.Name, Type: field.Type}
+		if !field.Clear {
+			entry.Value = &projectReference{ID: field.ValueID}
+		}
+		payload.CustomFields = append(payload.CustomFields, entry)
 	}
 	var result Issue
 	if err := client.sendMutation(ctx, "/issues", "issue.create", payload, &result); err != nil {
@@ -325,10 +338,7 @@ func CreatedIssueMatches(issue Issue, input CreateIssueInput) bool {
 				continue
 			}
 			matches++
-			var value struct {
-				ID string `json:"id"`
-			}
-			if actual.Type != expected.Type || json.Unmarshal(actual.Value, &value) != nil || value.ID != expected.ValueID {
+			if actual.Type != expected.Type || !createdFieldValueMatches(expected, actual.Value) {
 				return false
 			}
 		}
@@ -337,6 +347,25 @@ func CreatedIssueMatches(issue Issue, input CreateIssueInput) bool {
 		}
 	}
 	return true
+}
+
+// createdFieldValueMatches compares one observed create field value. A clear
+// matches only an exact JSON null: an absent member, {} or an empty ID is not
+// evidence of an emptied field. A single-user value must also be a User, since
+// an ID alone cannot tell a user from another entity kind.
+func createdFieldValueMatches(expected CreateCustomField, observed json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(observed)
+	if expected.Clear {
+		return bytes.Equal(trimmed, []byte("null"))
+	}
+	var value struct {
+		ID   string `json:"id"`
+		Type string `json:"$type"`
+	}
+	if json.Unmarshal(trimmed, &value) != nil || value.ID != expected.ValueID {
+		return false
+	}
+	return expected.Type != singleUserFieldType || value.Type == "User"
 }
 
 // UpdateIssue dispatches exactly one non-replayable POST for the exact issue.

@@ -139,6 +139,10 @@ Two hazards that are easy to reintroduce:
   Deletion alone uses plan v3; historical kinds retain v1/v2 bytes and hashes.
   Show the full frozen comment as untrusted data. Consume before one DELETE;
   reconciliation is GET-only and absence/404 never proves hard deletion.
+- `operator-write` `issue.create` plans are v4 and may set or clear (`--clear-field`,
+  `--clear-field-id`) a single-user field under the separate
+  `issue-create-user-fields` capability (`OPERATOR_CAPABILITY_REQUIRED`, exit 8,
+  at prepare and apply); v2 create plans stay accepted but refuse user or null fields.
 - `operator-write snapshot --clear-value` (additive) empties one field of an
   `issue.update`; it takes exactly one field selector and never `--value` or
   `--value-id`. Single-user fields are set by exact login (`--value`) or ID
@@ -152,7 +156,7 @@ Two hazards that are easy to reintroduce:
   prepare only, including `--dry-run`) and `OPERATOR_ISSUE_STALE` (exit 9) for a text-hash mismatch.
 - `operator-write` kind `issue.link` (additive) adds one link between two
   existing issues under the new `issue-link` capability (canonical rank 7: after
-  `issue-edit`, and after `issue-create-user-fields` where that capability exists); `capabilities` lists it and its plan is `plan_version` 4. Both
+  `issue-edit` and `issue-create-user-fields`); `capabilities` lists it and its plan is `plan_version` 4. Both
   issue projects must be allowlisted. Snapshot flags `--target-id`,
   `--link-type`, `--link-type-id` and `--direction` are additive and usage
   errors for other kinds. New reasons: `OPERATOR_LINK_ALREADY_PRESENT`,

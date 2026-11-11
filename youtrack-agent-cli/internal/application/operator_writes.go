@@ -56,6 +56,26 @@ func requireOperatorProfile(selected profile.Profile, kind operatorwrite.Kind) e
 	return nil
 }
 
+// requireCreateUserFields refuses a create that sets or clears a single-user
+// field unless the profile declares issue-create-user-fields as well as
+// issue-create. State and enum fields need only issue-create. It is offline.
+func requireCreateUserFields(selected profile.Profile, touchesUser bool) error {
+	if touchesUser && !selected.HasCapability(profile.CapabilityIssueCreateUserFields) {
+		return errx.Permission("OPERATOR_CAPABILITY_REQUIRED", "selected profile does not declare issue-create-user-fields, required to set or clear a user field at creation").
+			WithHint("use a profile that declares issue-create-user-fields, or leave the user field out")
+	}
+	return nil
+}
+
+func snapshotTouchesUserField(snapshot operatorwrite.Snapshot) bool {
+	for _, field := range snapshot.Fields {
+		if field.Type == operatorwrite.UserIssueFieldType {
+			return true
+		}
+	}
+	return false
+}
+
 func operatorBinding(selected profile.Profile, policy writepolicy.Policy) operatorwrite.Binding {
 	encoded, _ := json.Marshal(policy) // Policy contains only concrete, JSON-safe metadata.
 	return operatorwrite.Binding{ProfileName: selected.Name, ProfileIdentitySHA256: profile.CredentialIdentity(selected),
@@ -75,6 +95,9 @@ func (s *Service) checkOperatorBinding(ctx context.Context, snapshot operatorwri
 		return err
 	}
 	if err := requireOperatorProfile(selected, snapshot.Kind); err != nil {
+		return err
+	}
+	if err := requireCreateUserFields(selected, snapshotTouchesUserField(snapshot)); err != nil {
 		return err
 	}
 	// An issue.link snapshot binds both projects; every one must be allowlisted.
@@ -144,12 +167,15 @@ func (s *Service) SnapshotOperatorWrite(ctx context.Context, input OperatorSnaps
 		}
 		snapshot.Binding, snapshot.Project = operatorBinding(selected, policy), &operatorwrite.Project{ID: project.ID, Key: project.ShortName}
 		for _, selection := range input.Fields {
-			schema, err := resolveOperatorField(ctx, client, project.ID, selection, &projectFields)
+			schema, err := resolveOperatorField(ctx, client, project.ID, selection, &projectFields, true)
 			if err != nil {
 				return OperatorWriteInfo{}, err
 			}
-			field, err := freezeCreateField(schema, selection.ValueID, selection.ValueName)
+			field, err := freezeCreateField(schema, selection.ValueID, selection.ValueName, selection.Clear)
 			if err != nil {
+				return OperatorWriteInfo{}, err
+			}
+			if err := requireCreateUserFields(selected, field.Type == operatorwrite.UserIssueFieldType); err != nil {
 				return OperatorWriteInfo{}, err
 			}
 			for _, frozen := range snapshot.Fields {
@@ -175,7 +201,7 @@ func (s *Service) SnapshotOperatorWrite(ctx context.Context, input OperatorSnaps
 		snapshot.Issue = operatorwrite.Issue{ID: issue.ID, ReadableID: issue.IDReadable, ProjectID: issue.Project.ID, ProjectKey: issue.Project.ShortName, Updated: issue.Updated}
 		if kind == operatorwrite.KindIssueUpdate {
 			selection := input.Fields[0]
-			schema, err := resolveOperatorField(ctx, client, issue.Project.ID, selection, &projectFields)
+			schema, err := resolveOperatorField(ctx, client, issue.Project.ID, selection, &projectFields, false)
 			if err != nil {
 				return OperatorWriteInfo{}, err
 			}
@@ -223,18 +249,18 @@ func validateOperatorTarget(kind operatorwrite.Kind, input OperatorSnapshotInput
 	}
 	for _, selection := range input.Fields {
 		if selection.Clear {
-			if kind != operatorwrite.KindIssueUpdate {
-				return errx.Usage("--clear-value is accepted only by issue.update")
+			if kind != operatorwrite.KindIssueUpdate && kind != operatorwrite.KindIssueCreate {
+				return errx.Usage("--clear-value and --clear-field are accepted only by issue.update and issue.create")
 			}
-			if len(input.Fields) != 1 {
+			if kind == operatorwrite.KindIssueUpdate && len(input.Fields) != 1 {
 				return errx.Usage("--clear-value requires exactly one field selection")
 			}
 			hasName, hasID := selection.FieldName != "", selection.FieldID != ""
 			if hasName == hasID {
-				return errx.Usage("--clear-value requires exactly one of --field or --field-id")
+				return errx.Usage("a cleared field requires exactly one of a field name or a field ID")
 			}
 			if selection.ValueName != "" || selection.ValueID != "" {
-				return errx.Usage("--clear-value cannot be combined with --value or --value-id")
+				return errx.Usage("a cleared field cannot be combined with a value")
 			}
 			continue
 		}
@@ -259,6 +285,19 @@ func validateOperatorTarget(kind operatorwrite.Kind, input OperatorSnapshotInput
 		}
 		if len(input.Fields) > operatorwrite.MaxCreateFields {
 			return errx.Usage("issue.create snapshot accepts at most %d field selections", operatorwrite.MaxCreateFields)
+		}
+		// Selectors are all by name or all by ID, clears included.
+		names, ids := 0, 0
+		for _, selection := range input.Fields {
+			if selection.FieldName != "" {
+				names++
+			}
+			if selection.FieldID != "" {
+				ids++
+			}
+		}
+		if names > 0 && ids > 0 {
+			return errx.Usage("select every issue.create field by name or every field by ID, without mixing")
 		}
 	case operatorwrite.KindIssueUpdate:
 		if input.IssueID == "" || input.ProjectID != "" || input.CommentID != "" {
@@ -364,7 +403,8 @@ func operatorDeleteComment(target youtrack.CommentDeleteTarget, accountID string
 
 // resolveOperatorField reads the exact selected schema. Name resolution uses
 // one bounded page, read at most once per snapshot, and refuses ambiguity.
-func resolveOperatorField(ctx context.Context, client *youtrack.Client, projectID string, selection OperatorFieldSelection, listed *[]youtrack.ProjectField) (youtrack.ProjectField, error) {
+// create selects the issue.create flag spelling in the truncation hint.
+func resolveOperatorField(ctx context.Context, client *youtrack.Client, projectID string, selection OperatorFieldSelection, listed *[]youtrack.ProjectField, create bool) (youtrack.ProjectField, error) {
 	fieldID := selection.FieldID
 	if fieldID == "" {
 		if *listed == nil {
@@ -373,9 +413,13 @@ func resolveOperatorField(ctx context.Context, client *youtrack.Client, projectI
 				return youtrack.ProjectField{}, err
 			}
 			if len(fields) > 100 {
-				// --clear-value takes no --value-id, so its exact retry differs.
+				// A clear takes no --value-id, and issue.create clears with
+				// --clear-field-id because --clear-value is forbidden there.
 				hint := "use exact --field-id and --value-id"
-				if selection.Clear {
+				switch {
+				case selection.Clear && create:
+					hint = "use exact --clear-field-id"
+				case selection.Clear:
 					hint = "use exact --field-id with --clear-value"
 				}
 				return youtrack.ProjectField{}, errx.Conflict("OPERATOR_SCHEMA_TRUNCATED", "bounded field lookup is truncated").WithHint("%s", hint)
@@ -405,8 +449,7 @@ func resolveOperatorField(ctx context.Context, client *youtrack.Client, projectI
 
 // supportedOperatorSchema reports whether the project field is a single State,
 // Enum, or User field backed by the matching bundle type. Everything else is
-// refused as unsupported rather than invalid. Creating an issue freezes only
-// State and Enum fields; freezeCreateField refuses the user schema itself.
+// refused as unsupported rather than invalid.
 func supportedOperatorSchema(schema youtrack.ProjectField) bool {
 	if schema.Bundle == nil {
 		return false
@@ -423,11 +466,12 @@ func supportedOperatorSchema(schema youtrack.ProjectField) bool {
 	}
 }
 
-// freezeCreateField freezes one project schema and nonarchived target value
-// for a new issue. There is no issue field or current value to bind yet.
-func freezeCreateField(schema youtrack.ProjectField, valueID, valueName string) (operatorwrite.Field, error) {
+// freezeCreateField freezes one project schema and either a nonarchived target
+// value or, with clearTarget, an explicit clear (a nil target) for a new issue.
+// There is no issue field or current value to bind yet.
+func freezeCreateField(schema youtrack.ProjectField, valueID, valueName string, clearTarget bool) (operatorwrite.Field, error) {
 	if schema.ID == "" || schema.Field.ID == "" || schema.Field.FieldType.IsMultiValue || schema.Bundle == nil || !supportedOperatorSchema(schema) {
-		return operatorwrite.Field{}, errx.Unsupported("OPERATOR_FIELD_UNSUPPORTED", "only single State and Enum fields are supported")
+		return operatorwrite.Field{}, errx.Unsupported("OPERATOR_FIELD_UNSUPPORTED", "only single State, Enum, and User fields are supported")
 	}
 	var issueType, valueType string
 	switch schema.Type {
@@ -435,13 +479,29 @@ func freezeCreateField(schema youtrack.ProjectField, valueID, valueName string) 
 		issueType, valueType = "StateIssueCustomField", "StateBundleElement"
 	case "EnumProjectCustomField":
 		issueType, valueType = "SingleEnumIssueCustomField", "EnumBundleElement"
+	case "UserProjectCustomField":
+		issueType, valueType = "SingleUserIssueCustomField", "User"
 	default:
-		return operatorwrite.Field{}, errx.Unsupported("OPERATOR_FIELD_UNSUPPORTED", "only single State and Enum fields are supported")
+		return operatorwrite.Field{}, errx.Unsupported("OPERATOR_FIELD_UNSUPPORTED", "only single State, Enum, and User fields are supported")
 	}
 	field := operatorwrite.Field{ProjectFieldID: schema.ID, GlobalFieldID: schema.Field.ID, Name: schema.Field.Name,
 		Type: issueType, ProjectFieldType: schema.Type, ValueType: schema.Field.FieldType.ValueType, IsMultiValue: schema.Field.FieldType.IsMultiValue,
 		CanBeEmpty: schema.CanBeEmpty, IsPublic: schema.IsPublic, FieldTypeID: schema.Field.FieldType.ID, FieldTypeType: schema.Field.FieldType.Type,
 		BundleID: schema.Bundle.ID, BundleType: schema.Bundle.Type}
+	if clearTarget {
+		if !schema.CanBeEmpty {
+			return field, errCannotClear()
+		}
+		return field, nil
+	}
+	if valueType == "User" {
+		target, err := selectBundleUser(schema, valueID, valueName)
+		if err != nil {
+			return field, err
+		}
+		field.TargetValue = &operatorwrite.Value{ID: target.ID, Name: target.Login, Type: "User"}
+		return field, nil
+	}
 	targetMatches := 0
 	seen := make(map[string]bool, len(schema.Bundle.Values))
 	for _, value := range schema.Bundle.Values {
@@ -518,7 +578,7 @@ func freezeOperatorField(issue youtrack.Issue, schema youtrack.ProjectField, val
 		return field, errx.Conflict("OPERATOR_FIELD_MAPPING_INVALID", "issue field type does not match the project field type")
 	}
 	if clearTarget && !schema.CanBeEmpty {
-		return field, errx.Unsupported("OPERATOR_FIELD_REQUIRED", "the field cannot be empty, so it cannot be cleared").WithHint("choose a clearable field or set a value instead")
+		return field, errCannotClear()
 	}
 	if valueType == "User" {
 		return freezeUserField(field, issueField, schema, valueID, valueName, clearTarget)
@@ -576,6 +636,10 @@ func freezeOperatorField(issue youtrack.Issue, schema youtrack.ProjectField, val
 	return field, nil
 }
 
+func errCannotClear() *errx.Error {
+	return errx.Unsupported("OPERATOR_FIELD_REQUIRED", "the field cannot be empty, so it cannot be cleared").WithHint("choose a clearable field or set a value instead")
+}
+
 func errAlreadyEmpty() *errx.Error {
 	return errx.Unsupported("OPERATOR_FIELD_ALREADY_EMPTY", "the field is already empty").WithHint("nothing to clear; do not retry unchanged")
 }
@@ -611,12 +675,26 @@ func freezeUserField(field operatorwrite.Field, issueField youtrack.IssueCustomF
 		}
 		return field, nil
 	}
+	target, err := selectBundleUser(schema, valueID, valueName)
+	if err != nil {
+		return field, err
+	}
+	field.TargetValue = &operatorwrite.Value{ID: target.ID, Name: target.Login, Type: "User"}
+	if field.CurrentValue != nil && field.CurrentValue.ID == target.ID {
+		return field, errAlreadySet()
+	}
+	return field, nil
+}
+
+// selectBundleUser picks the one nonbanned user of the field bundle named by
+// exact login or ID. It is shared by issue.update and issue.create.
+func selectBundleUser(schema youtrack.ProjectField, valueID, valueName string) (youtrack.User, error) {
 	targetMatches := 0
 	var target youtrack.User
 	seen := make(map[string]bool, len(schema.Bundle.AggregatedUsers))
 	for _, user := range schema.Bundle.AggregatedUsers {
 		if user.ID == "" || user.Login == "" || seen[user.ID] {
-			return field, errx.Conflict("OPERATOR_BUNDLE_INVALID", "field bundle has missing or duplicate user IDs")
+			return youtrack.User{}, errx.Conflict("OPERATOR_BUNDLE_INVALID", "field bundle has missing or duplicate user IDs")
 		}
 		seen[user.ID] = true
 		if valueID != "" && user.ID == valueID || valueName != "" && user.Login == valueName {
@@ -625,13 +703,9 @@ func freezeUserField(field operatorwrite.Field, issueField youtrack.IssueCustomF
 		}
 	}
 	if targetMatches != 1 || target.Banned {
-		return field, errx.Usage("the target user must be one known, unbanned user of the field bundle, selected by exact login or ID")
+		return youtrack.User{}, errx.Usage("the target user must be one known, unbanned user of the field bundle, selected by exact login or ID")
 	}
-	field.TargetValue = &operatorwrite.Value{ID: target.ID, Name: target.Login, Type: "User"}
-	if field.CurrentValue != nil && field.CurrentValue.ID == target.ID {
-		return field, errAlreadySet()
-	}
-	return field, nil
+	return target, nil
 }
 
 // PrepareOperatorWrite accepts bounded strict JSON and performs only local
@@ -845,10 +919,11 @@ func verifyOperatorRemote(ctx context.Context, client *youtrack.Client, snapshot
 			if err != nil {
 				return err
 			}
-			if frozen.TargetValue == nil {
-				return errx.Conflict("OPERATOR_FIELD_STALE", "touched field schema or target changed").WithHint("inspect a new snapshot and prepare a fresh intent")
+			targetID := ""
+			if frozen.TargetValue != nil {
+				targetID = frozen.TargetValue.ID
 			}
-			field, err := freezeCreateField(schema, frozen.TargetValue.ID, "")
+			field, err := freezeCreateField(schema, targetID, "", frozen.TargetValue == nil)
 			if err != nil {
 				// The snapshot froze a valid field, so a refusal now is drift.
 				return errx.Conflict("OPERATOR_FIELD_STALE", "touched field schema or target changed").WithHint("inspect a new snapshot and prepare a fresh intent")
@@ -980,13 +1055,14 @@ func operatorCreateInput(plan operatorwrite.Plan) youtrack.CreateIssueInput {
 	input := youtrack.CreateIssueInput{ProjectID: snapshot.Project.ID, ProjectKey: snapshot.Project.Key, Summary: plan.Request.Summary, Description: &description,
 		ExpectedReporterID: snapshot.Binding.AccountID, ExpectedReporterLogin: snapshot.Binding.AccountLogin}
 	for _, field := range snapshot.Fields {
-		// A validated create field always has a target; an empty ID makes the
-		// client's validation refuse the payload instead of dereferencing nil.
-		valueID := ""
-		if field.TargetValue != nil {
-			valueID = field.TargetValue.ID
+		// A nil target is a validated clear; otherwise the target ID is sent.
+		create := youtrack.CreateCustomField{ProjectFieldID: field.ProjectFieldID, Name: field.Name, Type: field.Type}
+		if field.TargetValue == nil {
+			create.Clear = true
+		} else {
+			create.ValueID = field.TargetValue.ID
 		}
-		input.CustomFields = append(input.CustomFields, youtrack.CreateCustomField{ProjectFieldID: field.ProjectFieldID, Name: field.Name, Type: field.Type, ValueID: valueID})
+		input.CustomFields = append(input.CustomFields, create)
 	}
 	return input
 }

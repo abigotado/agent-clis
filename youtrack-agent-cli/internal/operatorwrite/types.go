@@ -21,7 +21,8 @@ const (
 	PlanVersion2       = 2
 	PlanVersion3       = 3
 	// PlanVersion4 is the issue.update plan that may carry a User field or an
-	// explicit null (clear) target, and the issue.edit and issue.link plans.
+	// explicit null (clear) target, the issue.edit and issue.link plans, and the
+	// issue.create plan, whose fields may likewise be a User field or a clear.
 	// Earlier plans refuse all of these.
 	PlanVersion4     = 4
 	Lane             = "operator-write-v1"
@@ -67,7 +68,7 @@ func PlanLifetime(version int) string {
 // It is the single place that maps a kind to its plan version.
 func PlanVersionFor(kind Kind) int {
 	switch kind {
-	case KindIssueUpdate, KindIssueEdit, KindIssueLink:
+	case KindIssueUpdate, KindIssueEdit, KindIssueCreate, KindIssueLink:
 		return PlanVersion4
 	case KindCommentDelete:
 		return PlanVersion3
@@ -168,7 +169,8 @@ type Value struct {
 }
 
 // Field freezes only the touched field projection and selected target value.
-// A create field has no issue-field identity or current value yet.
+// A create field has no issue-field identity or current value yet, and a nil
+// target on it clears the field at creation.
 type Field struct {
 	IssueFieldID     string `json:"issue_field_id"`
 	ProjectFieldID   string `json:"project_field_id"`

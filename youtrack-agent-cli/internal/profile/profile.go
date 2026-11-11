@@ -67,7 +67,10 @@ const (
 	CapabilityCommentAdd    Capability = "comment-add"
 	CapabilityCommentDelete Capability = "comment-delete"
 	CapabilityIssueEdit     Capability = "issue-edit"
-	CapabilityIssueLink     Capability = "issue-link"
+	// CapabilityIssueCreateUserFields additionally lets issue.create set or
+	// clear a single-user field; it grants nothing without issue-create.
+	CapabilityIssueCreateUserFields Capability = "issue-create-user-fields"
+	CapabilityIssueLink             Capability = "issue-link"
 )
 
 type Executor string
@@ -302,13 +305,14 @@ func ValidateCapabilities(capabilities []Capability) error {
 	order := map[Capability]int{
 		CapabilityRead: 0, CapabilityIssueCreate: 1,
 		CapabilityIssueUpdate: 2, CapabilityCommentAdd: 3,
-		CapabilityCommentDelete: 4, CapabilityIssueEdit: 5, CapabilityIssueLink: 7,
+		CapabilityCommentDelete: 4, CapabilityIssueEdit: 5, CapabilityIssueCreateUserFields: 6,
+		CapabilityIssueLink: 7,
 	}
 	previous := -1
 	for _, capability := range capabilities {
 		position, ok := order[capability]
 		if !ok || position <= previous {
-			return invalid("capabilities must be a unique canonical subset ordered read, issue-create, issue-update, comment-add, comment-delete, issue-edit, issue-link (issue-link after issue-edit, and after issue-create-user-fields where that capability exists)")
+			return invalid("capabilities must be a unique canonical subset ordered read, issue-create, issue-update, comment-add, comment-delete, issue-edit, issue-create-user-fields, issue-link")
 		}
 		previous = position
 	}
@@ -404,8 +408,9 @@ func capabilityRank(value Capability) int {
 		return 4
 	case CapabilityIssueEdit:
 		return 5
+	case CapabilityIssueCreateUserFields:
+		return 6
 	case CapabilityIssueLink:
-		// Rank 6 belongs to issue-create-user-fields on a parallel branch.
 		return 7
 	default:
 		return 100

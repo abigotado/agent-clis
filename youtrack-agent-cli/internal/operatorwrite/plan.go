@@ -68,7 +68,7 @@ func ValidateSnapshot(s Snapshot) error {
 		// fit the client's identifier bound.
 		projectFields, globalFields, names := map[string]bool{}, map[string]bool{}, map[string]bool{}
 		for _, f := range s.Fields {
-			if f.IssueFieldID != "" || f.CurrentValue != nil || f.Type == userIssueField || !validFieldSchema(f) || !validTarget(f) || len(f.Name) > MaxCreateFieldNameBytes ||
+			if f.IssueFieldID != "" || f.CurrentValue != nil || !validFieldSchema(f) || !validCreateTarget(f) || len(f.Name) > MaxCreateFieldNameBytes ||
 				projectFields[f.ProjectFieldID] || globalFields[f.GlobalFieldID] || names[f.Name] {
 				return invalid()
 			}
@@ -188,9 +188,9 @@ func validIssue(i Issue) bool {
 }
 
 const (
-	stateIssueField = "StateIssueCustomField"
-	enumIssueField  = "SingleEnumIssueCustomField"
-	userIssueField  = "SingleUserIssueCustomField"
+	stateIssueField    = "StateIssueCustomField"
+	enumIssueField     = "SingleEnumIssueCustomField"
+	UserIssueFieldType = "SingleUserIssueCustomField"
 )
 
 // validFieldSchema checks the touched single State, Enum, or User schema,
@@ -199,13 +199,22 @@ func validFieldSchema(f Field) bool {
 	return protocolvalue.IsIdentifier(f.ProjectFieldID) && protocolvalue.IsIdentifier(f.GlobalFieldID) && validText(f.Name, 256, true) &&
 		(f.Type == stateIssueField && f.ProjectFieldType == "StateProjectCustomField" && f.ValueType == "state" && f.BundleType == "StateBundle" ||
 			f.Type == enumIssueField && f.ProjectFieldType == "EnumProjectCustomField" && f.ValueType == "enum" && f.BundleType == "EnumBundle" ||
-			f.Type == userIssueField && f.ProjectFieldType == "UserProjectCustomField" && f.ValueType == "user" && f.BundleType == "UserBundle") &&
+			f.Type == UserIssueFieldType && f.ProjectFieldType == "UserProjectCustomField" && f.ValueType == "user" && f.BundleType == "UserBundle") &&
 		!f.IsMultiValue && f.FieldTypeType == "FieldType" && protocolvalue.IsIdentifier(f.BundleID) && f.FieldTypeID == f.ValueType+"[1]"
 }
 
 // validTarget requires a present, valid, nonarchived target value.
 func validTarget(f Field) bool {
 	return f.TargetValue != nil && validValue(*f.TargetValue, f.Type) && !f.TargetValue.Archived
+}
+
+// validCreateTarget accepts a create field's nonarchived target value, or a
+// nil target that clears it, which needs a field that can be empty.
+func validCreateTarget(f Field) bool {
+	if f.TargetValue == nil {
+		return f.CanBeEmpty
+	}
+	return validTarget(f)
 }
 
 // validUpdateValues checks an update field's current and target values. A nil
@@ -223,9 +232,18 @@ func validUpdateValues(f Field) bool {
 }
 
 // needsPlanVersion4 reports whether the snapshot carries a User field or a
-// null target, which only a version 4 plan may hold.
+// null target, in the update field or in any create field, which only a
+// version 4 plan may hold.
 func needsPlanVersion4(s Snapshot) bool {
-	return s.Field != nil && (s.Field.Type == userIssueField || s.Field.TargetValue == nil)
+	if s.Field != nil && (s.Field.Type == UserIssueFieldType || s.Field.TargetValue == nil) {
+		return true
+	}
+	for _, f := range s.Fields {
+		if f.Type == UserIssueFieldType || f.TargetValue == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func validValue(v Value, fieldType string) bool {
@@ -235,7 +253,7 @@ func validValue(v Value, fieldType string) bool {
 		expected = "StateBundleElement"
 	case enumIssueField:
 		expected = "EnumBundleElement"
-	case userIssueField:
+	case UserIssueFieldType:
 		// A user is never archived; only id, login (name), and type are frozen.
 		if v.Archived {
 			return false
@@ -396,7 +414,7 @@ func ValidatePlan(p Plan) error {
 			return invalid()
 		}
 	case PlanVersion4:
-		if p.Snapshot.Kind != KindIssueUpdate && p.Snapshot.Kind != KindIssueEdit && p.Snapshot.Kind != KindIssueLink || !p.ExpiresAt.IsZero() {
+		if p.Snapshot.Kind != KindIssueUpdate && p.Snapshot.Kind != KindIssueEdit && p.Snapshot.Kind != KindIssueCreate && p.Snapshot.Kind != KindIssueLink || !p.ExpiresAt.IsZero() {
 			return invalid()
 		}
 	default:

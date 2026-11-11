@@ -43,7 +43,8 @@ No raw REST path, attachment, arbitrary workflow, batch or existing-comment
 edit is authorized by this path. This path does not limit MCP tools. Issue creation is
 authorized since this decision was amended: one plan creates at most one issue
 in one exact allowlisted project, with a summary, a bounded description and
-optional single State/Enum fields. Creation has no remote precondition beyond
+optional single State/Enum/User fields (a User field needs the separate
+`issue-create-user-fields` capability). Creation has no remote precondition beyond
 the project and touched schema, so two equivalent plans create two issues;
 the ledger only stops one plan from being applied twice.
 The ordinary source-built Homebrew Formula is the distribution channel, with
@@ -68,7 +69,7 @@ youtrack-agent-cli capabilities --profile work-write -o json
 ```
 
 Replace `ID:KEY` with a verified immutable project ID and key. Adding
-`issue-create` or `comment-delete` to an existing profile changes its credential identity, so the
+`issue-create`, `issue-create-user-fields`, `issue-link` or `comment-delete` to an existing profile changes its credential identity, so the
 old credential generation and project policy become stale: log in again and
 set the project allowlist again before preparing any plan. Profile/login/
 policy setup requires separate operator authorization; it is not an install hook.
@@ -164,8 +165,8 @@ before dispatch and never restores it.
 
 `capabilities` advertises the highest supported `plan_version: 4` and
 `plan_lifetime: until_consumed_or_stale`; its `plan_versions` map reports v4 for
-`issue.update`, `issue.edit` and `issue.link` (previously prepared v2 `issue.update` plans are still accepted but cannot carry
-user fields or a null target), v2 for creation and comment addition, and v3 for deletion. Plan/status/apply results report
+`issue.update`, `issue.edit`, `issue.create` and `issue.link` (previously prepared v2 `issue.update` and `issue.create` plans are still accepted but cannot carry
+user fields or a null target), v2 for comment addition, and v3 for deletion. Plan/status/apply results report
 their actual plan version/lifetime. V2/v3/v4 default JSON/raw results and serialized plans
 omit `expires_at`. An explicit `--fields expires_at` projection retains the
 existing selectable field vocabulary and returns an empty string for v2/v3/v4; use
@@ -173,11 +174,12 @@ existing selectable field vocabulary and returns an empty string for v2/v3/v4; u
 The unchanged `source`/lane name `operator-write-v1` identifies the operator
 storage namespace, not the nested plan schema or JSON envelope version.
 
-New `issue.update`, `issue.edit` and `issue.link` plans are v4; creation and comment addition continue to
+New `issue.update`, `issue.edit`, `issue.create` and `issue.link` plans are v4; comment addition continues to
 prepare v2 plans. V1/v2 bytes and hashes are preserved, v2 plans remain
 accepted and appliable, and both versions reject deletion; v3 accepts only
-`comment.delete` and v4 only `issue.update`, `issue.edit` and `issue.link`. Only v4 can encode a User field or
-an explicit `null` target (clear); v1-v3 plans refuse both.
+`comment.delete` and v4 only `issue.update`, `issue.edit`, `issue.create` and `issue.link`. Only v4 can encode a User field or
+an explicit `null` target (clear), in an update field or in any create field; v1-v3 plans refuse both.
+A v4 create plan adds no member beyond the v2 shape.
 Legacy plan schema v1 retains its exact bytes, digest, 15-minute expiry and
 claim validation; its results report `legacy_time_limited` and the original
 `expires_at`. Upgrading never migrates, extends or revives those plans. An old
@@ -220,8 +222,39 @@ printf '%s' '{"kind":"issue.create","summary":"EXACT TITLE","description":"EXACT
 position for `issue.create`; one call uses names or IDs, never both. For
 `issue.update`, which touches one field, a repeated flag keeps its last value as
 before, and an empty last value such as `--field=` clears it. At most eight distinct single
-State/Enum fields are frozen by project-field, global-field and value IDs.
-Omitted fields take the project's defaults. The summary is one line without
+State/Enum/User fields are frozen by project-field, global-field and value IDs,
+and a clear counts toward the eight.
+
+A single-user field such as Assignee is set by exact login (`--field Assignee
+--value LOGIN`) or by user ID (`--field-id ID --value-id USER_ID`), under the same
+bundle rules as `issue.update`: the user must be exactly one unbanned user in the
+field bundle's `aggregatedUsers`, and only the ID, login and `User` type are
+frozen. The request body is `{"name":"Assignee","$type":"SingleUserIssueCustomField","value":{"id":"USER_ID"}}`.
+Setting an assignee notifies a third party.
+
+`--clear-field NAME` and `--clear-field-id PROJECT_FIELD_ID` (repeatable, `issue.create`
+only, never with `--clear-value`) leave a field empty at creation by sending
+`"value": null`. The project field must allow empty values (`canBeEmpty`), else
+`OPERATOR_FIELD_REQUIRED` (exit 2). They work for State, Enum and User fields; names
+and IDs are never mixed in one call (`--clear-field` goes with `--field`,
+`--clear-field-id` with `--field-id`) and each field is named once.
+
+Setting or clearing a User field needs the `issue-create-user-fields` capability
+in addition to `issue-create`; without it the CLI refuses with
+`OPERATOR_CAPABILITY_REQUIRED` (exit 8), offline at `prepare` and again at `apply`,
+before any credential or network access. State and enum set or clear needs only
+`issue-create`. Adding the capability to a profile is an explicitly authorized
+`profile add` change that alters the credential identity, so log in again and set the
+project allowlist again.
+
+A field the plan does not name follows the project's default value or workflow.
+YouTrack may also refill a cleared field: a project default value or workflow may
+assign or refill the field on create, so a cleared field can come back filled. The response must show
+a named field with the exact planned value (a User with the planned ID, or an
+exact JSON `null` for a clear; `{}` or an empty ID does not count). When the
+issue identity matches but a named field differs, the result stays
+`WRITE_OUTCOME_UNKNOWN`; `operator-write reconcile` then reads the issue and
+reports `matching_issue_observed_fields_differ`. Never apply the plan again. The summary is one line without
 surrounding whitespace or control characters, at most 1024 bytes. The
 description is optional, LF-only and without surrounding whitespace; the final
 description, including the visible `[youtrack operator-write PLAN_ID]` marker on
@@ -229,7 +262,7 @@ its own last paragraph, is at most 32 KiB. These rules make the exact response
 comparison safe against server-side trimming.
 
 Apply rechecks the project ID, key and archive state and each touched field
-schema and target, then sends one `POST /api/issues`. Fields are addressed by
+schema and target (a cleared field must still allow empty values), then sends one `POST /api/issues`. Fields are addressed by
 their project-unique name and `$type`, because a new issue has no issue-field
 IDs yet; the response must carry the exact project, summary, description,
 bound reporter and each value under the frozen project-field ID. A response that
@@ -301,8 +334,8 @@ fields show them on request.
 ## Linking issues
 
 `issue.link` adds one link between two existing issues. It needs a separately
-declared `issue-link` capability (canonical order: after `issue-edit`, and after
-`issue-create-user-fields` where that capability exists); no
+declared `issue-link` capability (canonical order: after `issue-edit` and
+`issue-create-user-fields`); no
 existing profile gains it, and adding it changes the credential identity, so log
 in again and set the project allowlist again before preparing a plan. Both
 issues' projects must be on the allowlist: a link to an issue in a project

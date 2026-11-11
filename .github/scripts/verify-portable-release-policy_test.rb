@@ -427,10 +427,59 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
   end
 
   def test_rejects_removing_operator_write_dependency_guard
-    changed = RELEASE.sub("auth|application|journal|mutation|operatorwrite|youtrack", "auth|application|journal|mutation|youtrack")
+    changed = RELEASE.sub("approval|auth|application|intent|journal|mutation|oauth|oauthrecovery|operatorwrite|writepolicy|youtrack", "auth|application|journal|mutation|oauth|oauthrecovery|youtrack")
     refute_equal RELEASE, changed
     success, stderr = verify(CONFIG, {}, release: changed)
     refute success
     assert_includes stderr, "must equal the approved publisher"
+  end
+
+  def test_rejects_weakening_the_portable_boundary_check
+    [
+      ["^net/http(/|$)|", ""],
+      ["youtrack)(/|$)\x27", "youtrack)$\x27"],
+    ].each do |from, to|
+      changed = RELEASE.sub(from, to)
+      refute_equal RELEASE, changed, from
+      success, stderr = verify(CONFIG, {}, release: changed)
+      refute success, from
+      assert_includes stderr, "must equal the approved publisher"
+    end
+  end
+
+  def test_boundary_pattern_catches_subpackages_and_net_http
+    pattern = RELEASE[/grep -E '([^']+)'/, 1]
+    refute_nil pattern
+    regexp = Regexp.new(pattern)
+    %w[
+      net/http net/http/httputil net/http/internal/ascii
+      github.com/abigotado/agent-clis/youtrack-agent-cli/internal/youtrack
+      github.com/abigotado/agent-clis/youtrack-agent-cli/internal/youtrack/sub
+      github.com/abigotado/agent-clis/youtrack-agent-cli/internal/oauth
+    ].each { |package| assert_match regexp, package }
+    %w[net net/url github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile
+       github.com/abigotado/agent-clis/youtrack-agent-cli/internal/youtrackish].each { |package| refute_match regexp, package }
+  end
+
+  def test_rejects_a_goreleaser_mention_in_job_level_keys
+    [
+      ["    name: youtrack-agent-cli (${{ matrix.os }})\n", "    name: youtrack-agent-cli (${{ matrix.os }})\n    env:\n      TOOL: goreleaser\n"],
+      ["    runs-on: ${{ matrix.os }}\n    defaults:\n", "    runs-on: ${{ matrix.os }}\n    container: goreleaser/goreleaser\n    defaults:\n"],
+    ].each do |from, to|
+      changed = REAL_CI.sub(from, to)
+      refute_equal REAL_CI, changed
+      success, stderr = verify(CONFIG, {}, ci: changed)
+      refute success
+      assert_includes stderr, "job youtrack mentions GoReleaser outside its steps"
+    end
+  end
+
+  def test_rejects_the_rehearsal_directory_split_between_defaults_and_step
+    split = REAL_CI.sub("    defaults:\n      run:\n        working-directory: youtrack-agent-cli\n", "")
+      .sub(REHEARSAL_NAME, "#{REHEARSAL_NAME}        working-directory: youtrack-agent-cli\n")
+    refute_equal REAL_CI, split
+    success, stderr = verify(CONFIG, {}, ci: split)
+    refute success
+    assert_match(/not the pinned step|must keep defaults/, stderr)
   end
 end
