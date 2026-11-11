@@ -43,7 +43,7 @@ func TestCapabilitiesAdvertiseDurablePlanMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantVersions := map[string]int{
-		"issue.create":   operatorwrite.PlanVersion2,
+		"issue.create":   operatorwrite.PlanVersion4,
 		"issue.update":   operatorwrite.PlanVersion4,
 		"comment.add":    operatorwrite.PlanVersion2,
 		"comment.delete": operatorwrite.PlanVersion3,

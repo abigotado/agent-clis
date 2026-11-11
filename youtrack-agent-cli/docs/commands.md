@@ -304,9 +304,11 @@ Read one exact issue or project and freeze a supported write target
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
+| `--clear-field` | stringArray |  | exact field name to leave empty at creation; repeatable, only with --kind issue.create, never with --clear-value or --field-id. The project field must allow empty values (canBeEmpty). A user field also needs the issue-create-user-fields capability |
+| `--clear-field-id` | stringArray |  | immutable project custom-field ID to leave empty at creation; repeatable, only with --kind issue.create, never with --clear-value or --field |
 | `--clear-value` | bool |  | empty the selected field instead of setting a value; only with --kind issue.update and exactly one --field or --field-id, never with --value or --value-id. The field must allow empty values (canBeEmpty) and currently hold one |
 | `--comment-id` | string |  | immutable exact comment ID for comment.delete |
-| `--field` | stringArray |  | exact field name, for example Stage; repeatable for issue.create, last wins otherwise |
+| `--field` | stringArray |  | exact field name, for example Stage or Assignee; repeatable for issue.create, last wins otherwise |
 | `--field-id` | stringArray |  | immutable project custom-field ID; repeatable for issue.create, last wins otherwise |
 | `--id` | string |  | exact issue entity or readable ID for issue.update, issue.edit, comment.add, or comment.delete |
 | `--kind` | string |  | supported write kind: issue.create, issue.update, issue.edit, comment.add, or comment.delete |

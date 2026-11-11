@@ -63,9 +63,9 @@ a batch, or an automatic retry after consumed/ambiguous results.
 
 ## Plan lifetime
 
-Check `plan_version` and `plan_lifetime` in the CLI result. New `issue.update`
-and `issue.edit` plans are v4 (previously prepared v2 `issue.update` plans are still accepted but cannot carry user fields or a null `target_value`; v3 is `comment.delete` only); creation and comment addition
-prepare v2 plans; exact deletion alone prepares v3. All use
+Check `plan_version` and `plan_lifetime` in the CLI result. New `issue.update`,
+`issue.edit` and `issue.create` plans are v4 (previously prepared v2 `issue.update` and `issue.create` plans are still accepted but cannot carry user fields or a null `target_value`; v3 is `comment.delete` only); comment addition
+prepares v2 plans; exact deletion alone prepares v3. All use
 `until_consumed_or_stale` and omit `expires_at` from serialized plans
 and default JSON/raw results (explicit `--fields expires_at` returns an empty
 string). Waiting for a human does not change their ID, marker or digest. Keep
@@ -92,9 +92,18 @@ uses its legacy rules; request a released upgrade rather than bypassing them.
    `--kind comment.delete --id ISSUE --comment-id COMMENT`.
    For a new issue use `--kind issue.create --project KEY` instead of `--id`,
    optionally with repeated `--field NAME --value VALUE` pairs (or repeated
-   `--field-id`/`--value-id` pairs, never mixed) for single State/Enum fields
+   `--field-id`/`--value-id` pairs, never mixed) for single State/Enum/User fields
    (other kinds keep only the last repeated value; an empty one clears it);
-   omitted fields take project defaults. A project outside the profile's
+   a field the plan does not name follows the project's default or workflow.
+   A single-user field such as Assignee takes `--value LOGIN` or `--value-id
+   USER_ID` and needs the `issue-create-user-fields` capability in addition to
+   `issue-create` (`OPERATOR_CAPABILITY_REQUIRED`, exit 8, at prepare and apply);
+   disclose that assigning notifies a third party. Repeatable `--clear-field NAME`
+   / `--clear-field-id PROJECT_FIELD_ID` (create only, same names-or-IDs rule, never
+   with `--clear-value`) send `"value": null` for a field that allows empty values
+   (else `OPERATOR_FIELD_REQUIRED`, exit 2). YouTrack may refill a cleared field
+   (a project default value or workflow may assign or refill the field on create); the outcome is then
+   `WRITE_OUTCOME_UNKNOWN` and reconcile reports `matching_issue_observed_fields_differ`. Never re-apply. A project outside the profile's
    `auth allow-projects` policy is refused with `PROJECT_POLICY_DENIED`.
    Ambiguous/truncated field-name resolution must use exact IDs, never guesses.
    For a single-user field such as Assignee pass `--value LOGIN` (exact login)

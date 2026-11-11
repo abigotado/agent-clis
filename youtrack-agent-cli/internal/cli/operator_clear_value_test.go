@@ -29,6 +29,16 @@ func TestOperatorCLIClearValueFlagValidation(t *testing.T) {
 		{"clear with two fields", []string{"--kind", "issue.update", "--id", "APP-12", "--clear-value", "--field", "Assignee", "--field", "Stage"}, errx.CodeUsage, "USAGE"},
 		{"clear with name and id", []string{"--kind", "issue.update", "--id", "APP-12", "--clear-value", "--field", "Assignee", "--field-id", "92-1"}, errx.CodeUsage, "USAGE"},
 		{"clear with empty field", []string{"--kind", "issue.update", "--id", "APP-12", "--clear-value", "--field", ""}, errx.CodeUsage, "USAGE"},
+		{"clear-field on issue.create accepted", []string{"--kind", "issue.create", "--project", "APP", "--clear-field", "Assignee"}, errx.CodePermission, "OPERATOR_CAPABILITY_REQUIRED"},
+		{"clear-field-id on issue.create accepted", []string{"--kind", "issue.create", "--project", "APP", "--clear-field-id", "93-1"}, errx.CodePermission, "OPERATOR_CAPABILITY_REQUIRED"},
+		{"clear-field with clear-value", []string{"--kind", "issue.create", "--project", "APP", "--clear-field", "Assignee", "--clear-value", "--field", "Stage"}, errx.CodeUsage, "USAGE"},
+		{"clear-field on issue.update", []string{"--kind", "issue.update", "--id", "APP-12", "--clear-field", "Assignee"}, errx.CodeUsage, "USAGE"},
+		{"clear-field-id on issue.edit", []string{"--kind", "issue.edit", "--id", "APP-12", "--clear-field-id", "93-1"}, errx.CodeUsage, "USAGE"},
+		{"clear-field on comment.delete", []string{"--kind", "comment.delete", "--id", "APP-12", "--comment-id", "4-1", "--clear-field", "Assignee"}, errx.CodeUsage, "USAGE"},
+		{"clear-field mixed with field ids", []string{"--kind", "issue.create", "--project", "APP", "--clear-field", "Assignee", "--field-id", "92-1", "--value-id", "101-2"}, errx.CodeUsage, "USAGE"},
+		{"clear-field-id mixed with field names", []string{"--kind", "issue.create", "--project", "APP", "--clear-field-id", "93-1", "--field", "Stage", "--value", "Done"}, errx.CodeUsage, "USAGE"},
+		{"clear-field mixed with clear-field-id", []string{"--kind", "issue.create", "--project", "APP", "--clear-field", "Assignee", "--clear-field-id", "93-1"}, errx.CodeUsage, "USAGE"},
+		{"empty clear-field", []string{"--kind", "issue.create", "--project", "APP", "--clear-field", ""}, errx.CodeUsage, "USAGE"},
 		{"unassigned is an ordinary login", []string{"--kind", "issue.update", "--id", "APP-12", "--field", "Assignee", "--value", "Unassigned"}, errx.CodePermission, "OPERATOR_CAPABILITY_REQUIRED"},
 		{"empty value never clears", []string{"--kind", "issue.update", "--id", "APP-12", "--field", "Assignee", "--value", ""}, errx.CodeUsage, "USAGE"},
 	} {
@@ -58,6 +68,7 @@ func TestOperatorFieldSelectionsMapping(t *testing.T) {
 		name                                       string
 		kind                                       string
 		fieldNames, valueNames, fieldIDs, valueIDs []string
+		clearNames, clearIDs                       []string
 		clear                                      bool
 		want                                       []application.OperatorFieldSelection
 		wantUsage                                  bool
@@ -69,10 +80,24 @@ func TestOperatorFieldSelectionsMapping(t *testing.T) {
 		{name: "unassigned is a plain value", kind: "issue.update", fieldNames: one("Assignee"), valueNames: one("Unassigned"),
 			want: []application.OperatorFieldSelection{{FieldName: "Assignee", ValueName: "Unassigned"}}},
 		{name: "empty value is not a clear", kind: "issue.update", fieldNames: one("Assignee"), valueNames: one(""), wantUsage: true},
+		{name: "create sets then clears by name", kind: "issue.create", fieldNames: one("Stage"), valueNames: one("Done"), clearNames: one("Assignee", "Subsystem"),
+			want: []application.OperatorFieldSelection{{FieldName: "Stage", ValueName: "Done"}, {FieldName: "Assignee", Clear: true}, {FieldName: "Subsystem", Clear: true}}},
+		{name: "create sets then clears by id", kind: "issue.create", fieldIDs: one("92-1"), valueIDs: one("101-2"), clearIDs: one("93-1"),
+			want: []application.OperatorFieldSelection{{FieldID: "92-1", ValueID: "101-2"}, {FieldID: "93-1", Clear: true}}},
+		{name: "create clears only", kind: "issue.create", clearIDs: one("93-1"),
+			want: []application.OperatorFieldSelection{{FieldID: "93-1", Clear: true}}},
+		{name: "clear-field on issue.update", kind: "issue.update", clearNames: one("Assignee"), wantUsage: true},
+		{name: "clear-field-id on comment.add", kind: "comment.add", clearIDs: one("93-1"), wantUsage: true},
+		{name: "clear-field with clear-value", kind: "issue.create", clearNames: one("Assignee"), clear: true, wantUsage: true},
+		{name: "clear-field with field ids", kind: "issue.create", fieldIDs: one("92-1"), valueIDs: one("101-2"), clearNames: one("Assignee"), wantUsage: true},
+		{name: "clear-field-id with field names", kind: "issue.create", fieldNames: one("Stage"), valueNames: one("Done"), clearIDs: one("93-1"), wantUsage: true},
+		{name: "clear-field with clear-field-id", kind: "issue.create", clearNames: one("Assignee"), clearIDs: one("93-1"), wantUsage: true},
+		{name: "empty clear-field", kind: "issue.create", clearNames: one(""), wantUsage: true},
+		{name: "empty clear-field-id", kind: "issue.create", clearIDs: one("93-1", ""), wantUsage: true},
 		{name: "clear with empty value conflicts", kind: "issue.update", fieldNames: one("Assignee"), valueNames: one(""), clear: true, wantUsage: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := operatorFieldSelections(test.kind, test.fieldNames, test.valueNames, test.fieldIDs, test.valueIDs, test.clear)
+			got, err := operatorFieldSelections(test.kind, test.fieldNames, test.valueNames, test.fieldIDs, test.valueIDs, test.clearNames, test.clearIDs, test.clear)
 			if test.wantUsage {
 				if err == nil || errx.ExitCode(err) != errx.CodeUsage {
 					t.Fatalf("got %v, %v", got, err)

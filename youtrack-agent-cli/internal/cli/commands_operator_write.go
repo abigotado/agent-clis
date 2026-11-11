@@ -95,7 +95,7 @@ func (a *App) newOperatorWriteCommand() *cobra.Command {
 
 func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 	var input application.OperatorSnapshotInput
-	var fieldNames, valueNames, fieldIDs, valueIDs []string
+	var fieldNames, valueNames, fieldIDs, valueIDs, clearNames, clearIDs []string
 	var clearValue bool
 	command := &cobra.Command{Use: "snapshot", Short: "Read one exact issue or project and freeze a supported write target", Args: usageArgs(cobra.NoArgs), RunE: func(cmd *cobra.Command, _ []string) error {
 		if err := a.resolveOperationProfile(cmd, "write"); err != nil {
@@ -110,10 +110,10 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 		if input.Kind == "comment.delete" && (len(fieldNames) != 0 || len(valueNames) != 0 || len(fieldIDs) != 0 || len(valueIDs) != 0) {
 			return errx.Usage("comment.delete snapshot does not accept field or value selectors")
 		}
-		if input.Kind == "issue.edit" && (len(fieldNames) != 0 || len(valueNames) != 0 || len(fieldIDs) != 0 || len(valueIDs) != 0 || input.ProjectID != "" || input.CommentID != "") {
+		if input.Kind == "issue.edit" && (len(clearNames) != 0 || len(clearIDs) != 0 || len(fieldNames) != 0 || len(valueNames) != 0 || len(fieldIDs) != 0 || len(valueIDs) != 0 || input.ProjectID != "" || input.CommentID != "") {
 			return errx.Usage("issue.edit snapshot takes only --id and --out; no field, value, --project, or --comment-id")
 		}
-		fields, err := operatorFieldSelections(input.Kind, fieldNames, valueNames, fieldIDs, valueIDs, clearValue)
+		fields, err := operatorFieldSelections(input.Kind, fieldNames, valueNames, fieldIDs, valueIDs, clearNames, clearIDs, clearValue)
 		if err != nil {
 			return err
 		}
@@ -133,19 +133,35 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 	flags.StringVar(&input.IssueID, "id", "", "exact issue entity or readable ID for issue.update, issue.edit, comment.add, or comment.delete")
 	flags.StringVar(&input.CommentID, "comment-id", "", "immutable exact comment ID for comment.delete")
 	flags.StringVar(&input.ProjectID, "project", "", "exact project entity ID or key for issue.create")
-	flags.StringArrayVar(&fieldNames, "field", nil, "exact field name, for example Stage; repeatable for issue.create, last wins otherwise")
+	flags.StringArrayVar(&fieldNames, "field", nil, "exact field name, for example Stage or Assignee; repeatable for issue.create, last wins otherwise")
 	flags.StringArrayVar(&valueNames, "value", nil, "exact target bundle value name, or exact user login for a user field, paired with --field")
 	flags.StringArrayVar(&fieldIDs, "field-id", nil, "immutable project custom-field ID; repeatable for issue.create, last wins otherwise")
 	flags.StringArrayVar(&valueIDs, "value-id", nil, "immutable target bundle value ID, or user ID for a user field, paired with --field-id")
 	flags.BoolVar(&clearValue, "clear-value", false, "empty the selected field instead of setting a value; only with --kind issue.update and exactly one --field or --field-id, never with --value or --value-id. The field must allow empty values (canBeEmpty) and currently hold one")
+	flags.StringArrayVar(&clearNames, "clear-field", nil, "exact field name to leave empty at creation; repeatable, only with --kind issue.create, never with --clear-value or --field-id. The project field must allow empty values (canBeEmpty). A user field also needs the issue-create-user-fields capability")
+	flags.StringArrayVar(&clearIDs, "clear-field-id", nil, "immutable project custom-field ID to leave empty at creation; repeatable, only with --kind issue.create, never with --clear-value or --field")
 	flags.StringVar(&input.OutputPath, "out", "", "new exclusive 0600 snapshot path in an existing private directory")
 	return command
 }
 
 // operatorFieldSelections maps the raw snapshot selector flags to the
 // selections handed to the application layer.
-func operatorFieldSelections(kind string, fieldNames, valueNames, fieldIDs, valueIDs []string, clearValue bool) ([]application.OperatorFieldSelection, error) {
+func operatorFieldSelections(kind string, fieldNames, valueNames, fieldIDs, valueIDs, clearNames, clearIDs []string, clearValue bool) ([]application.OperatorFieldSelection, error) {
 	var fields []application.OperatorFieldSelection
+	if len(clearNames) != 0 || len(clearIDs) != 0 {
+		// Checked on the raw flags: an empty name must conflict, never clear.
+		if kind != "issue.create" {
+			return nil, errx.Usage("--clear-field and --clear-field-id are accepted only with --kind issue.create")
+		}
+		if clearValue {
+			return nil, errx.Usage("--clear-field and --clear-field-id cannot be combined with --clear-value")
+		}
+		for _, value := range append(append([]string(nil), clearNames...), clearIDs...) {
+			if value == "" {
+				return nil, errx.Usage("--clear-field and --clear-field-id require a nonempty field")
+			}
+		}
+	}
 	if clearValue {
 		// Checked on the raw flags: --value "" must conflict, never clear.
 		if kind != "issue.update" {
@@ -173,14 +189,20 @@ func operatorFieldSelections(kind string, fieldNames, valueNames, fieldIDs, valu
 		fieldNames, valueNames, fieldIDs, valueIDs = lastValue(fieldNames), lastValue(valueNames), lastValue(fieldIDs), lastValue(valueIDs)
 	}
 	// Selectors pair by position, so one call uses names or IDs, never both.
-	if len(fieldNames) != len(valueNames) || len(fieldIDs) != len(valueIDs) || len(fieldNames) > 0 && len(fieldIDs) > 0 {
-		return nil, errx.Usage("pair each --field with one --value, or each --field-id with one --value-id, without mixing names and IDs")
+	if len(fieldNames) != len(valueNames) || len(fieldIDs) != len(valueIDs) || len(fieldNames)+len(clearNames) > 0 && len(fieldIDs)+len(clearIDs) > 0 {
+		return nil, errx.Usage("pair each --field with one --value, or each --field-id with one --value-id, without mixing names and IDs; --clear-field belongs with names and --clear-field-id with IDs")
 	}
 	for index := range fieldNames {
 		fields = append(fields, application.OperatorFieldSelection{FieldName: fieldNames[index], ValueName: valueNames[index]})
 	}
 	for index := range fieldIDs {
 		fields = append(fields, application.OperatorFieldSelection{FieldID: fieldIDs[index], ValueID: valueIDs[index]})
+	}
+	for _, name := range clearNames {
+		fields = append(fields, application.OperatorFieldSelection{FieldName: name, Clear: true})
+	}
+	for _, id := range clearIDs {
+		fields = append(fields, application.OperatorFieldSelection{FieldID: id, Clear: true})
 	}
 	return fields, nil
 }
