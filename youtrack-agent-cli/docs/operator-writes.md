@@ -332,8 +332,9 @@ directed type whose two phrases are identical is refused with
 `--clear-value`, `--project` and `--comment-id` are usage errors (exit 2), and
 `--target-id`, `--link-type`, `--link-type-id` and `--direction` are usage
 errors with any other kind. The canonical request is `{"kind":"issue.link"}`. A known text member
-(`summary`, `description`, `comment_text`) that is present but empty is accepted
-and treated as absent, as for the other kinds; a non-empty one is refused.
+(`summary`, `description`, `comment_text`) that is present but empty (`""`) or
+`null` is accepted and treated as absent, as for the other kinds; a non-empty one
+is refused.
 
 Snapshot reads, in bounded single pages after verifying the account: both
 issues, the link types (`GET /api/issueLinkTypes`, or the exact type by ID), the
