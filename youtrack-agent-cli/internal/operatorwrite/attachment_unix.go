@@ -21,6 +21,12 @@ import (
 // directories are followed on purpose (macOS /tmp and /var are symlinks); the
 // content hash, not the path, is the guard. No returned error carries the path.
 func ReadAttachmentSource(ctx context.Context, path string) (AttachmentSource, error) {
+	return readAttachmentSource(ctx, path, nil)
+}
+
+// readAttachmentSource is ReadAttachmentSource with a hook that tests use to
+// change the filesystem after the bytes are read and before identity is rechecked.
+func readAttachmentSource(ctx context.Context, path string, afterRead func()) (AttachmentSource, error) {
 	if err := ctx.Err(); err != nil {
 		return AttachmentSource{}, errx.Translate(err)
 	}
@@ -83,6 +89,9 @@ func ReadAttachmentSource(ctx context.Context, path string) (AttachmentSource, e
 	}
 	if err := ctx.Err(); err != nil {
 		return AttachmentSource{}, errx.Translate(err)
+	}
+	if afterRead != nil {
+		afterRead()
 	}
 	// A directory swapped for a symlink during the read would make the stored path
 	// name a different file than the one hashed; re-resolve and compare identity.

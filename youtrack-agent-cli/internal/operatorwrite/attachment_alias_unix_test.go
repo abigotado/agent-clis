@@ -54,3 +54,34 @@ func TestReadAttachmentSourceStillRefusesFinalSymlinkAfterResolution(t *testing.
 		t.Fatal("final-component symlink was accepted")
 	}
 }
+
+func TestReadAttachmentSourceRefusesParentSwappedDuringRead(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, decoy := filepath.Join(root, "dir"), filepath.Join(root, "decoy")
+	for _, d := range []string{dir, decoy} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "shot.png"), minimalPNG([]byte("same")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	swap := func() {
+		if err := os.Rename(dir, filepath.Join(root, "dir-moved")); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.Symlink(decoy, dir); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, err := readAttachmentSource(context.Background(), filepath.Join(dir, "shot.png"), swap); err == nil {
+		t.Fatal("a parent directory swapped for a symlink during the read was accepted")
+	}
+	if _, err := readAttachmentSource(context.Background(), filepath.Join(decoy, "shot.png"), nil); err != nil {
+		t.Fatalf("control read of an untouched file failed: %v", err)
+	}
+}

@@ -746,3 +746,41 @@ func TestCapabilitiesListAttachmentAddWithPlanVersion(t *testing.T) {
 		t.Fatalf("plan_versions=%v", info.PlanVersions)
 	}
 }
+
+func TestAttachmentApplyRefusesFrozenParentRedirectedToIdenticalBytes(t *testing.T) {
+	original := pngBytes("original")
+	f := newAttachmentFixture(t)
+	dir := filepath.Join(f.files, "sub")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "shot.png")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan := f.prepared(t, path, "")
+	decoy := filepath.Join(f.files, "decoy")
+	if err := os.Mkdir(decoy, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(decoy, "shot.png"), original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(dir, filepath.Join(f.files, "sub-moved")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(decoy, dir); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	credentials, network, restore := f.trapped()
+	_, err := f.apply(t, plan)
+	requireRefusal(t, err, "OPERATOR_ATTACHMENT_SOURCE_STALE", errx.CodeConflict)
+	if credentials.calls != 0 || network.calls != 0 {
+		t.Fatalf("credentials=%d network=%d", credentials.calls, network.calls)
+	}
+	record, getErr := f.service.OperatorWrites.Get(t.Context(), plan.PlanID)
+	if getErr != nil || record.NonReplayable() || record.State != operatorwrite.StatePrepared {
+		t.Fatalf("plan was consumed: %#v %v", record, getErr)
+	}
+	restore()
+}
