@@ -66,6 +66,7 @@ const (
 	CapabilityIssueUpdate   Capability = "issue-update"
 	CapabilityCommentAdd    Capability = "comment-add"
 	CapabilityCommentDelete Capability = "comment-delete"
+	CapabilityIssueEdit     Capability = "issue-edit"
 )
 
 type Executor string
@@ -300,13 +301,13 @@ func ValidateCapabilities(capabilities []Capability) error {
 	order := map[Capability]int{
 		CapabilityRead: 0, CapabilityIssueCreate: 1,
 		CapabilityIssueUpdate: 2, CapabilityCommentAdd: 3,
-		CapabilityCommentDelete: 4,
+		CapabilityCommentDelete: 4, CapabilityIssueEdit: 5,
 	}
 	previous := -1
 	for _, capability := range capabilities {
 		position, ok := order[capability]
 		if !ok || position <= previous {
-			return invalid("capabilities must be a unique canonical subset ordered read, issue-create, issue-update, comment-add, comment-delete")
+			return invalid("capabilities must be a unique canonical subset ordered read, issue-create, issue-update, comment-add, comment-delete, issue-edit")
 		}
 		previous = position
 	}
@@ -400,6 +401,8 @@ func capabilityRank(value Capability) int {
 		return 3
 	case CapabilityCommentDelete:
 		return 4
+	case CapabilityIssueEdit:
+		return 5
 	default:
 		return 100
 	}

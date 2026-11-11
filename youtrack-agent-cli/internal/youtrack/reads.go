@@ -158,17 +158,45 @@ func (client *Client) GetIssue(ctx context.Context, issueID string) (Issue, erro
 	if err := validateIdentifier("issue", issueID); err != nil {
 		return Issue{}, err
 	}
-	var issue Issue
+	var response issueReadResponse
 	err := client.readJSON(ctx, request{
 		path: "/issues/" + url.PathEscape(issueID), query: fieldsQuery(issueFields), operation: "issues.get",
-	}, &issue)
+	}, &response)
 	if err != nil {
 		return Issue{}, err
+	}
+	issue := response.Issue
+	if response.Description != nil {
+		issue.descriptionPresent = true
+		if string(response.Description) != "null" {
+			var description string
+			if json.Unmarshal(response.Description, &description) != nil {
+				return Issue{}, invalidReadResponse()
+			}
+			issue.Description = &description
+		}
 	}
 	if err := validateIssueResponse(issue, issueID); err != nil {
 		return Issue{}, err
 	}
 	return issue, nil
+}
+
+// issueReadResponse decodes an issue while keeping the presence of the
+// description member, which a plain *string cannot distinguish from null.
+type issueReadResponse struct {
+	Issue
+	Description json.RawMessage `json:"description"`
+}
+
+// RequireDescription refuses an issue read whose description member was
+// omitted. A null description is a valid empty one, but an omitted member is
+// a malformed read: issue.edit hashes the value as its stale-text precondition.
+func (issue Issue) RequireDescription() error {
+	if !issue.descriptionPresent {
+		return invalidReadResponse()
+	}
+	return nil
 }
 
 // ListProjectFields reads exactly one bounded page of project field schemas.

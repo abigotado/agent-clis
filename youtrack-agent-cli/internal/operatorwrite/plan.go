@@ -55,6 +55,9 @@ func ValidateSnapshot(s Snapshot) error {
 		s.CapturedAt.IsZero() || s.CapturedAt.Location() != time.UTC {
 		return invalid()
 	}
+	if s.Text != nil && s.Kind != KindIssueEdit {
+		return invalid()
+	}
 	switch s.Kind {
 	case KindIssueCreate:
 		if s.Issue != (Issue{}) || s.Field != nil || s.Project == nil || s.Comment != nil || !protocolvalue.IsIdentifier(s.Project.ID) ||
@@ -83,6 +86,11 @@ func ValidateSnapshot(s Snapshot) error {
 		}
 	case KindCommentDelete:
 		if !validIssue(s.Issue) || s.Project != nil || s.Fields != nil || s.Field != nil || s.Comment == nil || !validComment(*s.Comment, s.Binding.AccountID) {
+			return invalid()
+		}
+	case KindIssueEdit:
+		if !validIssue(s.Issue) || s.Project != nil || s.Fields != nil || s.Field != nil || s.Comment != nil || s.Text == nil ||
+			!protocolvalue.IsSHA256(s.Text.SummarySHA256) || !protocolvalue.IsSHA256(s.Text.DescriptionSHA256) {
 			return invalid()
 		}
 	default:
@@ -258,6 +266,11 @@ func validRequest(q Request) bool {
 		return q.Summary == "" && q.Description == "" && validText(q.CommentText, MaxCommentBytes, true)
 	case KindCommentDelete:
 		return q.CommentText == "" && q.Summary == "" && q.Description == ""
+	case KindIssueEdit:
+		// Absent and empty are not distinguishable, so at least one non-empty
+		// text is required and clearing is out of scope.
+		return q.CommentText == "" && (q.Summary != "" || q.Description != "") &&
+			(q.Summary == "" || validSummary(q.Summary)) && (q.Description == "" || validDescriptionBody(q.Description))
 	default:
 		return false
 	}
@@ -296,6 +309,9 @@ func Prepare(snapshot Snapshot, request Request, now time.Time) (Plan, error) {
 		// The frozen snapshot is the complete update payload.
 	case KindCommentDelete:
 		// The frozen snapshot is the complete hard-delete target.
+	case KindIssueEdit:
+		// The request text is applied verbatim, with no marker; the snapshot
+		// holds only hashes of the old text.
 	default:
 		return Plan{}, invalid()
 	}
@@ -335,11 +351,11 @@ func ValidatePlan(p Plan) error {
 	}
 	switch p.Version {
 	case LegacyPlanVersion1:
-		if p.Snapshot.Kind == KindCommentDelete || p.ExpiresAt.IsZero() || p.ExpiresAt.Location() != time.UTC || p.ExpiresAt.Sub(p.CreatedAt) != LegacyPlanTTL {
+		if p.Snapshot.Kind == KindCommentDelete || p.Snapshot.Kind == KindIssueEdit || p.ExpiresAt.IsZero() || p.ExpiresAt.Location() != time.UTC || p.ExpiresAt.Sub(p.CreatedAt) != LegacyPlanTTL {
 			return invalid()
 		}
 	case PlanVersion2:
-		if p.Snapshot.Kind == KindCommentDelete || !p.ExpiresAt.IsZero() {
+		if p.Snapshot.Kind == KindCommentDelete || p.Snapshot.Kind == KindIssueEdit || !p.ExpiresAt.IsZero() {
 			return invalid()
 		}
 	case PlanVersion3:
@@ -347,7 +363,7 @@ func ValidatePlan(p Plan) error {
 			return invalid()
 		}
 	case PlanVersion4:
-		if p.Snapshot.Kind != KindIssueUpdate || !p.ExpiresAt.IsZero() {
+		if p.Snapshot.Kind != KindIssueUpdate && p.Snapshot.Kind != KindIssueEdit || !p.ExpiresAt.IsZero() {
 			return invalid()
 		}
 	default:
@@ -376,6 +392,8 @@ func ValidatePlan(p Plan) error {
 		// validRequest already rejects any text for a frozen field update.
 	case KindCommentDelete:
 		// validRequest already rejects all mutable payload fields.
+	case KindIssueEdit:
+		// validRequest already checks the verbatim summary and description.
 	default:
 		return invalid()
 	}
@@ -417,13 +435,51 @@ func decode(r io.Reader, limit int, dst any) error {
 	if d.Decode(&extra) != io.EOF {
 		return invalid()
 	}
-	// JSON duplicate keys are not canonical and could mislead a human reader.
+	// JSON duplicate keys and case-variant member names are not canonical and
+	// could mislead a human reader.
 	if hasDuplicateKeys(raw) {
 		return invalid()
 	}
 	return nil
 }
 
+// hasEmptyEditMember reports an explicitly present empty or null summary or
+// description member; omission is the only way to leave an attribute alone.
+func hasEmptyEditMember(raw []byte) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return true
+	}
+	for _, k := range []string{"summary", "description"} {
+		if v, ok := m[k]; ok && (string(v) == "null" || string(v) == `""`) {
+			return true
+		}
+	}
+	return false
+}
+
+// exactWireKey reports whether a member name is spelled only with the
+// lowercase snake_case alphabet every wire name uses. encoding/json matches
+// struct fields case-insensitively (and folds some non-ASCII runes), so any
+// other spelling of a known member would be decoded as that member while
+// evading exact-name checks and duplicate detection. No wire type has a map or
+// a mixed-case member, so rejecting such names changes no valid document.
+func exactWireKey(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c != '_' && (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// hasDuplicateKeys reports a malformed document, a duplicate member name, or a
+// member name that is not an exact lowercase wire name. Because every accepted
+// name is already lowercase, exact comparison also catches case aliases.
 func hasDuplicateKeys(raw []byte) bool {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	var walk func() bool
@@ -444,7 +500,7 @@ func hasDuplicateKeys(raw []byte) bool {
 					return true
 				}
 				s, ok := key.(string)
-				if !ok || seen[s] {
+				if !ok || !exactWireKey(s) || seen[s] {
 					return true
 				}
 				seen[s] = true
@@ -479,8 +535,18 @@ func DecodeSnapshot(r io.Reader) (Snapshot, error) {
 }
 func DecodeRequest(r io.Reader) (Request, error) {
 	var q Request
-	if err := decode(r, MaxRequestBytes, &q); err != nil {
+	if r == nil {
+		return Request{}, invalid()
+	}
+	raw, err := io.ReadAll(io.LimitReader(r, MaxRequestBytes+1))
+	if err != nil {
+		return Request{}, invalid()
+	}
+	if err := decode(bytes.NewReader(raw), MaxRequestBytes, &q); err != nil {
 		return Request{}, err
+	}
+	if q.Kind == KindIssueEdit && hasEmptyEditMember(raw) {
+		return Request{}, invalid()
 	}
 	if !validRequest(q) || q.Kind == KindIssueCreate && !validDescriptionBody(q.Description) {
 		return Request{}, invalid()

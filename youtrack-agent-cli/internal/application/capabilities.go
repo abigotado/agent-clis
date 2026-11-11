@@ -33,7 +33,7 @@ type CapabilitiesInfo struct {
 // Capabilities reports build support and, optionally, one explicit profile's
 // non-secret local generation and current identity-bound policy.
 func (s *Service) Capabilities(ctx context.Context, name string) (CapabilitiesInfo, error) {
-	kinds := []operatorwrite.Kind{operatorwrite.KindIssueCreate, operatorwrite.KindIssueUpdate, operatorwrite.KindCommentAdd, operatorwrite.KindCommentDelete}
+	kinds := []operatorwrite.Kind{operatorwrite.KindIssueCreate, operatorwrite.KindIssueUpdate, operatorwrite.KindCommentAdd, operatorwrite.KindCommentDelete, operatorwrite.KindIssueEdit}
 	versions, highest := make(map[string]int, len(kinds)), 0
 	for _, kind := range kinds {
 		versions[string(kind)] = operatorwrite.PlanVersionFor(kind)
@@ -65,6 +65,9 @@ func (s *Service) Capabilities(ctx context.Context, name string) (CapabilitiesIn
 		}
 		if selected.HasCapability(profile.CapabilityCommentDelete) {
 			result.Kinds = append(result.Kinds, "comment.delete")
+		}
+		if selected.HasCapability(profile.CapabilityIssueEdit) {
+			result.Kinds = append(result.Kinds, "issue.edit")
 		}
 	}
 	if s.Policies != nil {

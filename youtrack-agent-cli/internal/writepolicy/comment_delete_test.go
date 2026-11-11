@@ -48,3 +48,22 @@ func TestDeletionOnlyProfileBindsExactWritePolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestIssueEditOnlyProfileBindsExactWritePolicy(t *testing.T) {
+	ctx := context.Background()
+	registry := NewRegistry(filepath.Join(t.TempDir(), "config", "write-policies.json"))
+	editProfile := policyProfile("edit-only")
+	editProfile.Capabilities = []profile.Capability{profile.CapabilityRead, profile.CapabilityIssueEdit}
+	if err := editProfile.Validate(); err != nil {
+		t.Fatalf("edit-only profile validation failed: %v", err)
+	}
+	if _, err := registry.Set(ctx, editProfile, []Project{{ID: "0-1", Key: "CORE"}}); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+	if _, err := registry.RequireProject(ctx, editProfile, "0-1", "CORE"); err != nil {
+		t.Fatalf("RequireProject() error = %v", err)
+	}
+	if _, err := registry.RequireProject(ctx, editProfile, "0-1", "OTHER"); !errors.Is(err, ErrProjectDenied) {
+		t.Fatalf("RequireProject() error = %v, want %v", err, ErrProjectDenied)
+	}
+}

@@ -142,9 +142,14 @@ Two hazards that are easy to reintroduce:
 - `operator-write snapshot --clear-value` (additive) empties one field of an
   `issue.update`; it takes exactly one field selector and never `--value` or
   `--value-id`. Single-user fields are set by exact login (`--value`) or ID
-  (`--value-id`). `issue.update` plans are `plan_version` 4; previously prepared v2
+  (`--value-id`). `issue.update` and `issue.edit` plans are `plan_version` 4 (read `kind`, not
+  `plan_version`, to tell them apart); previously prepared v2
   `issue.update` plans stay accepted but cannot carry user fields or a null
   `target_value` (v3 is `comment.delete` only).
+- `operator-write` kind `issue.edit` (additive) replaces summary and/or
+  description under the new `issue-edit` capability; `capabilities` lists it and
+  its plan is `plan_version` 4. New reasons: `OPERATOR_TEXT_UNCHANGED` (exit 2,
+  prepare only, including `--dry-run`) and `OPERATOR_ISSUE_STALE` (exit 9) for a text-hash mismatch.
 - Operator-write refusals with exit 2 carry stable `error.code` values
   `OPERATOR_FIELD_UNSUPPORTED`, `OPERATOR_FIELD_REQUIRED`,
   `OPERATOR_FIELD_ALREADY_EMPTY` and `OPERATOR_FIELD_ALREADY_SET`.

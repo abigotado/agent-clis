@@ -110,6 +110,9 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 		if input.Kind == "comment.delete" && (len(fieldNames) != 0 || len(valueNames) != 0 || len(fieldIDs) != 0 || len(valueIDs) != 0) {
 			return errx.Usage("comment.delete snapshot does not accept field or value selectors")
 		}
+		if input.Kind == "issue.edit" && (len(fieldNames) != 0 || len(valueNames) != 0 || len(fieldIDs) != 0 || len(valueIDs) != 0 || input.ProjectID != "" || input.CommentID != "") {
+			return errx.Usage("issue.edit snapshot takes only --id and --out; no field, value, --project, or --comment-id")
+		}
 		fields, err := operatorFieldSelections(input.Kind, fieldNames, valueNames, fieldIDs, valueIDs, clearValue)
 		if err != nil {
 			return err
@@ -126,8 +129,8 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 		return a.renderOperatorWrite(result)
 	}}
 	flags := command.Flags()
-	flags.StringVar(&input.Kind, "kind", "", "supported write kind: issue.create, issue.update, comment.add, or comment.delete")
-	flags.StringVar(&input.IssueID, "id", "", "exact issue entity or readable ID for issue.update, comment.add, or comment.delete")
+	flags.StringVar(&input.Kind, "kind", "", "supported write kind: issue.create, issue.update, issue.edit, comment.add, or comment.delete")
+	flags.StringVar(&input.IssueID, "id", "", "exact issue entity or readable ID for issue.update, issue.edit, comment.add, or comment.delete")
 	flags.StringVar(&input.CommentID, "comment-id", "", "immutable exact comment ID for comment.delete")
 	flags.StringVar(&input.ProjectID, "project", "", "exact project entity ID or key for issue.create")
 	flags.StringArrayVar(&fieldNames, "field", nil, "exact field name, for example Stage; repeatable for issue.create, last wins otherwise")

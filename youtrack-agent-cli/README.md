@@ -217,7 +217,7 @@ marker/hash confirmation. If the payload or target still needs a decision, ask
 once before sending. Plan schemas v2, v3 and v4 have no wall-clock expiry, so a delayed
 reply does not require a new marker. The 15-minute snapshot-to-prepare window
 and live stale-state checks remain; legacy v1 plans keep their original expiry.
-New `issue.update` plans are v4; creation and comment addition still prepare v2
+`issue.edit` replaces the summary and/or description of one exact issue under a separate `issue-edit` capability (existing profiles gain no authority), with a current-text hash precondition; its plans are v4. New `issue.update` plans are v4; creation and comment addition still prepare v2
 plans, and deletion alone prepares v3. Existing v2 plans are still accepted. All
 historical formats retain their original bytes and hashes. A lost DELETE
 response requires GET-only reconciliation: a missing comment or `404` does not

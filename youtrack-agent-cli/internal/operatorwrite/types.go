@@ -9,6 +9,8 @@ import (
 	"errors"
 	"io"
 	"time"
+
+	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/protocolvalue"
 )
 
 const (
@@ -19,7 +21,8 @@ const (
 	PlanVersion2       = 2
 	PlanVersion3       = 3
 	// PlanVersion4 is the issue.update plan that may carry a User field or an
-	// explicit null (clear) target. Earlier plans refuse both.
+	// explicit null (clear) target, and the issue.edit plan. Earlier plans
+	// refuse all of these.
 	PlanVersion4     = 4
 	Lane             = "operator-write-v1"
 	ConfirmationMode = "operator_confirmed"
@@ -64,7 +67,7 @@ func PlanLifetime(version int) string {
 // It is the single place that maps a kind to its plan version.
 func PlanVersionFor(kind Kind) int {
 	switch kind {
-	case KindIssueUpdate:
+	case KindIssueUpdate, KindIssueEdit:
 		return PlanVersion4
 	case KindCommentDelete:
 		return PlanVersion3
@@ -91,6 +94,7 @@ const (
 	KindIssueUpdate   Kind = "issue.update"
 	KindCommentAdd    Kind = "comment.add"
 	KindCommentDelete Kind = "comment.delete"
+	KindIssueEdit     Kind = "issue.edit"
 )
 
 type Binding struct {
@@ -256,6 +260,26 @@ func (comment *Comment) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
+// TextPrecondition freezes only hashes of the current summary and description
+// so a plan can detect drift without ever storing the old text.
+type TextPrecondition struct {
+	SummarySHA256     string `json:"summary_sha256"`
+	DescriptionSHA256 string `json:"description_sha256"`
+}
+
+// HashText is the single precondition hash for an issue text attribute. It
+// hashes the JSON encoding of the value as read, so an absent (null) value and
+// an empty string differ. Snapshot and apply must both use it.
+func HashText(current *string) string {
+	raw, err := json.Marshal(current)
+	if err != nil {
+		// A *string always encodes; an impossible failure must not yield a
+		// hash that could match a real value.
+		return ""
+	}
+	return protocolvalue.SHA256Hex(raw)
+}
+
 type Snapshot struct {
 	Version int     `json:"version"`
 	Lane    string  `json:"lane"`
@@ -263,12 +287,14 @@ type Snapshot struct {
 	Binding Binding `json:"binding"`
 	// Issue is zero, and omitted, only for issue.create; existing update and
 	// comment plans therefore keep their exact bytes and digests.
-	Issue      Issue     `json:"issue,omitzero"`
-	Project    *Project  `json:"project,omitempty"`
-	Field      *Field    `json:"field,omitempty"`
-	Fields     []Field   `json:"fields,omitempty"`
-	Comment    *Comment  `json:"comment,omitempty"`
-	CapturedAt time.Time `json:"captured_at"`
+	Issue   Issue    `json:"issue,omitzero"`
+	Project *Project `json:"project,omitempty"`
+	Field   *Field   `json:"field,omitempty"`
+	Fields  []Field  `json:"fields,omitempty"`
+	Comment *Comment `json:"comment,omitempty"`
+	// Text is set only for issue.edit and holds hashes of the old text.
+	Text       *TextPrecondition `json:"text,omitempty"`
+	CapturedAt time.Time         `json:"captured_at"`
 }
 
 // ProjectRef is the exact project the snapshot's policy check binds.

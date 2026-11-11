@@ -28,6 +28,7 @@ const operatorSchemaJSON = `{"id":"92-1","$type":"StateProjectCustomField","proj
 
 type operatorFixture struct {
 	service                     *Service
+	dir                         string
 	mu                          sync.Mutex
 	issue, schema               string
 	fieldList                   string
@@ -140,6 +141,7 @@ func newOperatorFixture(t *testing.T) *operatorFixture {
 	}))
 	t.Cleanup(server.Close)
 	dir := t.TempDir()
+	f.dir = dir
 	mcp, err := endpoint.CanonicalMCPURL(server.URL)
 	if err != nil {
 		t.Fatal(err)

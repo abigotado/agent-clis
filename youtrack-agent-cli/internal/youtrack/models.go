@@ -56,6 +56,8 @@ type Issue struct {
 	Updated       int64              `json:"updated"`
 	CommentsCount int                `json:"commentsCount"`
 	CustomFields  []IssueCustomField `json:"customFields"`
+
+	descriptionPresent bool
 }
 
 // IssueSummary is the deliberately small issue shape used for bounded
