@@ -22,9 +22,6 @@ const (
 	commentDeleteFields = "id,issue(id),author(id,login),created,updated,deleted,pinned,text,visibility($type,permittedGroups(id,name),permittedUsers(id,name,login)),attachments(id)"
 )
 
-// discoverIssuesOperation names the one read whose query text the caller writes.
-const discoverIssuesOperation = "issues.discover"
-
 type commentDeleteResponse struct {
 	ID    string `json:"id"`
 	Issue *struct {
@@ -388,7 +385,7 @@ func (client *Client) DiscoverIssues(ctx context.Context, queryText string, opti
 	}
 	query.Set("query", queryText)
 	var responses []issueSummaryResponse
-	if err := client.readJSON(ctx, request{path: "/issues", query: query, operation: discoverIssuesOperation, pageReducible: options.CanReduce}, &responses); err != nil {
+	if err := client.readJSON(ctx, request{path: "/issues", query: query, operation: "issues.discover", pageReducible: options.CanReduce, callerQuery: true}, &responses); err != nil {
 		return nil, err
 	}
 	if responses == nil {

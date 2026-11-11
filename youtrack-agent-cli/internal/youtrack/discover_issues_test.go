@@ -1,6 +1,8 @@
 package youtrack
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -116,28 +118,44 @@ func TestDiscoverIssuesToleratesOddCustomFields(t *testing.T) {
 const invalidQueryBody = `{"error":"invalid_query","error_description":"Can't parse search query SENTINEL-QUERY-TEXT","error_field":"query"}`
 
 func TestIssueQueriesMapABadRequestByWhoWroteTheQuery(t *testing.T) {
+	discover := func(client *Client) error {
+		_, err := client.DiscoverIssues(context.Background(), "project: {Application Suite}", PageOptions{Top: 2})
+		return err
+	}
 	for _, test := range []struct {
 		name       string
 		search     func(*Client) error
+		body       string
+		gzipBody   bool
 		wantCode   errx.Code
 		wantReason string
 	}{
-		{"caller-written discovery query is a usage error", func(client *Client) error {
-			_, err := client.DiscoverIssues(context.Background(), "project: Application", PageOptions{Top: 2})
-			return err
-		}, errx.CodeUsage, "QUERY_REJECTED"},
+		{"caller-written discovery query is a usage error", discover, invalidQueryBody, false, errx.CodeUsage, "QUERY_REJECTED"},
+		{"gzip-encoded invalid_query is still recognized", discover, invalidQueryBody, true, errx.CodeUsage, "QUERY_REJECTED"},
+		{"another 400 token on discovery stays internal", discover, `{"error":"bad_request","error_description":"SENTINEL-QUERY-TEXT"}`, false, errx.CodeInternal, "INTERNAL"},
+		{"non-JSON 400 on discovery stays internal", discover, `SENTINEL-QUERY-TEXT invalid_query`, false, errx.CodeInternal, "INTERNAL"},
+		{"empty 400 on discovery stays internal", discover, ``, false, errx.CodeInternal, "INTERNAL"},
 		{"CLI-built reconciliation query stays internal", func(client *Client) error {
 			_, err := client.SearchIssues(context.Background(), "project: APP", PageOptions{Top: 2})
 			return err
-		}, errx.CodeInternal, "INTERNAL"},
+		}, invalidQueryBody, false, errx.CodeInternal, "INTERNAL"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			requests := 0
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests++
 				w.Header().Set("Content-Type", "application/json")
+				body := []byte(test.body)
+				if test.gzipBody {
+					var compressed bytes.Buffer
+					writer := gzip.NewWriter(&compressed)
+					_, _ = writer.Write(body)
+					_ = writer.Close()
+					body = compressed.Bytes()
+					w.Header().Set("Content-Encoding", "gzip")
+				}
 				w.WriteHeader(http.StatusBadRequest)
-				_, _ = io.WriteString(w, invalidQueryBody)
+				_, _ = w.Write(body)
 			}))
 			defer server.Close()
 

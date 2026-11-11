@@ -310,7 +310,8 @@ func TestInspectIssuesReportsARejectedQueryAsUsage(t *testing.T) {
 
 	envelope := decode(t, stdout)
 	failure, _ := envelope["error"].(map[string]any)
-	if code != errx.CodeUsage || searches != 1 || envelope["ok"] != false || failure["code"] != "QUERY_REJECTED" || !strings.Contains(envelope["hint"].(string), "--query") {
+	hint, _ := envelope["hint"].(string)
+	if code != errx.CodeUsage || searches != 1 || envelope["ok"] != false || failure["code"] != "QUERY_REJECTED" || !strings.Contains(hint, "--query") {
 		t.Fatalf("code=%d searches=%d stdout=%s stderr=%s", code, searches, stdout, stderr)
 	}
 	if strings.Contains(stdout.String()+stderr.String(), "SENTINEL") {

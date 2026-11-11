@@ -138,6 +138,10 @@ type request struct {
 	operation     string
 	write         bool
 	pageReducible bool
+	// callerQuery marks the one read whose query text the caller wrote. Only
+	// there can YouTrack's 400 invalid_query mean "fix your input"; any other
+	// 400 answers parameters the CLI built and stays a CLI defect.
+	callerQuery bool
 }
 
 func (client *Client) readJSON(ctx context.Context, request request, out any) error {
@@ -245,7 +249,7 @@ func (client *Client) handleReadResponse(response *http.Response, request reques
 	defer closeAndDrain(response.Body)
 
 	if response.StatusCode != http.StatusOK {
-		return client.translateReadStatus(response, request.operation)
+		return client.translateReadStatus(response, request)
 	}
 	body, tooLarge, err := readResponseBody(response)
 	if err != nil {
@@ -260,10 +264,9 @@ func (client *Client) handleReadResponse(response *http.Response, request reques
 	return 0, false, nil
 }
 
-func (client *Client) translateReadStatus(response *http.Response, operation string) (time.Duration, bool, error) {
-	// Only discovery carries caller-written query text. Every other read sends
-	// CLI-built parameters, so a 400 there stays a CLI defect.
-	if response.StatusCode == http.StatusBadRequest && operation == discoverIssuesOperation {
+func (client *Client) translateReadStatus(response *http.Response, request request) (time.Duration, bool, error) {
+	operation := request.operation
+	if response.StatusCode == http.StatusBadRequest && request.callerQuery && rejectedQuery(response) {
 		return 0, false, errx.QueryRejected()
 	}
 	switch response.StatusCode {
@@ -314,6 +317,20 @@ func (client *Client) translateWriteStatus(response *http.Response, operation st
 	default:
 		return errx.WriteOutcomeUnknown(operation)
 	}
+}
+
+// rejectedQuery reports whether a 400 body is YouTrack's invalid_query
+// answer. Only the fixed error token is compared, so none of the untrusted
+// server text can reach the caller.
+func rejectedQuery(response *http.Response) bool {
+	body, tooLarge, err := readResponseBody(response)
+	if err != nil || tooLarge {
+		return false
+	}
+	var answer struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal(body, &answer) == nil && answer.Error == "invalid_query"
 }
 
 func validateRESTBaseURL(raw string) (*url.URL, error) {
