@@ -248,8 +248,8 @@ before any credential or network access. State and enum set or clear needs only
 project allowlist again.
 
 A field the plan does not name follows the project's default value or workflow.
-YouTrack may also refill a cleared field: BGR, for example, assigns the Assignee
-on create, so a cleared Assignee can come back filled. The response must show
+YouTrack may also refill a cleared field: a project default value or workflow may
+assign or refill the field on create, so a cleared field can come back filled. The response must show
 a named field with the exact planned value (a User with the planned ID, or an
 exact JSON `null` for a clear; `{}` or an empty ID does not count). When the
 issue identity matches but a named field differs, the result stays

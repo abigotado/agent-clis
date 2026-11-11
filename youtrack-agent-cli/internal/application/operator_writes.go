@@ -67,7 +67,7 @@ func requireCreateUserFields(selected profile.Profile, touchesUser bool) error {
 
 func snapshotTouchesUserField(snapshot operatorwrite.Snapshot) bool {
 	for _, field := range snapshot.Fields {
-		if field.Type == "SingleUserIssueCustomField" {
+		if field.Type == operatorwrite.UserIssueFieldType {
 			return true
 		}
 	}
@@ -157,15 +157,15 @@ func (s *Service) SnapshotOperatorWrite(ctx context.Context, input OperatorSnaps
 		}
 		snapshot.Binding, snapshot.Project = operatorBinding(selected, policy), &operatorwrite.Project{ID: project.ID, Key: project.ShortName}
 		for _, selection := range input.Fields {
-			schema, err := resolveOperatorField(ctx, client, project.ID, selection, &projectFields)
+			schema, err := resolveOperatorField(ctx, client, project.ID, selection, &projectFields, true)
 			if err != nil {
-				return OperatorWriteInfo{}, err
-			}
-			if err := requireCreateUserFields(selected, schema.Type == "UserProjectCustomField"); err != nil {
 				return OperatorWriteInfo{}, err
 			}
 			field, err := freezeCreateField(schema, selection.ValueID, selection.ValueName, selection.Clear)
 			if err != nil {
+				return OperatorWriteInfo{}, err
+			}
+			if err := requireCreateUserFields(selected, field.Type == operatorwrite.UserIssueFieldType); err != nil {
 				return OperatorWriteInfo{}, err
 			}
 			for _, frozen := range snapshot.Fields {
@@ -191,7 +191,7 @@ func (s *Service) SnapshotOperatorWrite(ctx context.Context, input OperatorSnaps
 		snapshot.Issue = operatorwrite.Issue{ID: issue.ID, ReadableID: issue.IDReadable, ProjectID: issue.Project.ID, ProjectKey: issue.Project.ShortName, Updated: issue.Updated}
 		if kind == operatorwrite.KindIssueUpdate {
 			selection := input.Fields[0]
-			schema, err := resolveOperatorField(ctx, client, issue.Project.ID, selection, &projectFields)
+			schema, err := resolveOperatorField(ctx, client, issue.Project.ID, selection, &projectFields, false)
 			if err != nil {
 				return OperatorWriteInfo{}, err
 			}
@@ -377,7 +377,8 @@ func operatorDeleteComment(target youtrack.CommentDeleteTarget, accountID string
 
 // resolveOperatorField reads the exact selected schema. Name resolution uses
 // one bounded page, read at most once per snapshot, and refuses ambiguity.
-func resolveOperatorField(ctx context.Context, client *youtrack.Client, projectID string, selection OperatorFieldSelection, listed *[]youtrack.ProjectField) (youtrack.ProjectField, error) {
+// create selects the issue.create flag spelling in the truncation hint.
+func resolveOperatorField(ctx context.Context, client *youtrack.Client, projectID string, selection OperatorFieldSelection, listed *[]youtrack.ProjectField, create bool) (youtrack.ProjectField, error) {
 	fieldID := selection.FieldID
 	if fieldID == "" {
 		if *listed == nil {
@@ -386,9 +387,13 @@ func resolveOperatorField(ctx context.Context, client *youtrack.Client, projectI
 				return youtrack.ProjectField{}, err
 			}
 			if len(fields) > 100 {
-				// --clear-value takes no --value-id, so its exact retry differs.
+				// A clear takes no --value-id, and issue.create clears with
+				// --clear-field-id because --clear-value is forbidden there.
 				hint := "use exact --field-id and --value-id"
-				if selection.Clear {
+				switch {
+				case selection.Clear && create:
+					hint = "use exact --clear-field-id"
+				case selection.Clear:
 					hint = "use exact --field-id with --clear-value"
 				}
 				return youtrack.ProjectField{}, errx.Conflict("OPERATOR_SCHEMA_TRUNCATED", "bounded field lookup is truncated").WithHint("%s", hint)

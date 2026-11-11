@@ -226,7 +226,7 @@ once before sending. Plan schemas v2, v3 and v4 have no wall-clock expiry, so a 
 reply does not require a new marker. The 15-minute snapshot-to-prepare window
 and live stale-state checks remain; legacy v1 plans keep their original expiry.
 `issue.edit` replaces the summary and/or description of one exact issue under a separate `issue-edit` capability (existing profiles gain no authority), with a current-text hash precondition; its plans are v4. New `issue.update` and `issue.create` plans are v4; comment addition still prepares v2
-plans, and deletion alone prepares v3. `issue.create` can also set or clear (`--clear-field`, `--clear-field-id`) a single-user field such as Assignee under a separate `issue-create-user-fields` capability (existing profiles gain no authority; State/Enum set and clear need only `issue-create`); YouTrack may refill a cleared field, which reconcile reports as `fields_differ`. Existing v2 plans are still accepted. All
+plans, and deletion alone prepares v3. `issue.create` can also set or clear (`--clear-field`, `--clear-field-id`) a single-user field such as Assignee under a separate `issue-create-user-fields` capability (existing profiles gain no authority; State/Enum set and clear need only `issue-create`); YouTrack may refill a cleared field, which reconcile reports as `matching_issue_observed_fields_differ`. Existing v2 plans are still accepted. All
 historical formats retain their original bytes and hashes. A lost DELETE
 response requires GET-only reconciliation: a missing comment or `404` does not
 prove deletion and never authorizes a retry.

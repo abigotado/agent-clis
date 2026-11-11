@@ -2,6 +2,8 @@ package application
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -397,5 +399,42 @@ func TestOperatorCreateUserFieldTokenSentinelStaysOutOfEverything(t *testing.T) 
 				t.Errorf("%s leaks %q: %s", name, secret, text)
 			}
 		}
+	}
+}
+
+func TestOperatorCreateUnsupportedUserFieldIsRefusedBeforeTheCapabilityCheck(t *testing.T) {
+	f := newCreateUserFixture(t, profile.CapabilityRead, profile.CapabilityIssueCreate)
+	f.set(func() {
+		multi := strings.NewReplacer(`"id":"92-1"`, `"id":"93-1"`, `"id":"42-1"`, `"id":"43-1"`, `"isMultiValue":false`, `"isMultiValue":true`).Replace(userSchemaJSON(true, defaultUsers()))
+		f.extra = map[string]string{"93-1": multi}
+	})
+	_, err := f.snapshot([]OperatorFieldSelection{{FieldID: "93-1", Clear: true}})
+	requireFailure(t, err, "OPERATOR_FIELD_UNSUPPORTED", errx.CodeUsage)
+}
+
+func TestOperatorCreateTruncatedSchemaHintNamesCreateFlags(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		fields   []OperatorFieldSelection
+		wantHint string
+	}{
+		{"clear by name", []OperatorFieldSelection{{FieldName: "Stage", Clear: true}}, "--clear-field-id"},
+		{"set by name", []OperatorFieldSelection{{FieldName: "Stage", ValueName: "Open"}}, "--field-id and --value-id"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newCreateFixture(t)
+			f.set(func() {
+				f.extra = map[string]string{}
+				for index := 0; index < 100; index++ {
+					f.extra[fmt.Sprintf("x-%d", index)] = f.schema
+				}
+			})
+			_, err := f.snapshot(test.fields)
+			requireFailure(t, err, "OPERATOR_SCHEMA_TRUNCATED", errx.CodeConflict)
+			var coded *errx.Error
+			if !errors.As(err, &coded) || !strings.Contains(coded.Hint, test.wantHint) || strings.Contains(coded.Hint, "--clear-value") {
+				t.Fatalf("hint = %v", err)
+			}
+		})
 	}
 }

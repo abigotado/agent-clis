@@ -159,9 +159,9 @@ func validIssue(i Issue) bool {
 }
 
 const (
-	stateIssueField = "StateIssueCustomField"
-	enumIssueField  = "SingleEnumIssueCustomField"
-	userIssueField  = "SingleUserIssueCustomField"
+	stateIssueField    = "StateIssueCustomField"
+	enumIssueField     = "SingleEnumIssueCustomField"
+	UserIssueFieldType = "SingleUserIssueCustomField"
 )
 
 // validFieldSchema checks the touched single State, Enum, or User schema,
@@ -170,7 +170,7 @@ func validFieldSchema(f Field) bool {
 	return protocolvalue.IsIdentifier(f.ProjectFieldID) && protocolvalue.IsIdentifier(f.GlobalFieldID) && validText(f.Name, 256, true) &&
 		(f.Type == stateIssueField && f.ProjectFieldType == "StateProjectCustomField" && f.ValueType == "state" && f.BundleType == "StateBundle" ||
 			f.Type == enumIssueField && f.ProjectFieldType == "EnumProjectCustomField" && f.ValueType == "enum" && f.BundleType == "EnumBundle" ||
-			f.Type == userIssueField && f.ProjectFieldType == "UserProjectCustomField" && f.ValueType == "user" && f.BundleType == "UserBundle") &&
+			f.Type == UserIssueFieldType && f.ProjectFieldType == "UserProjectCustomField" && f.ValueType == "user" && f.BundleType == "UserBundle") &&
 		!f.IsMultiValue && f.FieldTypeType == "FieldType" && protocolvalue.IsIdentifier(f.BundleID) && f.FieldTypeID == f.ValueType+"[1]"
 }
 
@@ -206,11 +206,11 @@ func validUpdateValues(f Field) bool {
 // null target, in the update field or in any create field, which only a
 // version 4 plan may hold.
 func needsPlanVersion4(s Snapshot) bool {
-	if s.Field != nil && (s.Field.Type == userIssueField || s.Field.TargetValue == nil) {
+	if s.Field != nil && (s.Field.Type == UserIssueFieldType || s.Field.TargetValue == nil) {
 		return true
 	}
 	for _, f := range s.Fields {
-		if f.Type == userIssueField || f.TargetValue == nil {
+		if f.Type == UserIssueFieldType || f.TargetValue == nil {
 			return true
 		}
 	}
@@ -224,7 +224,7 @@ func validValue(v Value, fieldType string) bool {
 		expected = "StateBundleElement"
 	case enumIssueField:
 		expected = "EnumBundleElement"
-	case userIssueField:
+	case UserIssueFieldType:
 		// A user is never archived; only id, login (name), and type are frozen.
 		if v.Archived {
 			return false

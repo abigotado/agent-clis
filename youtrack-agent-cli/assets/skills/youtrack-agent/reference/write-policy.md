@@ -102,8 +102,8 @@ uses its legacy rules; request a released upgrade rather than bypassing them.
    / `--clear-field-id PROJECT_FIELD_ID` (create only, same names-or-IDs rule, never
    with `--clear-value`) send `"value": null` for a field that allows empty values
    (else `OPERATOR_FIELD_REQUIRED`, exit 2). YouTrack may refill a cleared field
-   (BGR assigns the Assignee on create); the outcome is then
-   `WRITE_OUTCOME_UNKNOWN` and reconcile reports `fields_differ`. Never re-apply. A project outside the profile's
+   (a project default value or workflow may assign or refill the field on create); the outcome is then
+   `WRITE_OUTCOME_UNKNOWN` and reconcile reports `matching_issue_observed_fields_differ`. Never re-apply. A project outside the profile's
    `auth allow-projects` policy is refused with `PROJECT_POLICY_DENIED`.
    Ambiguous/truncated field-name resolution must use exact IDs, never guesses.
    For a single-user field such as Assignee pass `--value LOGIN` (exact login)
