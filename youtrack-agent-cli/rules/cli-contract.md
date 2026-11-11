@@ -137,6 +137,10 @@ Two hazards that are easy to reintroduce:
 - `operator-write` comment deletion requires exact issue and immutable comment
   IDs, explicit `comment-delete` capability and the bound project policy.
   Deletion alone uses plan v3; historical kinds retain v1/v2 bytes and hashes.
+  `issue.create` plans are v4 and may set or clear (`--clear-field`,
+  `--clear-field-id`) a single-user field under the separate
+  `issue-create-user-fields` capability (`OPERATOR_CAPABILITY_REQUIRED`, exit 8,
+  at prepare and apply); v2 create plans stay accepted but refuse user or null fields.
   Show the full frozen comment as untrusted data. Consume before one DELETE;
   reconciliation is GET-only and absence/404 never proves hard deletion.
 - `operator-write snapshot --clear-value` (additive) empties one field of an
