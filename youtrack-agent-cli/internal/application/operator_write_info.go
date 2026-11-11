@@ -13,6 +13,9 @@ const (
 
 // OperatorFieldSelection names one target field value either by exact names
 // or by immutable project-field and bundle-value IDs, never a mix.
+// OperatorAttachment is the frozen local file of an attachment.add plan.
+type OperatorAttachment = operatorwrite.Attachment
+
 type OperatorFieldSelection struct {
 	FieldName, ValueName, FieldID, ValueID string
 	// Clear empties the field instead of selecting a value; it carries a field
@@ -24,7 +27,10 @@ type OperatorFieldSelection struct {
 // or an exact project entity ID or key for issue.create.
 type OperatorSnapshotInput struct {
 	Profile, Kind, IssueID, CommentID, ProjectID, OutputPath string
-	Fields                                                   []OperatorFieldSelection
+	// FilePath and AttachmentName select the local file and its upload name
+	// for attachment.add; the name defaults to the file's base name.
+	FilePath, AttachmentName string
+	Fields                   []OperatorFieldSelection
 }
 
 type OperatorPrepareInput struct {
@@ -46,30 +52,31 @@ type OperatorReconcileInput struct {
 // OperatorWriteInfo keeps the application boundary compact while making the
 // frozen intent available for explicit review with --fields or raw output.
 type OperatorWriteInfo struct {
-	PlanVersion      int                     `json:"plan_version,omitempty"`
-	PlanLifetime     string                  `json:"plan_lifetime,omitempty"`
-	PlanID           string                  `json:"plan_id,omitempty"`
-	State            string                  `json:"state"`
-	Kind             string                  `json:"kind"`
-	ConfirmationMode string                  `json:"confirmation_mode"`
-	Notifications    string                  `json:"notifications"`
-	ExpiresAt        string                  `json:"expires_at,omitempty"`
-	IntentSHA256     string                  `json:"intent_sha256,omitempty"`
-	Profile          string                  `json:"profile"`
-	Instance         string                  `json:"instance"`
-	AccountID        string                  `json:"account_id"`
-	AccountLogin     string                  `json:"account_login"`
-	IssueID          string                  `json:"issue_id"`
-	CommentID        string                  `json:"comment_id,omitempty"`
-	ProjectID        string                  `json:"project_id"`
-	ProjectKey       string                  `json:"project_key"`
-	NonReplayable    bool                    `json:"non_replayable"`
-	RemoteID         string                  `json:"remote_id,omitempty"`
-	RemoteReadableID string                  `json:"remote_readable_id,omitempty"`
-	OutputPath       string                  `json:"output_path,omitempty"`
-	Snapshot         *operatorwrite.Snapshot `json:"snapshot,omitempty"`
-	Plan             *operatorwrite.Plan     `json:"plan,omitempty"`
-	Evidence         string                  `json:"evidence,omitempty"`
+	PlanVersion      int                       `json:"plan_version,omitempty"`
+	PlanLifetime     string                    `json:"plan_lifetime,omitempty"`
+	PlanID           string                    `json:"plan_id,omitempty"`
+	State            string                    `json:"state"`
+	Kind             string                    `json:"kind"`
+	ConfirmationMode string                    `json:"confirmation_mode"`
+	Notifications    string                    `json:"notifications"`
+	ExpiresAt        string                    `json:"expires_at,omitempty"`
+	IntentSHA256     string                    `json:"intent_sha256,omitempty"`
+	Profile          string                    `json:"profile"`
+	Instance         string                    `json:"instance"`
+	AccountID        string                    `json:"account_id"`
+	AccountLogin     string                    `json:"account_login"`
+	IssueID          string                    `json:"issue_id"`
+	CommentID        string                    `json:"comment_id,omitempty"`
+	ProjectID        string                    `json:"project_id"`
+	ProjectKey       string                    `json:"project_key"`
+	NonReplayable    bool                      `json:"non_replayable"`
+	RemoteID         string                    `json:"remote_id,omitempty"`
+	RemoteReadableID string                    `json:"remote_readable_id,omitempty"`
+	OutputPath       string                    `json:"output_path,omitempty"`
+	Attachment       *operatorwrite.Attachment `json:"attachment,omitempty"`
+	Snapshot         *operatorwrite.Snapshot   `json:"snapshot,omitempty"`
+	Plan             *operatorwrite.Plan       `json:"plan,omitempty"`
+	Evidence         string                    `json:"evidence,omitempty"`
 }
 
 func operatorSnapshotInfo(snapshot operatorwrite.Snapshot) OperatorWriteInfo {
@@ -83,6 +90,7 @@ func operatorSnapshotInfo(snapshot operatorwrite.Snapshot) OperatorWriteInfo {
 	if snapshot.Comment != nil {
 		result.CommentID = snapshot.Comment.ID
 	}
+	result.Attachment = snapshot.Attachment
 	return result
 }
 

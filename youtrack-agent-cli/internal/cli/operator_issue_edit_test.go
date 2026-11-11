@@ -73,3 +73,65 @@ func TestIssueEditPlanTextShowsNewTextWithoutOldHashes(t *testing.T) {
 		})
 	}
 }
+
+func TestAttachmentCLISnapshotFlagMatrix(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"file on comment.add", []string{"--kind", "comment.add", "--id", "APP-12", "--file", "x.png"}},
+		{"name on issue.edit", []string{"--kind", "issue.edit", "--id", "APP-12", "--name", "x.png"}},
+		{"attachment without file", []string{"--kind", "attachment.add", "--id", "APP-12"}},
+		{"name without file", []string{"--kind", "attachment.add", "--id", "APP-12", "--name", "x.png"}},
+		{"with field", []string{"--kind", "attachment.add", "--id", "APP-12", "--file", "x.png", "--field", "Stage", "--value", "Done"}},
+		{"with project", []string{"--kind", "attachment.add", "--id", "APP-12", "--file", "x.png", "--project", "APP"}},
+		{"with comment id", []string{"--kind", "attachment.add", "--id", "APP-12", "--file", "x.png", "--comment-id", "4-1"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service, credentials, posts := operatorCLIService(t)
+			credentials.loads = 0
+			dir := t.TempDir()
+			if err := os.Chmod(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			app, _, _, _, stdout, stderr := testApp(t)
+			app.service = service
+			args := append([]string{"operator-write", "snapshot", "--profile", "work", "--out", filepath.Join(dir, "snapshot.json"), "-o", "json"}, test.args...)
+			code := runApp(app, args...)
+			got, _ := decode(t, stdout)["error"].(map[string]any)
+			if code != errx.CodeUsage || posts.Load() != 0 || credentials.loads != 0 || got == nil || got["code"] != "USAGE" {
+				t.Fatalf("code=%d posts=%d loads=%d stdout=%s stderr=%s", code, posts.Load(), credentials.loads, stdout, stderr)
+			}
+		})
+	}
+}
+
+func TestAttachmentViewShowsFrozenAttachmentByDefault(t *testing.T) {
+	const sum = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	snapshot := &operatorwrite.Snapshot{Kind: operatorwrite.KindAttachmentAdd, Attachment: &operatorwrite.Attachment{SourcePath: "/private/secret/dir/x.png", Name: "x.png", Size: 12, SHA256: sum, ContentType: "image/png"}}
+	result := application.OperatorWriteInfo{State: "snapshotted", Kind: "attachment.add", PlanVersion: 4, Snapshot: snapshot, Attachment: snapshot.Attachment}
+	t.Run("json", func(t *testing.T) {
+		app, _, _, _, stdout, stderr := testApp(t)
+		app.out = &output.Writer{Format: output.FormatJSON, Out: stdout, Err: stderr}
+		if err := app.renderOperatorWrite(result); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := decode(t, stdout)["data"].(map[string]any)
+		attachment, _ := data["attachment"].(map[string]any)
+		if attachment == nil || attachment["name"] != "x.png" || attachment["sha256"] != sum {
+			t.Fatalf("attachment missing by default: %s", stdout)
+		}
+	})
+	t.Run("text one line without the path", func(t *testing.T) {
+		app, _, _, _, stdout, stderr := testApp(t)
+		app.out = &output.Writer{Format: output.FormatText, Out: stdout, Err: stderr}
+		if err := app.renderOperatorWrite(result); err != nil {
+			t.Fatal(err)
+		}
+		out := strings.TrimSpace(stdout.String())
+		if strings.Contains(out, "\n") || !strings.Contains(out, `name="x.png"`) || !strings.Contains(out, "size=12") || !strings.Contains(out, "content_type=image/png") || !strings.Contains(out, "sha256="+sum[:12]) || strings.Contains(out, "/private/secret") || strings.Contains(out, sum) {
+			t.Fatalf("unexpected text output: %q", out)
+		}
+	})
+}

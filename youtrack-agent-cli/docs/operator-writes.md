@@ -7,7 +7,7 @@ Status: accepted decision. Source support is not an installed release; check
 
 The standard macOS CLI has a distinct `operator-write` path for one single-value
 state/enum or single-user field update (set or clear), one public comment addition, one exact permanent
-comment deletion, or one new issue in an allowlisted project. An operator authorizes the exact change; the agent binds that consent
+comment deletion, one local-file attachment to one issue, or one new issue in an allowlisted project. An operator authorizes the exact change; the agent binds that consent
 to the stored plan with `--confirm-intent SHA256 --yes`. An explicit request
 with a complete target and payload is already authorization for that operation,
 including the disclosed fixed reconciliation marker for additions/creation and
@@ -39,8 +39,10 @@ workflows can race the mutation. Postchecks cannot undo writes or eliminate this
 interval. Normal YouTrack/workflow notifications may occur; recipients are not
 knowable from this snapshot. Notification suppression is not exposed.
 
-No raw REST path, attachment, arbitrary workflow, batch or existing-comment
-edit is authorized by this path. This path does not limit MCP tools. Issue creation is
+No raw REST path, arbitrary workflow, batch, attachment removal or existing-comment
+edit is authorized by this path. Adding one local file as an attachment to one
+issue (`attachment.add`) is authorized since this decision was amended; see
+"Attaching a file". This path does not limit MCP tools. Issue creation is
 authorized since this decision was amended: one plan creates at most one issue
 in one exact allowlisted project, with a summary, a bounded description and
 optional single State/Enum/User fields (a User field needs the separate
@@ -69,7 +71,7 @@ youtrack-agent-cli capabilities --profile work-write -o json
 ```
 
 Replace `ID:KEY` with a verified immutable project ID and key. Adding
-`issue-create`, `issue-create-user-fields` or `comment-delete` to an existing profile changes its credential identity, so the
+`issue-create`, `issue-create-user-fields`, `attachment-add` or `comment-delete` to an existing profile changes its credential identity, so the
 old credential generation and project policy become stale: log in again and
 set the project allowlist again before preparing any plan. Profile/login/
 policy setup requires separate operator authorization; it is not an install hook.
@@ -165,7 +167,7 @@ before dispatch and never restores it.
 
 `capabilities` advertises the highest supported `plan_version: 4` and
 `plan_lifetime: until_consumed_or_stale`; its `plan_versions` map reports v4 for
-`issue.update`, `issue.edit` and `issue.create` (previously prepared v2 `issue.update` and `issue.create` plans are still accepted but cannot carry
+`issue.update`, `issue.edit`, `attachment.add` and `issue.create` (previously prepared v2 `issue.update` and `issue.create` plans are still accepted but cannot carry
 user fields or a null target), v2 for comment addition, and v3 for deletion. Plan/status/apply results report
 their actual plan version/lifetime. V2/v3/v4 default JSON/raw results and serialized plans
 omit `expires_at`. An explicit `--fields expires_at` projection retains the
@@ -174,10 +176,10 @@ existing selectable field vocabulary and returns an empty string for v2/v3/v4; u
 The unchanged `source`/lane name `operator-write-v1` identifies the operator
 storage namespace, not the nested plan schema or JSON envelope version.
 
-New `issue.update`, `issue.edit` and `issue.create` plans are v4; comment addition continues to
+New `issue.update`, `issue.edit`, `attachment.add` and `issue.create` plans are v4; comment addition continues to
 prepare v2 plans. V1/v2 bytes and hashes are preserved, v2 plans remain
 accepted and appliable, and both versions reject deletion; v3 accepts only
-`comment.delete` and v4 only `issue.update`, `issue.edit` and `issue.create`. Only v4 can encode a User field or
+`comment.delete` and v4 only `issue.update`, `issue.edit`, `attachment.add` and `issue.create`. Only v4 can encode a User field or
 an explicit `null` target (clear), in an update field or in any create field; v1-v3 plans refuse both.
 A v4 create plan adds no member beyond the v2 shape.
 Legacy plan schema v1 retains its exact bytes, digest, 15-minute expiry and
@@ -331,6 +333,70 @@ text (from `inspect issue`) as untrusted data and the exact new text before
 confirming. Default output omits the old hashes; the `snapshot` and `plan`
 fields show them on request.
 
+## Attaching a file
+
+`attachment.add` uploads one local file to one exact issue. It needs a separately
+declared `attachment-add` capability, canonical rank 7 after
+`issue-create-user-fields`: no existing profile gains it. Adding it to a profile
+changes the credential identity, so log in again and set the project allowlist
+again before preparing a plan. Binaries without this kind refuse such a plan or
+profile; upgrade rather than editing files. The capability is a separate
+opt-in because it can send a local file to the YouTrack server (exfiltration
+risk); it is limited to allowlisted projects and the operator must approve the
+exact path.
+
+```sh
+youtrack-agent-cli operator-write snapshot --kind attachment.add \
+  --id APP-123 --file /abs/path/shot.png [--name shot.png] \
+  --out "$youtrack_operation_dir/snapshot.json"
+youtrack-agent-cli operator-write prepare --offline \
+  --snapshot "$youtrack_operation_dir/snapshot.json"
+youtrack-agent-cli operator-write apply --plan-id PLAN_ID \
+  --confirm-intent SHA256 --yes
+```
+
+Limits, all refused offline at snapshot before any credential or network access:
+
+- Size 1 byte to 10 MiB (`OPERATOR_ATTACHMENT_TOO_LARGE`). YouTrack's own limit
+  may be lower; a server 413 after the claim is a consumed rejection.
+- Type by magic bytes: png, jpeg, gif, webp or pdf only, and the file or
+  `--name` extension must match the detected type (`.png`, `.jpg`/`.jpeg`, `.gif`,
+  `.webp`, `.pdf`, case-insensitive). Anything else, including SVG and HTML, is
+  `OPERATOR_ATTACHMENT_TYPE_UNSUPPORTED` (exit 2). The CLI never renames.
+- The source must be a regular file: a symlink, directory, FIFO, socket, device,
+  empty or unreadable file is `OPERATOR_ATTACHMENT_SOURCE_INVALID` (exit 2).
+- The name is printable ASCII, at most 255 bytes, without `/ \ " : * ? < > |`,
+  not starting with `.` or space. A non-ASCII name (macOS screenshots use a
+  U+202F before AM/PM) is `OPERATOR_ATTACHMENT_NAME_INVALID`: pass `--name`
+  with an ASCII name ending in the right extension.
+
+The plan stores the absolute path and the SHA-256 and size of the file, not its
+bytes. The path is visible in plan output on stdout. Apply re-reads the file and
+re-hashes it; if it changed, exit 9 `OPERATOR_ATTACHMENT_SOURCE_STALE` and
+nothing is claimed. Other apply preconditions, all before the claim: the issue's
+`updated` must be unchanged (`OPERATOR_ISSUE_STALE`, exit 9), the issue must have
+at most 100 attachments (`OPERATOR_ATTACHMENTS_TRUNCATED`, exit 9), and no
+attachment with the same name may exist. A same-name attachment is refused at
+snapshot with `OPERATOR_ATTACHMENT_NAME_EXISTS` (exit 2) and at apply with
+`OPERATOR_ATTACHMENT_STALE` (exit 9). Identical bytes under another name are not
+deduplicated. There is no reconciliation marker.
+
+Apply sends one multipart upload to `issues/{id}/attachments` (part name
+`upload`), accepts status 200 or 201 with a one-element array, then reads the
+attachment back by id and checks name, size and author. The upload runs under
+the CLI context; an interrupted or timed-out upload after the claim is
+`WRITE_OUTCOME_UNKNOWN` and is never retried. Reconcile is GET-only and never
+uploads: with a kept attachment id, an exact matching read gives state
+`reconciled` with code `ATTACHMENT_OBSERVED`; a 401/403/404 on that read is
+inconclusive. Without a kept id, a single attachment matching name, size, author
+and created time yields `operator_resolution_required` (no causal proof);
+absent, duplicate or truncated evidence is inconclusive. Visibility and
+notifications follow YouTrack's defaults for attachments.
+
+Verification status: this REST contract (multipart upload, array response) was
+checked against JetBrains documentation only, never against a live YouTrack
+instance. The status codes and the server's size limit are unverified.
+
 ## Exact permanent comment deletion
 
 `comment.delete` removes one exact comment from YouTrack's database. It does
@@ -421,6 +487,9 @@ equivalent plan to work around uncertainty. The readonly editions and native
 | Verified write, then ledger or output failure | `WRITE_APPLIED_LOCAL_FAILURE`; write applied, do not repeat. |
 | Definitive 4xx rejection | Consumed terminal rejection; any later attempt needs new snapshot, plan and confirmation. |
 | Concurrent/repeated apply | Refuse, no second mutation request. |
+| Attachment source file changed, missing or replaced at apply | Exit 9 `OPERATOR_ATTACHMENT_SOURCE_STALE`; zero requests, plan unconsumed (nothing claimed). Take a new snapshot. |
+| Attachment upload lost, interrupted or read-back fails | `WRITE_OUTCOME_UNKNOWN`; the file is never uploaded again. The local record keeps a well-formed attachment `remote_id`; reconcile reads it exactly. |
+| Attachment upload rejected with 413 after the claim | Consumed terminal rejection; lower the size or ask the administrator, then take a new snapshot. |
 
 Use `operator-write status` or bounded GET-only `operator-write reconcile` for
 the same plan. For comment addition or issue creation, an exact known comment

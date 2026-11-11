@@ -142,6 +142,11 @@ type request struct {
 	// there can YouTrack's 400 invalid_query mean "fix your input"; any other
 	// 400 answers parameters the CLI built and stays a CLI defect.
 	callerQuery bool
+	// contentType overrides the request media type; empty means application/json.
+	contentType string
+	// acceptStatus replaces the single accepted write status (200) for the one
+	// operation whose success status the server documents loosely.
+	acceptStatus []int
 }
 
 func (client *Client) readJSON(ctx context.Context, request request, out any) error {
@@ -203,7 +208,7 @@ func (client *Client) writeJSON(ctx context.Context, request request, out any) e
 	}
 	defer closeAndDrain(response.Body)
 
-	if response.StatusCode != http.StatusOK {
+	if !statusAccepted(response.StatusCode, request.acceptStatus) {
 		return client.translateWriteStatus(response, request.operation)
 	}
 	body, tooLarge, readErr := readResponseBody(response)
@@ -214,6 +219,18 @@ func (client *Client) writeJSON(ctx context.Context, request request, out any) e
 		return errx.WriteOutcomeUnknown(request.operation)
 	}
 	return nil
+}
+
+func statusAccepted(status int, accepted []int) bool {
+	if len(accepted) == 0 {
+		return status == http.StatusOK
+	}
+	for _, candidate := range accepted {
+		if status == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func (client *Client) send(ctx context.Context, request request) (*http.Response, error) {
@@ -232,7 +249,11 @@ func (client *Client) send(ctx context.Context, request request) (*http.Response
 	}
 	if request.write {
 		httpRequest.ContentLength = int64(len(request.body))
-		httpRequest.Header.Set("Content-Type", "application/json")
+		contentType := request.contentType
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		httpRequest.Header.Set("Content-Type", contentType)
 	}
 	httpRequest.Header.Set("Accept", "application/json")
 	// Explicit gzip handling lets us enforce separate wire and decoded bounds.

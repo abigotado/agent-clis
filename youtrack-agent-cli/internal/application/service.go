@@ -836,7 +836,7 @@ func requireMutationProfile(record journal.Record, name string) error {
 }
 
 func hasWriteCapability(value profile.Profile) bool {
-	return value.HasCapability(profile.CapabilityIssueCreate) || value.HasCapability(profile.CapabilityIssueUpdate) || value.HasCapability(profile.CapabilityCommentAdd) || value.HasCapability(profile.CapabilityCommentDelete) || value.HasCapability(profile.CapabilityIssueEdit)
+	return value.HasCapability(profile.CapabilityIssueCreate) || value.HasCapability(profile.CapabilityIssueUpdate) || value.HasCapability(profile.CapabilityCommentAdd) || value.HasCapability(profile.CapabilityCommentDelete) || value.HasCapability(profile.CapabilityIssueEdit) || value.HasCapability(profile.CapabilityAttachmentAdd)
 }
 
 func requiredCapability(kind intent.Kind) (profile.Capability, error) {

@@ -55,7 +55,7 @@ func ValidateSnapshot(s Snapshot) error {
 		s.CapturedAt.IsZero() || s.CapturedAt.Location() != time.UTC {
 		return invalid()
 	}
-	if s.Text != nil && s.Kind != KindIssueEdit {
+	if s.Text != nil && s.Kind != KindIssueEdit || s.Attachment != nil && s.Kind != KindAttachmentAdd {
 		return invalid()
 	}
 	switch s.Kind {
@@ -91,6 +91,11 @@ func ValidateSnapshot(s Snapshot) error {
 	case KindIssueEdit:
 		if !validIssue(s.Issue) || s.Project != nil || s.Fields != nil || s.Field != nil || s.Comment != nil || s.Text == nil ||
 			!protocolvalue.IsSHA256(s.Text.SummarySHA256) || !protocolvalue.IsSHA256(s.Text.DescriptionSHA256) {
+			return invalid()
+		}
+	case KindAttachmentAdd:
+		if !validIssue(s.Issue) || s.Project != nil || s.Fields != nil || s.Field != nil || s.Comment != nil || s.Text != nil ||
+			s.Attachment == nil || !validAttachment(*s.Attachment) {
 			return invalid()
 		}
 	default:
@@ -203,9 +208,12 @@ func validUpdateValues(f Field) bool {
 }
 
 // needsPlanVersion4 reports whether the snapshot carries a User field or a
-// null target, in the update field or in any create field, which only a
-// version 4 plan may hold.
+// null target, in the update field or in any create field, or an attachment,
+// which only a version 4 plan may hold.
 func needsPlanVersion4(s Snapshot) bool {
+	if s.Attachment != nil {
+		return true
+	}
 	if s.Field != nil && (s.Field.Type == UserIssueFieldType || s.Field.TargetValue == nil) {
 		return true
 	}
@@ -282,7 +290,7 @@ func validRequest(q Request) bool {
 		return q.CommentText == "" && q.Summary == "" && q.Description == ""
 	case KindCommentAdd:
 		return q.Summary == "" && q.Description == "" && validText(q.CommentText, MaxCommentBytes, true)
-	case KindCommentDelete:
+	case KindCommentDelete, KindAttachmentAdd:
 		return q.CommentText == "" && q.Summary == "" && q.Description == ""
 	case KindIssueEdit:
 		// Absent and empty are not distinguishable, so at least one non-empty
@@ -330,6 +338,9 @@ func Prepare(snapshot Snapshot, request Request, now time.Time) (Plan, error) {
 	case KindIssueEdit:
 		// The request text is applied verbatim, with no marker; the snapshot
 		// holds only hashes of the old text.
+	case KindAttachmentAdd:
+		// The frozen snapshot is the complete upload payload; no marker can
+		// ride inside the file without changing its bytes.
 	default:
 		return Plan{}, invalid()
 	}
@@ -369,11 +380,11 @@ func ValidatePlan(p Plan) error {
 	}
 	switch p.Version {
 	case LegacyPlanVersion1:
-		if p.Snapshot.Kind == KindCommentDelete || p.Snapshot.Kind == KindIssueEdit || p.ExpiresAt.IsZero() || p.ExpiresAt.Location() != time.UTC || p.ExpiresAt.Sub(p.CreatedAt) != LegacyPlanTTL {
+		if p.Snapshot.Kind == KindCommentDelete || p.Snapshot.Kind == KindIssueEdit || p.Snapshot.Kind == KindAttachmentAdd || p.ExpiresAt.IsZero() || p.ExpiresAt.Location() != time.UTC || p.ExpiresAt.Sub(p.CreatedAt) != LegacyPlanTTL {
 			return invalid()
 		}
 	case PlanVersion2:
-		if p.Snapshot.Kind == KindCommentDelete || p.Snapshot.Kind == KindIssueEdit || !p.ExpiresAt.IsZero() {
+		if p.Snapshot.Kind == KindCommentDelete || p.Snapshot.Kind == KindIssueEdit || p.Snapshot.Kind == KindAttachmentAdd || !p.ExpiresAt.IsZero() {
 			return invalid()
 		}
 	case PlanVersion3:
@@ -381,7 +392,7 @@ func ValidatePlan(p Plan) error {
 			return invalid()
 		}
 	case PlanVersion4:
-		if p.Snapshot.Kind != KindIssueUpdate && p.Snapshot.Kind != KindIssueEdit && p.Snapshot.Kind != KindIssueCreate || !p.ExpiresAt.IsZero() {
+		if p.Snapshot.Kind != KindIssueUpdate && p.Snapshot.Kind != KindIssueEdit && p.Snapshot.Kind != KindIssueCreate && p.Snapshot.Kind != KindAttachmentAdd || !p.ExpiresAt.IsZero() {
 			return invalid()
 		}
 	default:
@@ -412,6 +423,8 @@ func ValidatePlan(p Plan) error {
 		// validRequest already rejects all mutable payload fields.
 	case KindIssueEdit:
 		// validRequest already checks the verbatim summary and description.
+	case KindAttachmentAdd:
+		// validRequest already rejects all mutable payload fields.
 	default:
 		return invalid()
 	}

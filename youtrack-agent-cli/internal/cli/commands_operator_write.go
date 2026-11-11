@@ -23,6 +23,21 @@ func (view operatorWriteView) Fields() []output.Field {
 	commentText, summary, description := "", "", ""
 	comment := output.Field{Name: "comment", OnRequest: true}
 	requiredPermission := output.Field{Name: "required_server_permission", OnRequest: true}
+	attachment := output.Field{Name: "attachment", OnRequest: true}
+	var frozenAttachment *application.OperatorAttachment
+	if view.Attachment != nil {
+		frozenAttachment = view.Attachment
+	}
+	if view.Snapshot != nil && view.Snapshot.Attachment != nil {
+		frozenAttachment = view.Snapshot.Attachment
+	}
+	if view.Plan != nil && view.Plan.Snapshot.Attachment != nil {
+		frozenAttachment = view.Plan.Snapshot.Attachment
+	}
+	if frozenAttachment != nil {
+		attachment.Raw, attachment.Always, attachment.OnRequest = frozenAttachment, true, false
+		attachment.Value = "name=" + strconv.Quote(frozenAttachment.Name) + " size=" + strconv.FormatInt(frozenAttachment.Size, 10) + " content_type=" + frozenAttachment.ContentType + " sha256=" + shortDigest(frozenAttachment.SHA256)
+	}
 	if view.Snapshot != nil {
 		field.Raw = view.Snapshot.Field
 		fields.Raw, fields.OnRequest = view.Snapshot.Fields, len(view.Snapshot.Fields) == 0
@@ -75,11 +90,19 @@ func (view operatorWriteView) Fields() []output.Field {
 		{Name: "description", Value: description, Raw: description, OnRequest: description == ""},
 		{Name: "comment_text", Value: commentText, Raw: commentText, OnRequest: commentText == ""},
 		comment,
+		attachment,
 		requiredPermission,
 		{Name: "evidence", Value: view.Evidence, Raw: view.Evidence, OnRequest: view.Evidence == ""},
 		{Name: "snapshot", Raw: view.Snapshot, OnRequest: true},
 		{Name: "plan", Raw: view.Plan, OnRequest: true},
 	}
+}
+
+func shortDigest(digest string) string {
+	if len(digest) > 12 {
+		return digest[:12]
+	}
+	return digest
 }
 
 func (a *App) renderOperatorWrite(result application.OperatorWriteInfo) error {
@@ -113,6 +136,16 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 		if input.Kind == "issue.edit" && (len(clearNames) != 0 || len(clearIDs) != 0 || len(fieldNames) != 0 || len(valueNames) != 0 || len(fieldIDs) != 0 || len(valueIDs) != 0 || input.ProjectID != "" || input.CommentID != "") {
 			return errx.Usage("issue.edit snapshot takes only --id and --out; no field, value, --project, or --comment-id")
 		}
+		if input.Kind == "attachment.add" {
+			if input.FilePath == "" {
+				return errx.Usage("attachment.add snapshot requires --file")
+			}
+			if input.ProjectID != "" || input.CommentID != "" || len(fieldNames) != 0 || len(valueNames) != 0 || len(fieldIDs) != 0 || len(valueIDs) != 0 || len(clearNames) != 0 || len(clearIDs) != 0 || clearValue {
+				return errx.Usage("attachment.add snapshot takes only --id, --file, optional --name, and --out")
+			}
+		} else if input.FilePath != "" || input.AttachmentName != "" {
+			return errx.Usage("--file and --name are accepted only with --kind attachment.add")
+		}
 		fields, err := operatorFieldSelections(input.Kind, fieldNames, valueNames, fieldIDs, valueIDs, clearNames, clearIDs, clearValue)
 		if err != nil {
 			return err
@@ -129,8 +162,8 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 		return a.renderOperatorWrite(result)
 	}}
 	flags := command.Flags()
-	flags.StringVar(&input.Kind, "kind", "", "supported write kind: issue.create, issue.update, issue.edit, comment.add, or comment.delete")
-	flags.StringVar(&input.IssueID, "id", "", "exact issue entity or readable ID for issue.update, issue.edit, comment.add, or comment.delete")
+	flags.StringVar(&input.Kind, "kind", "", "supported write kind: issue.create, issue.update, issue.edit, comment.add, comment.delete, or attachment.add")
+	flags.StringVar(&input.IssueID, "id", "", "exact issue entity or readable ID for issue.update, issue.edit, comment.add, comment.delete, or attachment.add")
 	flags.StringVar(&input.CommentID, "comment-id", "", "immutable exact comment ID for comment.delete")
 	flags.StringVar(&input.ProjectID, "project", "", "exact project entity ID or key for issue.create")
 	flags.StringArrayVar(&fieldNames, "field", nil, "exact field name, for example Stage or Assignee; repeatable for issue.create, last wins otherwise")
@@ -140,6 +173,8 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 	flags.BoolVar(&clearValue, "clear-value", false, "empty the selected field instead of setting a value; only with --kind issue.update and exactly one --field or --field-id, never with --value or --value-id. The field must allow empty values (canBeEmpty) and currently hold one")
 	flags.StringArrayVar(&clearNames, "clear-field", nil, "exact field name to leave empty at creation; repeatable, only with --kind issue.create, never with --clear-value or --field-id. The project field must allow empty values (canBeEmpty). A user field also needs the issue-create-user-fields capability")
 	flags.StringArrayVar(&clearIDs, "clear-field-id", nil, "immutable project custom-field ID to leave empty at creation; repeatable, only with --kind issue.create, never with --clear-value or --field")
+	flags.StringVar(&input.FilePath, "file", "", "local regular file to attach; only with --kind attachment.add")
+	flags.StringVar(&input.AttachmentName, "name", "", "upload file name for attachment.add; defaults to the file's base name")
 	flags.StringVar(&input.OutputPath, "out", "", "new exclusive 0600 snapshot path in an existing private directory")
 	return command
 }

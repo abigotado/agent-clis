@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -15,6 +17,10 @@ import (
 	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/writepolicy"
 	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/youtrack"
 )
+
+// operatorAttachmentPage is the most attachments one issue may hold for the
+// duplicate-name check to be decidable from a single bounded page.
+const operatorAttachmentPage = 100
 
 func (s *Service) requireOperatorDependencies(store bool) error {
 	if !s.OperatorBackendSupported() {
@@ -45,6 +51,8 @@ func requireOperatorProfile(selected profile.Profile, kind operatorwrite.Kind) e
 		capability = profile.CapabilityCommentDelete
 	case operatorwrite.KindIssueEdit:
 		capability = profile.CapabilityIssueEdit
+	case operatorwrite.KindAttachmentAdd:
+		capability = profile.CapabilityAttachmentAdd
 	default:
 		return errx.Usage("unsupported operator-write kind")
 	}
@@ -134,6 +142,14 @@ func (s *Service) SnapshotOperatorWrite(ctx context.Context, input OperatorSnaps
 	if err := validateOperatorTarget(kind, input); err != nil {
 		return OperatorWriteInfo{}, err
 	}
+	// File refusals precede any credential or network access.
+	var attachment *operatorwrite.Attachment
+	if kind == operatorwrite.KindAttachmentAdd {
+		attachment, err = freezeOperatorAttachment(ctx, input)
+		if err != nil {
+			return OperatorWriteInfo{}, err
+		}
+	}
 	client, selected, err := s.client(ctx, input.Profile)
 	if err != nil {
 		return OperatorWriteInfo{}, err
@@ -209,6 +225,12 @@ func (s *Service) SnapshotOperatorWrite(ctx context.Context, input OperatorSnaps
 			}
 			snapshot.Text = text
 		}
+		if kind == operatorwrite.KindAttachmentAdd {
+			if err := requireAttachmentNameFree(ctx, client, issue.ID, attachment.Name, false); err != nil {
+				return OperatorWriteInfo{}, err
+			}
+			snapshot.Attachment = attachment
+		}
 		if kind == operatorwrite.KindCommentDelete {
 			target, err := client.GetCommentForDeletion(ctx, issue.ID, input.CommentID)
 			if err != nil {
@@ -256,6 +278,9 @@ func validateOperatorTarget(kind operatorwrite.Kind, input OperatorSnapshotInput
 		if !byName && !byID {
 			return errx.Usage("each field selection requires either --field and --value or --field-id and --value-id")
 		}
+	}
+	if kind != operatorwrite.KindAttachmentAdd && (input.FilePath != "" || input.AttachmentName != "") {
+		return errx.Usage("--file and --name are accepted only by attachment.add")
 	}
 	selected := make(map[OperatorFieldSelection]bool, len(input.Fields))
 	for _, selection := range input.Fields {
@@ -317,10 +342,97 @@ func validateOperatorTarget(kind operatorwrite.Kind, input OperatorSnapshotInput
 		if len(input.Fields) != 0 {
 			return errx.Usage("issue.edit snapshot does not accept field or value selectors")
 		}
+	case operatorwrite.KindAttachmentAdd:
+		if input.IssueID == "" || input.ProjectID != "" || input.CommentID != "" || input.FilePath == "" {
+			return errx.Usage("attachment.add snapshot requires an exact --id and --file with no --project")
+		}
+		if len(input.Fields) != 0 {
+			return errx.Usage("attachment.add snapshot does not accept field or value selectors")
+		}
 	default:
 		return errx.Usage("unsupported operator-write kind")
 	}
 	return nil
+}
+
+// freezeOperatorAttachment reads the local file and freezes it under its
+// validated name. It is network-free; every refusal here precedes credentials.
+func freezeOperatorAttachment(ctx context.Context, input OperatorSnapshotInput) (*operatorwrite.Attachment, error) {
+	source, err := operatorwrite.ReadAttachmentSource(ctx, input.FilePath)
+	if err != nil {
+		return nil, err
+	}
+	name := input.AttachmentName
+	if name == "" {
+		name = filepath.Base(source.Path)
+	}
+	attachment, err := source.Attachment(name)
+	if err != nil {
+		return nil, err
+	}
+	return &attachment, nil
+}
+
+// requireAttachmentNameFree reads one bounded attachment page of the issue and
+// refuses a truncated page or a live attachment that already has the name. At
+// apply (stale) the refusals are drift conflicts; at snapshot a taken name is a
+// usage error with a corrective hint.
+func requireAttachmentNameFree(ctx context.Context, client *youtrack.Client, issueID, name string, stale bool) error {
+	attachments, err := client.ListIssueAttachments(ctx, issueID, youtrack.PageOptions{Top: operatorAttachmentPage + 1})
+	if err != nil {
+		return err
+	}
+	if len(attachments) > operatorAttachmentPage {
+		return errx.Conflict("OPERATOR_ATTACHMENTS_TRUNCATED", "the issue has more attachments than one bounded page can check for a duplicate name").
+			WithHint("remove unused attachments or attach to a different issue")
+	}
+	for _, existing := range attachments {
+		if existing.Name != name || existing.Removed {
+			continue
+		}
+		if stale {
+			return errx.Conflict("OPERATOR_ATTACHMENT_STALE", "an attachment with the planned name appeared on the issue").WithHint("inspect a new snapshot and prepare a fresh intent")
+		}
+		e := errx.Usage("the issue already has an attachment with this name")
+		e.Reason = "OPERATOR_ATTACHMENT_NAME_EXISTS"
+		return e.WithHint("pass a different --name")
+	}
+	return nil
+}
+
+// operatorAttachmentInput re-reads the source file and builds the one upload
+// payload. The bytes verified against the plan are the bytes later dispatched.
+// Any mismatch or read failure is a non-secret stale-source conflict raised
+// before credentials, so the plan stays unclaimed and a restored file can still
+// be applied.
+func operatorAttachmentInput(ctx context.Context, plan operatorwrite.Plan) (youtrack.AddAttachmentInput, error) {
+	frozen := plan.Snapshot.Attachment
+	if frozen == nil {
+		return youtrack.AddAttachmentInput{}, errx.Usage("attachment.add plan has no attachment")
+	}
+	source, err := operatorwrite.ReadAttachmentSource(ctx, frozen.SourcePath)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return youtrack.AddAttachmentInput{}, fmt.Errorf("verify attachment source: %w", ctxErr)
+		}
+		return youtrack.AddAttachmentInput{}, errAttachmentSourceStale()
+	}
+	if source.Size != frozen.Size || source.SHA256 != frozen.SHA256 || source.ContentType != frozen.ContentType {
+		return youtrack.AddAttachmentInput{}, errAttachmentSourceStale()
+	}
+	snapshot := plan.Snapshot
+	input := youtrack.AddAttachmentInput{IssueID: snapshot.Issue.ID, ProjectID: snapshot.Issue.ProjectID, ProjectKey: snapshot.Issue.ProjectKey,
+		Name: frozen.Name, ContentType: frozen.ContentType, Content: source.Bytes, ExpectedSHA256: frozen.SHA256,
+		ExpectedAuthorID: snapshot.Binding.AccountID, ExpectedAuthorLogin: snapshot.Binding.AccountLogin}
+	if err := youtrack.ValidateAddAttachmentInput(input); err != nil {
+		return youtrack.AddAttachmentInput{}, err
+	}
+	return input, nil
+}
+
+func errAttachmentSourceStale() *errx.Error {
+	return errx.Conflict("OPERATOR_ATTACHMENT_SOURCE_STALE", "the attachment file is missing or differs from the confirmed plan").
+		WithHint("restore the exact confirmed file and apply again, or inspect a new snapshot and prepare a fresh intent")
 }
 
 // operatorEditPrecondition is the one place that turns the current issue text
@@ -803,6 +915,13 @@ func (s *Service) ApplyOperatorWrite(ctx context.Context, input OperatorApplyInp
 			return OperatorWriteInfo{}, err
 		}
 	}
+	var upload youtrack.AddAttachmentInput
+	if plan.Snapshot.Kind == operatorwrite.KindAttachmentAdd {
+		upload, err = operatorAttachmentInput(ctx, plan)
+		if err != nil {
+			return OperatorWriteInfo{}, err
+		}
+	}
 	if err := s.checkOperatorBinding(ctx, plan.Snapshot, input.Profile); err != nil {
 		return OperatorWriteInfo{}, err
 	}
@@ -829,7 +948,7 @@ func (s *Service) ApplyOperatorWrite(ctx context.Context, input OperatorApplyInp
 			if err := operatorwrite.CheckFresh(plan, s.currentTime()); err != nil {
 				return err
 			}
-			if plan.Snapshot.Kind == operatorwrite.KindCommentDelete {
+			if plan.Snapshot.Kind == operatorwrite.KindCommentDelete || plan.Snapshot.Kind == operatorwrite.KindAttachmentAdd {
 				if err := verifyClientAccount(ctx, client, selected); err != nil {
 					return err
 				}
@@ -842,7 +961,7 @@ func (s *Service) ApplyOperatorWrite(ctx context.Context, input OperatorApplyInp
 				return claimErr
 			}
 			// Claim releases its own ledger lock before this remote call.
-			remoteID, remoteReadableID, writeErr := dispatchOperatorWrite(ctx, client, plan, updateInput)
+			remoteID, remoteReadableID, writeErr := dispatchOperatorWrite(ctx, client, plan, updateInput, upload)
 			outcome := operatorwrite.Result{State: operatorwrite.StateApplied, Code: "WRITE_APPLIED", RemoteID: remoteID, RemoteReadableID: remoteReadableID}
 			if writeErr != nil {
 				outcome.State, outcome.Code = operatorwrite.StateUnknown, "WRITE_OUTCOME_UNKNOWN"
@@ -906,6 +1025,18 @@ func verifyOperatorRemote(ctx context.Context, client *youtrack.Client, snapshot
 			}
 		}
 		return nil
+	case operatorwrite.KindAttachmentAdd:
+		issue, err := client.GetIssue(ctx, snapshot.Issue.ID)
+		if err != nil {
+			return err
+		}
+		if issue.Project.Archived || issue.Project.ID != snapshot.Issue.ProjectID || issue.Project.ShortName != snapshot.Issue.ProjectKey || issue.Updated != snapshot.Issue.Updated {
+			return errx.Conflict("OPERATOR_ISSUE_STALE", "target issue project or updated timestamp changed").WithHint("inspect a new snapshot and prepare a fresh intent")
+		}
+		if snapshot.Attachment == nil {
+			return errx.Usage("attachment.add plan has no attachment")
+		}
+		return requireAttachmentNameFree(ctx, client, issue.ID, snapshot.Attachment.Name, true)
 	case operatorwrite.KindIssueUpdate, operatorwrite.KindIssueEdit, operatorwrite.KindCommentAdd, operatorwrite.KindCommentDelete:
 		issue, err := client.GetIssue(ctx, snapshot.Issue.ID)
 		if err != nil {
@@ -986,8 +1117,9 @@ func requireSameField(frozen, current operatorwrite.Field) error {
 
 // dispatchOperatorWrite sends the plan's single POST and returns the remote
 // entity ID and, for a created issue, its readable ID. update is the already
-// validated issue.update payload, built before the plan was claimed.
-func dispatchOperatorWrite(ctx context.Context, client *youtrack.Client, plan operatorwrite.Plan, update youtrack.UpdateIssueInput) (string, string, error) {
+// validated issue.update payload and upload the verified attachment payload,
+// both built before the plan was claimed.
+func dispatchOperatorWrite(ctx context.Context, client *youtrack.Client, plan operatorwrite.Plan, update youtrack.UpdateIssueInput, upload youtrack.AddAttachmentInput) (string, string, error) {
 	snapshot := plan.Snapshot
 	switch snapshot.Kind {
 	case operatorwrite.KindIssueCreate:
@@ -1006,6 +1138,22 @@ func dispatchOperatorWrite(ctx context.Context, client *youtrack.Client, plan op
 			return comment.ID, "", operatorUnknownError()
 		}
 		return comment.ID, "", nil
+	case operatorwrite.KindAttachmentAdd:
+		uploaded, err := client.AddAttachment(ctx, upload)
+		if err != nil {
+			// A well-formed ID is kept so reconciliation can read it exactly.
+			return uploaded.ID, "", err
+		}
+		issue, err := client.GetIssue(ctx, snapshot.Issue.ID)
+		if err != nil || issue.Project.ID != snapshot.Issue.ProjectID || issue.Project.ShortName != snapshot.Issue.ProjectKey {
+			return uploaded.ID, "", operatorUnknownError()
+		}
+		observed, err := client.GetIssueAttachment(ctx, snapshot.Issue.ID, uploaded.ID)
+		if err != nil || observed.ID != uploaded.ID || observed.Name != snapshot.Attachment.Name || observed.Size != snapshot.Attachment.Size ||
+			observed.Removed || observed.Author == nil || observed.Author.ID != snapshot.Binding.AccountID || observed.Author.Login != snapshot.Binding.AccountLogin {
+			return uploaded.ID, "", operatorUnknownError()
+		}
+		return uploaded.ID, "", nil
 	case operatorwrite.KindCommentDelete:
 		if err := client.DeleteComment(ctx, youtrack.DeleteCommentInput{IssueID: snapshot.Issue.ID, CommentID: snapshot.Comment.ID}); err != nil {
 			return "", "", err
@@ -1229,6 +1377,55 @@ func (s *Service) ReconcileOperatorWrite(ctx context.Context, input OperatorReco
 				}
 			}
 		}
+	case operatorwrite.KindAttachmentAdd:
+		issue, err := client.GetIssue(ctx, snapshot.Issue.ID)
+		if err != nil {
+			return OperatorWriteInfo{}, err
+		}
+		if issue.Project.ID != snapshot.Issue.ProjectID || issue.Project.ShortName != snapshot.Issue.ProjectKey {
+			return OperatorWriteInfo{}, errx.Conflict("OPERATOR_PROJECT_CHANGED", "target issue moved from the frozen project")
+		}
+		if record.Result != nil && record.Result.RemoteID != "" {
+			// The ID came from this plan's own upload response, so a match is causal.
+			// Access loss or absence cannot prove the upload did not land.
+			observed, getErr := client.GetIssueAttachment(ctx, snapshot.Issue.ID, record.Result.RemoteID)
+			switch {
+			case getErr == nil:
+				if observed.ID == record.Result.RemoteID && operatorAttachmentMatches(observed, record.Plan) {
+					outcome.State, outcome.Code = operatorwrite.StateReconciled, "ATTACHMENT_OBSERVED"
+					outcome.RemoteID = observed.ID
+					evidence = "matching_attachment_observed"
+				}
+			case errx.ExitCode(getErr) == errx.CodeAuth || errx.ExitCode(getErr) == errx.CodePermission || errx.ExitCode(getErr) == errx.CodeNotFound:
+				// Absence or inaccessible content is inconclusive evidence.
+			default:
+				return OperatorWriteInfo{}, getErr
+			}
+			break
+		}
+		attachments, err := client.ListIssueAttachments(ctx, snapshot.Issue.ID, youtrack.PageOptions{Top: input.Limit + 1, Skip: input.Offset})
+		if err != nil {
+			return OperatorWriteInfo{}, err
+		}
+		if len(attachments) > input.Limit {
+			break
+		}
+		// No marker can be embedded in a file, so a unique name, size, author and
+		// creation-time match is only an observation, never proof of causation.
+		// YouTrack reports milliseconds, so the cutoff rounds the claim up.
+		notBefore := record.Attempt.ClaimedAt.UnixMilli()
+		if record.Attempt.ClaimedAt.After(time.UnixMilli(notBefore)) {
+			notBefore++
+		}
+		matches := 0
+		for _, attachment := range attachments {
+			if operatorAttachmentMatches(attachment, record.Plan) && attachment.Created >= notBefore {
+				matches++
+			}
+		}
+		if matches == 1 {
+			evidence = "matching_attachment_observed_without_causal_proof"
+		}
 	case operatorwrite.KindCommentDelete:
 		issue, issueErr := client.GetIssue(ctx, snapshot.Issue.ID)
 		if issueErr != nil {
@@ -1338,4 +1535,10 @@ func operatorCommentMatches(comment youtrack.Comment, plan operatorwrite.Plan) b
 		strings.Contains(*comment.Text, operatorwrite.Marker(plan.ID)) && comment.Author != nil && comment.Author.ID == binding.AccountID &&
 		comment.Author.Login == binding.AccountLogin && comment.Visibility != nil && comment.Visibility.Type == "UnlimitedVisibility" &&
 		len(comment.Visibility.PermittedGroups) == 0 && len(comment.Visibility.PermittedUsers) == 0
+}
+
+func operatorAttachmentMatches(attachment youtrack.IssueAttachment, plan operatorwrite.Plan) bool {
+	binding, frozen := plan.Snapshot.Binding, plan.Snapshot.Attachment
+	return frozen != nil && attachment.ID != "" && !attachment.Removed && attachment.Name == frozen.Name && attachment.Size == frozen.Size &&
+		attachment.Author != nil && attachment.Author.ID == binding.AccountID && attachment.Author.Login == binding.AccountLogin
 }

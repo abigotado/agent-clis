@@ -68,7 +68,7 @@ func PlanLifetime(version int) string {
 // It is the single place that maps a kind to its plan version.
 func PlanVersionFor(kind Kind) int {
 	switch kind {
-	case KindIssueUpdate, KindIssueEdit, KindIssueCreate:
+	case KindIssueUpdate, KindIssueEdit, KindIssueCreate, KindAttachmentAdd:
 		return PlanVersion4
 	case KindCommentDelete:
 		return PlanVersion3
@@ -96,6 +96,8 @@ const (
 	KindCommentAdd    Kind = "comment.add"
 	KindCommentDelete Kind = "comment.delete"
 	KindIssueEdit     Kind = "issue.edit"
+	// KindAttachmentAdd uploads one local file to one issue.
+	KindAttachmentAdd Kind = "attachment.add"
 )
 
 type Binding struct {
@@ -295,8 +297,10 @@ type Snapshot struct {
 	Fields  []Field  `json:"fields,omitempty"`
 	Comment *Comment `json:"comment,omitempty"`
 	// Text is set only for issue.edit and holds hashes of the old text.
-	Text       *TextPrecondition `json:"text,omitempty"`
-	CapturedAt time.Time         `json:"captured_at"`
+	Text *TextPrecondition `json:"text,omitempty"`
+	// Attachment is set only for attachment.add and freezes the exact file.
+	Attachment *Attachment `json:"attachment,omitempty"`
+	CapturedAt time.Time   `json:"captured_at"`
 }
 
 // ProjectRef is the exact project the snapshot's policy check binds.
