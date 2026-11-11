@@ -83,6 +83,9 @@ check_provider_mirrors() {
   head_agents=$(git rev-parse --verify 'HEAD:.agents' 2>/dev/null || true)
   [ "$tip_agents" = "$head_agents" ] \
     || fail "${commit:0:12}: .agents differs from the checked-out HEAD, so the provider mirrors cannot be verified; check this branch out and push it"
+  # The compiler reads the working tree, so it must equal HEAD's .agents.
+  git diff --quiet HEAD -- .agents && [ -z "$(git ls-files --others --exclude-standard -- .agents)" ] \
+    || fail ".agents has uncommitted changes; commit or discard them before pushing"
   [ -d .agents ] && "$python_bin" -c 'pass' >/dev/null 2>&1 || return 0
   local global_compiler="${HOME}/.agents/compiler.py"
   if [ -f "$global_compiler" ]; then
@@ -101,10 +104,11 @@ cleanup() {
   local worktree
   [ -n "$tmp" ] || return 0
   for worktree in "$tmp"/wt-*; do
-    [ -e "$worktree" ] && git worktree remove --force "$worktree" >/dev/null 2>&1
+    if [ -e "$worktree" ] && ! git worktree remove --force "$worktree" >/dev/null 2>&1; then
+      echo "pre-push: WARN: could not remove temporary worktree $worktree" >&2
+    fi
   done
   rm -rf "$tmp"
-  git worktree prune >/dev/null 2>&1
   return 0
 }
 trap cleanup EXIT
@@ -134,8 +138,9 @@ while IFS=' ' read -r -u 3 local_ref local_sha remote_ref remote_sha _extra; do
   # The pushed commit may carry its own hooks; the checkout must not run them.
   git -c core.hooksPath=/dev/null worktree add --quiet --detach "$worktree" "$commit" >/dev/null \
     || fail "$local_ref: cannot check out $commit"
-  [ -z "$(git -C "$worktree" status --porcelain)" ] \
-    || fail "$local_ref: the checkout of $commit is not clean"
+  dirty=$(git -C "$worktree" status --porcelain --untracked-files=all) \
+    || fail "$local_ref: cannot inspect the checkout of $commit"
+  [ -z "$dirty" ] || fail "$local_ref: the checkout of $commit is not clean"
   (cd "$worktree" && gate_tree "${commit:0:12}" </dev/null) || exit 1
   gated=$((gated + 1))
   check_provider_mirrors "$commit"

@@ -427,7 +427,7 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
   end
 
   def test_rejects_removing_operator_write_dependency_guard
-    changed = RELEASE.sub("auth|application|journal|mutation|oauth|oauthrecovery|operatorwrite|youtrack", "auth|application|journal|mutation|oauth|oauthrecovery|youtrack")
+    changed = RELEASE.sub("approval|auth|application|intent|journal|mutation|oauth|oauthrecovery|operatorwrite|writepolicy|youtrack", "auth|application|journal|mutation|oauth|oauthrecovery|youtrack")
     refute_equal RELEASE, changed
     success, stderr = verify(CONFIG, {}, release: changed)
     refute success

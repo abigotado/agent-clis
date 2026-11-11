@@ -42,7 +42,7 @@ VERIFY_BOUNDARY_RUN = <<~'SH'
   deps="$(go list -tags portable_readonly -deps ./cmd/youtrack-agent-cli)"
   test -n "${deps}"
   rc=0
-  forbidden="$(grep -E '^net/http(/|$)|/internal/(auth|application|journal|mutation|oauth|oauthrecovery|operatorwrite|youtrack)(/|$)' <<<"${deps}")" || rc=$?
+  forbidden="$(grep -E '^net/http(/|$)|/internal/(approval|auth|application|intent|journal|mutation|oauth|oauthrecovery|operatorwrite|writepolicy|youtrack)(/|$)' <<<"${deps}")" || rc=$?
   test "${rc}" -le 1
   if [ -n "${forbidden}" ]; then echo "portable build links forbidden packages:" >&2; echo "${forbidden}" >&2; exit 1; fi
   go build -tags portable_readonly -o "${RUNNER_TEMP}/portable-readonly" ./cmd/youtrack-agent-cli

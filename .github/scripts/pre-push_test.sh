@@ -19,7 +19,7 @@ lacks() {
   if grep -Fq -- "$3" "$2"; then echo "FAIL $1: unexpected '$3'" >&2; failures=$((failures + 1)); else echo "ok   $1"; fi
 }
 
-mkdir -p "$work/bin" "$work/repo"
+mkdir -p "$work/bin" "$work/repo" "$work/tmp"
 cat >"$work/bin/go" <<'SHIM'
 #!/usr/bin/env bash
 cat >/dev/null
@@ -48,7 +48,7 @@ zero=0000000000000000000000000000000000000000
 run() { # refs on stdin; output to $work/out
   : >"$GO_LOG"
   set +e
-  bash .githooks/pre-push origin url >"$work/out" 2>&1
+  TMPDIR="$work/tmp" bash .githooks/pre-push origin url >"$work/out" 2>&1
   status=$?
   set -e
 }
@@ -115,9 +115,32 @@ run <<<"refs/heads/x $good refs/heads/x $zero"
 check "dirty working tree does not fail a clean pushed commit" 0 "$status"
 git checkout -q -- mod_a/x.go
 
+# Provider-mirror branch: the compiler is absent here (HOME is a scratch dir).
+export HOME="$work/home"; mkdir -p "$HOME"
+mkdir -p .agents && echo one >.agents/r.md && git add -A && git commit -qm agents1
+agents1=$(git rev-parse HEAD)
+echo two >.agents/r.md && git commit -qam agents2
+run <<<"refs/heads/x $agents1 refs/heads/x $zero"
+check "a tip whose .agents differs from HEAD fails closed" 1 "$status"
+contains "mirror refusal is explained" "$work/out" ".agents differs from the checked-out HEAD"
+run <<<"refs/heads/x $(git rev-parse HEAD) refs/heads/x $zero"
+check "HEAD with matching .agents passes" 0 "$status"
+echo three >.agents/r.md
+run <<<"refs/heads/x $(git rev-parse HEAD) refs/heads/x $zero"
+check "uncommitted .agents changes fail closed" 1 "$status"
+git checkout -q -- .agents/r.md
+
+# Cleanup must not prune worktrees the hook does not own.
+git worktree add -q --detach "$work/other" HEAD
+mv "$work/other" "$work/other-moved"
+run <<<"refs/heads/x $good refs/heads/x $zero"
+git worktree list | grep -q 'other' && echo "ok   foreign worktree entry kept" || { echo "FAIL foreign worktree pruned" >&2; failures=$((failures + 1)); }
+mv "$work/other-moved" "$work/other"
+git worktree remove --force "$work/other"
+
 leftover=$(git worktree list | wc -l | tr -d ' ')
 test "$leftover" -eq 1 && echo "ok   no temporary worktree left" || { echo "FAIL $leftover worktrees left" >&2; failures=$((failures + 1)); }
-ls "${TMPDIR:-/tmp}"/pre-push.* >/dev/null 2>&1 && { echo "FAIL temp dir left" >&2; failures=$((failures + 1)); } || echo "ok   no temp dir left"
+ls "$work"/tmp/pre-push.* >/dev/null 2>&1 && { echo "FAIL temp dir left" >&2; failures=$((failures + 1)); } || echo "ok   no temp dir left"
 
 [ "$failures" -eq 0 ] || { echo "$failures failure(s)" >&2; exit 1; }
 echo "pre-push tests ok"
