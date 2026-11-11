@@ -39,7 +39,7 @@ environment variables, profile files, logs, receipts, or repository files. Do
 not inspect or print secret-store values.
 
 Operator-confirmed writes need `rest-best-effort` / `best-effort`, the requested
-`issue-create`, `issue-update`, `comment-add`, `comment-delete` or `issue-edit` capability (a single-user field on `issue.create` also needs `issue-create-user-fields`), a bound credential generation and
+`issue-create`, `issue-update`, `comment-add`, `comment-delete`, `issue-edit` or `issue-link` capability (a single-user field on `issue.create` also needs `issue-create-user-fields`), a bound credential generation and
 a nonempty current project allowlist. Keep the existing read-only profile
 unchanged. A separate operator-approved `work-write` profile requires its own
 browser login and `auth allow-projects set --profile work-write --project ID:KEY`.
@@ -48,8 +48,8 @@ capabilities. `capabilities --profile NAME -o json` reports local readiness,
 not server rights. Native-presence approval is a different, unavailable mode.
 
 Capabilities use canonical order `read`, `issue-create`, `issue-update`,
-`comment-add`, `comment-delete`, `issue-edit`, `issue-create-user-fields`, omitting unneeded write kinds. Deletion,
-summary/description editing and user fields on creation are explicit opt-ins. Adding any changes profile identity and invalidates old
+`comment-add`, `comment-delete`, `issue-edit`, `issue-create-user-fields`, `issue-link`, omitting unneeded write kinds. Deletion,
+summary/description editing, user fields on creation and issue linking are explicit opt-ins. Adding any changes profile identity and invalidates old
 credential/policy/default bindings; re-authenticate and explicitly re-establish
 the exact project allowlist and any stale saved selection with operator
 authorization. Do not edit capabilities or policy as part of an installation

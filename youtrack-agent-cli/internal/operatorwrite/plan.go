@@ -55,7 +55,7 @@ func ValidateSnapshot(s Snapshot) error {
 		s.CapturedAt.IsZero() || s.CapturedAt.Location() != time.UTC {
 		return invalid()
 	}
-	if s.Text != nil && s.Kind != KindIssueEdit {
+	if s.Text != nil && s.Kind != KindIssueEdit || (s.Link != nil) != (s.Kind == KindIssueLink) {
 		return invalid()
 	}
 	switch s.Kind {
@@ -93,6 +93,10 @@ func ValidateSnapshot(s Snapshot) error {
 			!protocolvalue.IsSHA256(s.Text.SummarySHA256) || !protocolvalue.IsSHA256(s.Text.DescriptionSHA256) {
 			return invalid()
 		}
+	case KindIssueLink:
+		if !validIssue(s.Issue) || s.Project != nil || s.Fields != nil || s.Field != nil || s.Comment != nil || s.Text != nil || !validLink(*s.Link, s.Issue) {
+			return invalid()
+		}
 	default:
 		return invalid()
 	}
@@ -108,6 +112,31 @@ func snapshotLimit(kind Kind) int {
 		return MaxCommentDeleteSnapshotBytes
 	}
 	return MaxSnapshotBytes
+}
+
+// validLink checks the frozen link against its source. The phrase must be the
+// exact side of the type that the direction names, so a snapshot cannot say
+// one thing and add another.
+func validLink(link Link, source Issue) bool {
+	t := link.Type
+	if !validIssue(link.Target) || link.Target.ID == source.ID || link.Target.ReadableID == source.ReadableID ||
+		!protocolvalue.IsIdentifier(t.ID) || !protocolvalue.IsIdentifier(link.LinkID) ||
+		!validText(t.Name, 256, true) || !validText(t.SourceToTarget, 256, true) || !validText(t.TargetToSource, 256, true) {
+		return false
+	}
+	if t.Aggregation && !t.Directed {
+		return false
+	}
+	switch link.Direction {
+	case LinkUndirected:
+		return !t.Directed && link.Phrase == t.SourceToTarget
+	case LinkOutward:
+		return t.Directed && t.SourceToTarget != t.TargetToSource && link.Phrase == t.SourceToTarget
+	case LinkInward:
+		return t.Directed && t.SourceToTarget != t.TargetToSource && link.Phrase == t.TargetToSource
+	default:
+		return false
+	}
 }
 
 func validComment(comment Comment, accountID string) bool {
@@ -284,6 +313,8 @@ func validRequest(q Request) bool {
 		return q.Summary == "" && q.Description == "" && validText(q.CommentText, MaxCommentBytes, true)
 	case KindCommentDelete:
 		return q.CommentText == "" && q.Summary == "" && q.Description == ""
+	case KindIssueLink:
+		return q.CommentText == "" && q.Summary == "" && q.Description == ""
 	case KindIssueEdit:
 		// Absent and empty are not distinguishable, so at least one non-empty
 		// text is required and clearing is out of scope.
@@ -330,6 +361,8 @@ func Prepare(snapshot Snapshot, request Request, now time.Time) (Plan, error) {
 	case KindIssueEdit:
 		// The request text is applied verbatim, with no marker; the snapshot
 		// holds only hashes of the old text.
+	case KindIssueLink:
+		// The frozen snapshot is the complete link payload.
 	default:
 		return Plan{}, invalid()
 	}
@@ -369,11 +402,11 @@ func ValidatePlan(p Plan) error {
 	}
 	switch p.Version {
 	case LegacyPlanVersion1:
-		if p.Snapshot.Kind == KindCommentDelete || p.Snapshot.Kind == KindIssueEdit || p.ExpiresAt.IsZero() || p.ExpiresAt.Location() != time.UTC || p.ExpiresAt.Sub(p.CreatedAt) != LegacyPlanTTL {
+		if p.Snapshot.Kind == KindCommentDelete || p.Snapshot.Kind == KindIssueEdit || p.Snapshot.Kind == KindIssueLink || p.ExpiresAt.IsZero() || p.ExpiresAt.Location() != time.UTC || p.ExpiresAt.Sub(p.CreatedAt) != LegacyPlanTTL {
 			return invalid()
 		}
 	case PlanVersion2:
-		if p.Snapshot.Kind == KindCommentDelete || p.Snapshot.Kind == KindIssueEdit || !p.ExpiresAt.IsZero() {
+		if p.Snapshot.Kind == KindCommentDelete || p.Snapshot.Kind == KindIssueEdit || p.Snapshot.Kind == KindIssueLink || !p.ExpiresAt.IsZero() {
 			return invalid()
 		}
 	case PlanVersion3:
@@ -381,7 +414,7 @@ func ValidatePlan(p Plan) error {
 			return invalid()
 		}
 	case PlanVersion4:
-		if p.Snapshot.Kind != KindIssueUpdate && p.Snapshot.Kind != KindIssueEdit && p.Snapshot.Kind != KindIssueCreate || !p.ExpiresAt.IsZero() {
+		if p.Snapshot.Kind != KindIssueUpdate && p.Snapshot.Kind != KindIssueEdit && p.Snapshot.Kind != KindIssueCreate && p.Snapshot.Kind != KindIssueLink || !p.ExpiresAt.IsZero() {
 			return invalid()
 		}
 	default:
@@ -412,6 +445,8 @@ func ValidatePlan(p Plan) error {
 		// validRequest already rejects all mutable payload fields.
 	case KindIssueEdit:
 		// validRequest already checks the verbatim summary and description.
+	case KindIssueLink:
+		// validRequest already rejects all mutable payload fields.
 	default:
 		return invalid()
 	}

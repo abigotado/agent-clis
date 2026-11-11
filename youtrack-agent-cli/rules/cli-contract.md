@@ -154,6 +154,21 @@ Two hazards that are easy to reintroduce:
   description under the new `issue-edit` capability; `capabilities` lists it and
   its plan is `plan_version` 4. New reasons: `OPERATOR_TEXT_UNCHANGED` (exit 2,
   prepare only, including `--dry-run`) and `OPERATOR_ISSUE_STALE` (exit 9) for a text-hash mismatch.
+- `operator-write` kind `issue.link` (additive) adds one link between two
+  existing issues under the new `issue-link` capability (canonical rank 7: after
+  `issue-edit` and `issue-create-user-fields`); `capabilities` lists it and its plan is `plan_version` 4. Both
+  issue projects must be allowlisted. Snapshot flags `--target-id`,
+  `--link-type`, `--link-type-id` and `--direction` are additive and usage
+  errors for other kinds. New reasons: `OPERATOR_LINK_ALREADY_PRESENT`,
+  `OPERATOR_LINK_PARENT_EXISTS`, `OPERATOR_LINK_DIRECTION_AMBIGUOUS`,
+  `OPERATOR_LINK_ENTRY_UNAVAILABLE` and `OPERATOR_LINK_TYPE_UNSUPPORTED` (exit 2),
+  `OPERATOR_LINKS_TRUNCATED` and `OPERATOR_LINK_STALE` (exit 9); reused:
+  `NOT_FOUND_LINK_TYPE` (3, `did_you_mean`), `AMBIGUOUS_LINK_TYPE` (4),
+  `OPERATOR_SCHEMA_TRUNCATED`, `OPERATOR_ISSUE_STALE`, `OPERATOR_PROJECT_CHANGED`.
+  Reconcile reports `operator_resolution_required` with evidence
+  `desired_link_observed_without_causal_proof`, `linked_issue_unavailable` (a
+  linked issue answers 404 or an auth/permission refusal) or `inconclusive`,
+  never a reconciled result. Older binaries refuse `issue.link` records.
 - Operator-write refusals with exit 2 carry stable `error.code` values
   `OPERATOR_FIELD_UNSUPPORTED`, `OPERATOR_FIELD_REQUIRED`,
   `OPERATOR_FIELD_ALREADY_EMPTY` and `OPERATOR_FIELD_ALREADY_SET`.

@@ -21,9 +21,9 @@ const (
 	PlanVersion2       = 2
 	PlanVersion3       = 3
 	// PlanVersion4 is the issue.update plan that may carry a User field or an
-	// explicit null (clear) target, the issue.edit plan, and the issue.create
-	// plan, whose fields may likewise be a User field or a clear. Earlier plans
-	// refuse all of these.
+	// explicit null (clear) target, the issue.edit and issue.link plans, and the
+	// issue.create plan, whose fields may likewise be a User field or a clear.
+	// Earlier plans refuse all of these.
 	PlanVersion4     = 4
 	Lane             = "operator-write-v1"
 	ConfirmationMode = "operator_confirmed"
@@ -68,7 +68,7 @@ func PlanLifetime(version int) string {
 // It is the single place that maps a kind to its plan version.
 func PlanVersionFor(kind Kind) int {
 	switch kind {
-	case KindIssueUpdate, KindIssueEdit, KindIssueCreate:
+	case KindIssueUpdate, KindIssueEdit, KindIssueCreate, KindIssueLink:
 		return PlanVersion4
 	case KindCommentDelete:
 		return PlanVersion3
@@ -96,6 +96,7 @@ const (
 	KindCommentAdd    Kind = "comment.add"
 	KindCommentDelete Kind = "comment.delete"
 	KindIssueEdit     Kind = "issue.edit"
+	KindIssueLink     Kind = "issue.link"
 )
 
 type Binding struct {
@@ -121,6 +122,37 @@ type Issue struct {
 	ProjectID  string `json:"project_id"`
 	ProjectKey string `json:"project_key"`
 	Updated    int64  `json:"updated"`
+}
+
+// Link directions: the phrase read from the source issue's side.
+const (
+	LinkOutward    = "outward"
+	LinkInward     = "inward"
+	LinkUndirected = "undirected"
+)
+
+// LinkType freezes the exact issue link type the plan was prepared against.
+// Any change to a member is drift.
+type LinkType struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Directed       bool   `json:"directed"`
+	Aggregation    bool   `json:"aggregation"`
+	SourceToTarget string `json:"source_to_target"`
+	TargetToSource string `json:"target_to_source"`
+}
+
+// Link is the frozen target of an issue.link snapshot. Phrase is read from the
+// source issue's side and equals the type's source_to_target for an outward or
+// undirected link and its target_to_source for an inward link. LinkID is the
+// identity of the source issue's link entry, taken from the server's own
+// listing and never derived from the type id.
+type Link struct {
+	Target    Issue    `json:"target"`
+	Type      LinkType `json:"type"`
+	Direction string   `json:"direction"`
+	Phrase    string   `json:"phrase"`
+	LinkID    string   `json:"link_id"`
 }
 
 // Project is the exact allowlisted target of an issue.create snapshot.
@@ -295,8 +327,10 @@ type Snapshot struct {
 	Fields  []Field  `json:"fields,omitempty"`
 	Comment *Comment `json:"comment,omitempty"`
 	// Text is set only for issue.edit and holds hashes of the old text.
-	Text       *TextPrecondition `json:"text,omitempty"`
-	CapturedAt time.Time         `json:"captured_at"`
+	Text *TextPrecondition `json:"text,omitempty"`
+	// Link is set only for issue.link; Issue is then the link source.
+	Link       *Link     `json:"link,omitempty"`
+	CapturedAt time.Time `json:"captured_at"`
 }
 
 // ProjectRef is the exact project the snapshot's policy check binds.
@@ -305,6 +339,17 @@ func (s Snapshot) ProjectRef() (id, key string) {
 		return s.Project.ID, s.Project.Key
 	}
 	return s.Issue.ProjectID, s.Issue.ProjectKey
+}
+
+// ProjectRefs lists every project the snapshot's policy check binds: the
+// primary project, and for issue.link also the target issue's project.
+func (s Snapshot) ProjectRefs() []Project {
+	id, key := s.ProjectRef()
+	refs := []Project{{ID: id, Key: key}}
+	if s.Kind == KindIssueLink && s.Link != nil && (s.Link.Target.ProjectID != id || s.Link.Target.ProjectKey != key) {
+		refs = append(refs, Project{ID: s.Link.Target.ProjectID, Key: s.Link.Target.ProjectKey})
+	}
+	return refs
 }
 
 type Request struct {

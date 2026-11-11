@@ -69,7 +69,7 @@ youtrack-agent-cli capabilities --profile work-write -o json
 ```
 
 Replace `ID:KEY` with a verified immutable project ID and key. Adding
-`issue-create`, `issue-create-user-fields` or `comment-delete` to an existing profile changes its credential identity, so the
+`issue-create`, `issue-create-user-fields`, `issue-link` or `comment-delete` to an existing profile changes its credential identity, so the
 old credential generation and project policy become stale: log in again and
 set the project allowlist again before preparing any plan. Profile/login/
 policy setup requires separate operator authorization; it is not an install hook.
@@ -165,7 +165,7 @@ before dispatch and never restores it.
 
 `capabilities` advertises the highest supported `plan_version: 4` and
 `plan_lifetime: until_consumed_or_stale`; its `plan_versions` map reports v4 for
-`issue.update`, `issue.edit` and `issue.create` (previously prepared v2 `issue.update` and `issue.create` plans are still accepted but cannot carry
+`issue.update`, `issue.edit`, `issue.create` and `issue.link` (previously prepared v2 `issue.update` and `issue.create` plans are still accepted but cannot carry
 user fields or a null target), v2 for comment addition, and v3 for deletion. Plan/status/apply results report
 their actual plan version/lifetime. V2/v3/v4 default JSON/raw results and serialized plans
 omit `expires_at`. An explicit `--fields expires_at` projection retains the
@@ -174,10 +174,10 @@ existing selectable field vocabulary and returns an empty string for v2/v3/v4; u
 The unchanged `source`/lane name `operator-write-v1` identifies the operator
 storage namespace, not the nested plan schema or JSON envelope version.
 
-New `issue.update`, `issue.edit` and `issue.create` plans are v4; comment addition continues to
+New `issue.update`, `issue.edit`, `issue.create` and `issue.link` plans are v4; comment addition continues to
 prepare v2 plans. V1/v2 bytes and hashes are preserved, v2 plans remain
 accepted and appliable, and both versions reject deletion; v3 accepts only
-`comment.delete` and v4 only `issue.update`, `issue.edit` and `issue.create`. Only v4 can encode a User field or
+`comment.delete` and v4 only `issue.update`, `issue.edit`, `issue.create` and `issue.link`. Only v4 can encode a User field or
 an explicit `null` target (clear), in an update field or in any create field; v1-v3 plans refuse both.
 A v4 create plan adds no member beyond the v2 shape.
 Legacy plan schema v1 retains its exact bytes, digest, 15-minute expiry and
@@ -331,6 +331,101 @@ text (from `inspect issue`) as untrusted data and the exact new text before
 confirming. Default output omits the old hashes; the `snapshot` and `plan`
 fields show them on request.
 
+## Linking issues
+
+`issue.link` adds one link between two existing issues. It needs a separately
+declared `issue-link` capability (canonical order: after `issue-edit` and
+`issue-create-user-fields`); no
+existing profile gains it, and adding it changes the credential identity, so log
+in again and set the project allowlist again before preparing a plan. Both
+issues' projects must be on the allowlist: a link to an issue in a project
+outside it is refused. Removing links is not supported here; it stays with the
+MCP connector's `link_issues`, and one operation never runs through both.
+
+```sh
+youtrack-agent-cli operator-write snapshot --kind issue.link \
+  --id APP-123 --target-id OPS-7 --link-type Depend --direction "depends on" \
+  --out "$youtrack_operation_dir/snapshot.json"
+printf '%s' '{"kind":"issue.link"}' |
+  youtrack-agent-cli operator-write prepare --offline \
+    --snapshot "$youtrack_operation_dir/snapshot.json" --request-stdin
+youtrack-agent-cli operator-write apply --plan-id PLAN_ID \
+  --confirm-intent SHA256 --yes
+```
+
+`--id` is the source and `--target-id` the target, each an exact entity or
+readable ID. Select the link type by exact, case-sensitive `--link-type NAME` or
+by `--link-type-id ID`; `--direction` is the exact phrase read from the source
+issue's side and must equal the type's outward phrase (`depends on`,
+`duplicates`, `parent for`, `relates to`) or its inward phrase (`is required
+for`, `is duplicated by`, `subtask of`), case-sensitively and never fuzzily. The
+statement reads "SOURCE PHRASE TARGET". An undirected type has one phrase. A
+directed type whose two phrases are identical is refused with
+`OPERATOR_LINK_DIRECTION_AMBIGUOUS` (exit 2). `--field`, `--value`,
+`--clear-value`, `--project` and `--comment-id` are usage errors (exit 2), and
+`--target-id`, `--link-type`, `--link-type-id` and `--direction` are usage
+errors with any other kind. The canonical request is `{"kind":"issue.link"}`. A known text member
+(`summary`, `description`, `comment_text`) that is present but empty (`""`) or
+`null` is accepted and treated as absent, as for the other kinds; a non-empty one
+is refused.
+
+Snapshot reads, in bounded single pages after verifying the account: both
+issues, the link types (`GET /api/issueLinkTypes`, or the exact type by ID), the
+source issue's link entries (`GET /api/issues/{id}/links`) and the issues in the
+chosen entry. The link entry ID sent with the POST is taken from that listing by
+type and side, never computed; a missing or duplicate entry is refused
+(`OPERATOR_LINK_ENTRY_UNAVAILABLE`, exit 2). An unknown type name is exit 3 with
+`did_you_mean`; a repeated type name is exit 4 with `candidates` (use
+`--link-type-id`); a truncated read is exit 9 (`OPERATOR_SCHEMA_TRUNCATED` for
+types, `OPERATOR_LINKS_TRUNCATED` for entries or linked issues; for the latter
+swap `--id` and `--target-id` and use the reverse phrase). A link that already
+exists is `OPERATOR_LINK_ALREADY_PRESENT` (exit 2, "nothing to change; do not
+retry unchanged"). For an aggregation type (Subtask) whose would-be child
+already has a parent, `OPERATOR_LINK_PARENT_EXISTS` (exit 2) refuses the link,
+because YouTrack silently replaces the parent otherwise and the old link would
+be lost. The guard is checked at snapshot and again inside the apply lock, but it
+is not atomic with the POST (see the remaining race below).
+
+Apply checks consent, digest and the two-project binding before credentials,
+then re-checks everything inside the final lock, before the durable claim and
+the single POST (`POST /api/issues/{source}/links/{entry}/issues`, body
+`{"id":"<target database id>"}`): both issues' identity, project and archive
+state, the exact link type, the same server entry ID, that the link is still
+absent and that the child still has no parent. The issues' `updated`
+timestamps are deliberately not compared. Any drift is `OPERATOR_ISSUE_STALE` or
+`OPERATOR_LINK_STALE` (exit 9) with zero POST and the plan unconsumed. The result is verified only
+when the POST echoes exactly the target's database and readable IDs and reads
+then show both issues in their frozen projects and the target in the entry;
+anything else is `WRITE_OUTCOME_UNKNOWN`. Removing either project from the
+allowlist after prepare makes apply refuse, and makes reconcile refuse whenever
+it needs remote reads. A record already applied, rejected or reconciled returns
+its preserved local outcome offline
+(`verified_terminal_record_preserved`) for every kind, without a policy check.
+
+Disclose before applying: a Duplicate link may trigger a workflow that resolves
+the source issue; a Subtask link sets the parent of the child; both issues'
+watchers may be notified (`youtrack-default`). A concurrent identical link added
+between the in-lock check and the POST leaves the end state as requested and is
+recorded as applied. `capabilities` lists `issue.link`; the plan is v4.
+
+Remaining race: the checks run in the apply lock, but YouTrack has no
+conditional link add. If another actor gives the child a parent between the
+in-lock probe and the POST, YouTrack silently replaces that parent with the new
+Subtask link, and the CLI cannot detect it. `OPERATOR_LINK_PARENT_EXISTS` is
+therefore a guard against the state observed at snapshot and apply time, not
+against a concurrent reparent.
+
+Reconcile is one GET-only, bounded page (`--limit`, `--offset`) of the entry's
+issues. If the target is listed it reports `operator_resolution_required` with
+evidence `desired_link_observed_without_causal_proof`: the link may have been
+added by someone else. A missing or truncated observation is
+`operator_resolution_required` with evidence `inconclusive`. If either issue
+answers 404 or an authentication or permission refusal (deleted or no longer
+readable), the evidence is `linked_issue_unavailable`, again
+`operator_resolution_required`, and the record stays resolvable by the
+operator; it is not an error. Reconcile never
+POSTs and never restores eligibility; a moved issue is `OPERATOR_PROJECT_CHANGED`.
+
 ## Exact permanent comment deletion
 
 `comment.delete` removes one exact comment from YouTrack's database. It does
@@ -421,6 +516,8 @@ equivalent plan to work around uncertainty. The readonly editions and native
 | Verified write, then ledger or output failure | `WRITE_APPLIED_LOCAL_FAILURE`; write applied, do not repeat. |
 | Definitive 4xx rejection | Consumed terminal rejection; any later attempt needs new snapshot, plan and confirmation. |
 | Concurrent/repeated apply | Refuse, no second mutation request. |
+| `issue.link` precondition drift | Exit 9 `OPERATOR_ISSUE_STALE` or `OPERATOR_LINK_STALE`, zero POST, plan unconsumed; snapshot again. |
+| `issue.link` target already linked or child already has a parent | Exit 2 `OPERATOR_LINK_ALREADY_PRESENT` or `OPERATOR_LINK_PARENT_EXISTS` at snapshot; nothing to apply. |
 
 Use `operator-write status` or bounded GET-only `operator-write reconcile` for
 the same plan. For comment addition or issue creation, an exact known comment

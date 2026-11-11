@@ -294,8 +294,8 @@ Collect one bounded GET-only observation for a consumed intent
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| `--limit` | int | `20` | one comments page limit, 1-100 |
-| `--offset` | int | `0` | one nonnegative comments page offset |
+| `--limit` | int | `20` | one page limit, 1-100 (comments, or linked issues for issue.link) |
+| `--offset` | int | `0` | one nonnegative page offset (comments, or linked issues for issue.link) |
 | `--plan-id` | string |  | exact consumed local operator plan ID |
 
 ### `youtrack-agent-cli operator-write snapshot`
@@ -308,12 +308,16 @@ Read one exact issue or project and freeze a supported write target
 | `--clear-field-id` | stringArray |  | immutable project custom-field ID to leave empty at creation; repeatable, only with --kind issue.create, never with --clear-value or --field |
 | `--clear-value` | bool |  | empty the selected field instead of setting a value; only with --kind issue.update and exactly one --field or --field-id, never with --value or --value-id. The field must allow empty values (canBeEmpty) and currently hold one |
 | `--comment-id` | string |  | immutable exact comment ID for comment.delete |
+| `--direction` | string |  | exact link phrase read from the source issue, for example "depends on" or "is required for"; case-sensitive, never fuzzy |
 | `--field` | stringArray |  | exact field name, for example Stage or Assignee; repeatable for issue.create, last wins otherwise |
 | `--field-id` | stringArray |  | immutable project custom-field ID; repeatable for issue.create, last wins otherwise |
-| `--id` | string |  | exact issue entity or readable ID for issue.update, issue.edit, comment.add, or comment.delete |
-| `--kind` | string |  | supported write kind: issue.create, issue.update, issue.edit, comment.add, or comment.delete |
+| `--id` | string |  | exact issue entity or readable ID for issue.update, issue.edit, issue.link (the source), comment.add, or comment.delete |
+| `--kind` | string |  | supported write kind: issue.create, issue.update, issue.edit, issue.link, comment.add, or comment.delete |
+| `--link-type` | string |  | exact issue link type name for issue.link; use --link-type-id when names repeat |
+| `--link-type-id` | string |  | immutable issue link type ID for issue.link |
 | `--out` | string |  | new exclusive 0600 snapshot path in an existing private directory |
 | `--project` | string |  | exact project entity ID or key for issue.create |
+| `--target-id` | string |  | exact target issue entity or readable ID for issue.link |
 | `--value` | stringArray |  | exact target bundle value name, or exact user login for a user field, paired with --field |
 | `--value-id` | stringArray |  | immutable target bundle value ID, or user ID for a user field, paired with --field-id |
 
