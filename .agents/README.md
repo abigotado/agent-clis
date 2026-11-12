@@ -56,11 +56,12 @@ the hooks should use.
 
 ## Why the compiler is not vendored, but the rule sync is
 
-The provider compiler is deliberately **not** committed. Vendoring it would put
-a second copy of every rule, hook, and skill into `.claude/` and `.codex/` —
-28 byte-identical duplicates of files that already live here. Keeping the
-generated output git-ignored means this directory is the single source, which
-is the whole point.
+The provider compiler is deliberately **not** committed. The global harness can
+vendor it (`vendor.py` writes a byte-identical `.agents/scripts/compiler.py`
+plus a `compiler.pin`), which would let CI compile, but every compiler release
+would then need a manual re-vendor here, and the generated output this
+repository cares about is git-ignored anyway. One machine-local compiler, with
+this directory as the single source, is the trade made on purpose.
 
 `scripts/sync-rules.py` **is** committed, for one reason: the global compiler
 emits nothing for Cursor, so there is no shared tool to fall back on. Cursor
@@ -72,11 +73,11 @@ Two consequences of using the global compiler, worth knowing:
 - **CI cannot verify compilation** — a runner has no `~/.agents`. CI checks that
   the mirrors stay untracked, that the Cursor mirrors are in sync, and that the
   harness tests pass. Compile determinism is a local pre-push check.
-- **The global compiler emits a `.claude/CLAUDE.md` shim under project scope.**
-  Its relative `@` target resolves against `.claude/`, where no `AGENTS.md`
-  exists, so the shim is inert. It is git-ignored, so it is local noise rather
-  than a defect in this repository — but do not mistake it for the real root
-  `CLAUDE.md`.
+- **No `.claude/CLAUDE.md` shim.** `providers/claude.toml` sets
+  `instruction_shim = false`: the repository tracks its own root `CLAUDE.md`,
+  and the shim's relative `@AGENTS.md` would resolve against `.claude/`, where
+  no `AGENTS.md` exists. The first compile after the change prunes an older
+  shim from that checkout.
 If the global compiler is ever out of date and a rename leaves stale generated
 files behind, the output is git-ignored, so discarding and rebuilding is always
 safe:
@@ -92,7 +93,41 @@ python3 ~/.agents/compiler.py --source .agents --root . --scope project
 `{root}/.agents/hooks`. The compiler mirrors every canonical hook into the
 provider's own hook directory, so referencing `.agents/hooks` directly would
 leave those mirrors unreferenced. Available placeholders are `{python}`,
-`{compiler}`, `{root}`, and `{claude_hook_dir}`.
+`{compiler}`, `{root}`, `{source}`, and `{claude_hook_dir}`.
+
+`pre_push_guard` sets `on_failure = "block"`: Claude otherwise runs the command
+when a `PreToolUse` hook crashes, times out, or cannot find its interpreter.
+
+## Agents and permissions
+
+Every role in `agents.toml` pins `claude_effort` to the level of the operator's
+delegation table (the orchestrator and cli-contract-guardian have no row there,
+so theirs is a judgement), and none caps its turns: a capped subagent stops
+without a report, and a reviewer stopped that way records no review. A pin is a
+fixed level, not a floor, and a value passed at spawn overrides it either way: a
+plan under the plan gate, a security or auth change, or a contract migration
+passes `effort: xhigh`, and a re-review after a fix passes `model: sonnet` with
+`effort: medium`.
+`reviewer` and `adversarial-review` close with `Reviewed commit: <sha>` and a
+verdict line, which is what the review record is keyed to.
+
+`providers/claude.toml` sets `validation = "strict"`, so the compile refuses a
+duplicate rule, a `Write(...)` deny (Claude folds Write into Edit, so such a
+rule matches nothing; the `Edit(...)` denies cover it), and a Bash rule that
+would mean something different in the Codex policy.
+
+Settings ownership stays `merge` and hook paths stay absolute: those
+project-scope options protect committed provider output, and this repository's
+output is git-ignored. `providers/codex.toml` does not set `sandbox = "off"`,
+so a project-scope compile keeps the compiler's default workspace permission
+profile and the Codex sandbox stays on here (the home harness's own `"off"`
+does not carry into this compile); its `sandbox_mode = "workspace-write"` is
+only the compiler's migration assertion, not the switch. The deny list above
+treats the sandbox as part of the boundary. Its known cost is that a sandboxed
+Codex session cannot write `<git common dir>/agent-review`, where the review
+record lives (verified from a linked worktree), or the CLI's own state
+directory; record a Codex review from the session that started the job, or run
+that step outside the sandbox.
 
 ## Adding a rule
 

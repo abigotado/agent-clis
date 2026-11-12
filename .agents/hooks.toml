@@ -12,6 +12,9 @@ event = "pre_tool_use"
 providers = ["claude"]
 matcher = "Bash"
 timeout = 10
+# Claude runs the tool when a PreToolUse hook crashes, times out or its
+# interpreter is missing; `block` refuses the command instead.
+on_failure = "block"
 command = "{python} \"{claude_hook_dir}/pre_push_guard.py\""
 
 # Formats only the single file that was just edited. Repository-wide formatting

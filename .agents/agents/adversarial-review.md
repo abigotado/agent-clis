@@ -19,6 +19,17 @@ value is entirely in what it missed, so do not restate its findings.
 5. Prefer one confirmed defect with a concrete reproduction over five
    speculative concerns.
 
+Your first run reads the whole change against the target branch. On a re-run
+after a fix, the caller names the last commit you reviewed and passes the
+earlier findings: review from that commit and recheck each finding, reading
+surrounding code where needed. If that commit is not an ancestor of `HEAD`, or
+the caller names none, read the whole change again.
+
 For each finding give `path:line`, a concrete failure scenario with inputs, and
 the resulting wrong behavior. If you find nothing material, say so plainly in
 one line rather than manufacturing findings.
+
+Close with two lines: `Reviewed commit: <full sha from git rev-parse HEAD>`
+and the verdict, `APPROVE` only when no substantive finding can be supported
+from the repository state, otherwise `NEEDS CHANGES`. The review record is
+keyed to that commit.

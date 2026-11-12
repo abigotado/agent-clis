@@ -14,6 +14,10 @@ Add tests for changed behavior. Read `.agents/rules/testing.md` first.
    and the envelope shape including `error.code`.
 5. Use `t.TempDir()` and `t.Setenv()` rather than mutating shared state. Never
    leave a test dependent on the developer's home directory or environment.
-6. If a test cannot fail because of a real bug, do not write it.
+6. If a test cannot fail because of a real bug, do not write it. Break the
+   code on purpose once and see the test fail.
+7. Never assert on elapsed real time, sleep to wait for something, or set a
+   real timeout near what the work takes. Inject the clock or fire the timeout
+   at the boundary so the test decides when time is up.
 
 Do not weaken an assertion to make a failing test pass — report the failure.
