@@ -8,9 +8,9 @@
 // sentinel that errors.Is matches. Error text never contains secret bytes, the
 // Service or Account of the key, or text produced by the operating system.
 //
-// The first Open in a process fixes the process-wide Interaction mode. A later
-// Open with the other mode fails with ErrInvalidArgument, including when the
-// first Open itself failed.
+// The first Open with valid options fixes the process-wide Interaction mode. A
+// later Open with the other mode fails with ErrInvalidArgument, including when
+// that first Open itself failed; an Open with invalid options fixes nothing.
 //
 // Callers that save a credential while another process may read or rewrite it
 // should hold their own lock around Save and around reads that must be

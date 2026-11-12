@@ -128,13 +128,35 @@ type Error struct {
 	Reason Reason
 }
 
+// knownOp and knownBackend are the closed sets documented on Error. Rendering
+// replaces anything else with "other", so a mistaken or hostile field value
+// can never reach error text.
+func knownOp(op string) string {
+	switch op {
+	case "open", "exists", "load", "save", "delete", "repair":
+		return op
+	default:
+		return "other"
+	}
+}
+
+func knownBackend(backend string) string {
+	switch backend {
+	case "keychain", "credman", "secretservice", "memory", "none":
+		return backend
+	default:
+		return "other"
+	}
+}
+
 // Error returns "secretstore: <op> (<backend>): <kind>[ status <n>][ <reason>]".
+// An Op, Backend or Reason outside its closed set renders as "other".
 func (e *Error) Error() string {
 	var b strings.Builder
 	b.WriteString("secretstore: ")
-	b.WriteString(e.Op)
+	b.WriteString(knownOp(e.Op))
 	b.WriteString(" (")
-	b.WriteString(e.Backend)
+	b.WriteString(knownBackend(e.Backend))
 	b.WriteString("): ")
 	b.WriteString(e.Kind.String())
 	if e.Status != 0 {
@@ -150,6 +172,17 @@ func (e *Error) Error() string {
 		b.WriteString(string(reason))
 	}
 	return b.String()
+}
+
+// GoString renders the error for %#v with the same sanitized fields as Error,
+// so the Go-syntax form cannot echo an unknown Reason, Op or Backend.
+func (e *Error) GoString() string {
+	reason := e.Reason
+	if reason != "" && !reason.known() {
+		reason = ReasonOther
+	}
+	return fmt.Sprintf("&secretstore.Error{Op:%q, Backend:%q, Kind:%q, Status:%d, Reason:%q}",
+		knownOp(e.Op), knownBackend(e.Backend), e.Kind.String(), e.Status, string(reason))
 }
 
 // Unwrap returns the sentinel for the error's Kind, or nil for KindOther.

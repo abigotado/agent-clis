@@ -53,7 +53,12 @@ class CiChangesTest < Minitest::Test
         "GITHUB_OUTPUT" => output,
       }
       combined, status = Open3.capture2e(env, SCRIPT, chdir: repo)
-      pairs = File.exist?(output) ? File.readlines(output, chomp: true).to_h { |line| line.split("=", 2) } : nil
+      lines = File.exist?(output) ? File.readlines(output, chomp: true) : nil
+      if lines
+        keys = lines.map { |line| line.split("=", 2).first }
+        raise "output keys not written exactly once, in order: #{keys.inspect}" unless keys == %w[youtrack core clis all]
+      end
+      pairs = lines&.to_h { |line| line.split("=", 2) }
       [status.success?, pairs, combined]
     end
   end

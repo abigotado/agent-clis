@@ -354,10 +354,19 @@ func wantContextCanceled(t *testing.T, what string, err error) {
 }
 
 func (c *contract) redaction(t *testing.T) {
+	for _, finding := range c.redactionFindings(t) {
+		t.Error(finding)
+	}
+}
+
+// redactionFindings provokes errors from the store and returns one line per
+// leaked marker. The Contract's own random service is a marker too: it appears
+// in errors only if a backend echoes key.Service.
+func (c *contract) redactionFindings(t *testing.T) []string {
 	secretMarker := "secret-marker-" + randomHex(t, 8)
 	accountMarker := "acct-marker-" + randomHex(t, 8)
 	serviceMarker := "svc-marker-" + randomHex(t, 8)
-	markers := []string{secretMarker, accountMarker, serviceMarker}
+	markers := []string{secretMarker, accountMarker, serviceMarker, c.service}
 
 	stored := c.key(accountMarker)
 	c.mustSave(t, stored, []byte(secretMarker))
@@ -391,11 +400,13 @@ func (c *contract) redaction(t *testing.T) {
 	if len(provoked) < 10 {
 		t.Fatalf("provoked only %d errors; the store accepted inputs it must refuse", len(provoked))
 	}
+	var findings []string
 	for i, err := range provoked {
 		if found := leaks(err, markers...); len(found) > 0 {
-			t.Errorf("error %d leaks: %s", i, strings.Join(found, "; "))
+			findings = append(findings, fmt.Sprintf("error %d leaks: %s", i, strings.Join(found, "; ")))
 		}
 	}
+	return findings
 }
 
 // leaks formats err every way a caller or logger might and returns a

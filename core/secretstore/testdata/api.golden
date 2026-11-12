@@ -10,9 +10,9 @@ whose Kind says what the caller should do next; every Kind has a sentinel
 that errors.Is matches. Error text never contains secret bytes, the Service or
 Account of the key, or text produced by the operating system.
 
-The first Open in a process fixes the process-wide Interaction mode. A later
-Open with the other mode fails with ErrInvalidArgument, including when the first
-Open itself failed.
+The first Open with valid options fixes the process-wide Interaction mode.
+A later Open with the other mode fails with ErrInvalidArgument, including when
+that first Open itself failed; an Open with invalid options fixes nothing.
 
 Callers that save a credential while another process may read or rewrite it
 should hold their own lock around Save and around reads that must be consistent
@@ -79,7 +79,12 @@ type Error struct {
 
 func (e *Error) Error() string
     Error returns "secretstore: <op> (<backend>): <kind>[ status <n>][
-    <reason>]".
+    <reason>]". An Op, Backend or Reason outside its closed set renders as
+    "other".
+
+func (e *Error) GoString() string
+    GoString renders the error for %#v with the same sanitized fields as Error,
+    so the Go-syntax form cannot echo an unknown Reason, Op or Backend.
 
 func (e *Error) Unwrap() error
     Unwrap returns the sentinel for the error's Kind, or nil for KindOther.
@@ -188,7 +193,8 @@ func Open(ctx context.Context, opts Options) (Store, error)
     Open returns the native store for this operating system. It never returns a
     file-backed store; where no backend exists it fails with ErrUnavailable.
 
-    The first Open in a process fixes the Interaction mode, even if that Open
-    fails, and a later Open with a different mode fails with ErrInvalidArgument.
-    Open performs no recovery of interrupted writes.
+    The first Open with valid options in a process fixes the Interaction mode,
+    even if that Open then fails (for example on a canceled context); Open with
+    invalid options fixes nothing. A later Open with a different mode fails with
+    ErrInvalidArgument. Open performs no recovery of interrupted writes.
 

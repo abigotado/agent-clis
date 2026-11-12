@@ -1,6 +1,7 @@
 package secretstoretest
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -40,6 +41,35 @@ func TestLeakDetector(t *testing.T) {
 		err := fmt.Errorf("x %s", marker)
 		if got := len(leaks(err, marker)); got != 6 {
 			t.Fatalf("a leaking error was reported by %d output paths, want 6 (%%v %%+v %%#v %%s, slog text, slog json)", got)
+		}
+	})
+}
+
+// leakyService returns a Memory whose Load errors echo the key's Service.
+type leakyService struct{ *Memory }
+
+func (l leakyService) Load(ctx context.Context, key secretstore.Key) ([]byte, error) {
+	secret, err := l.Memory.Load(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("load %s: %w", key.Service, err)
+	}
+	return secret, nil
+}
+
+func TestRedactionCatchesALeakedService(t *testing.T) {
+	const max = 64
+	run := func(t *testing.T, s secretstore.Store) []string {
+		c := &contract{s: s, max: max, service: "secretstore-test-" + randomHex(t, 8), used: map[secretstore.Key]struct{}{}}
+		return c.redactionFindings(t)
+	}
+	t.Run("clean store", func(t *testing.T) {
+		if found := run(t, NewMemory(secretstore.Options{MaxSecretBytes: max})); len(found) > 0 {
+			t.Fatalf("clean store reported leaks: %v", found)
+		}
+	})
+	t.Run("store that leaks the service", func(t *testing.T) {
+		if found := run(t, leakyService{NewMemory(secretstore.Options{MaxSecretBytes: max})}); len(found) == 0 {
+			t.Fatal("a store leaking key.Service in an error was not caught")
 		}
 	})
 }

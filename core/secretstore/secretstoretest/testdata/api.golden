@@ -33,6 +33,11 @@ type Memory struct {
     keys case-sensitively, and can be made to fail per operation with SetErr.
     It implements secretstore.Store and secretstore.ACLRepairer.
 
+    The zero value is usable but has no valid options: SetErr works, and every
+    store operation fails with secretstore.ErrInvalidArgument, exactly like a
+    Memory built by NewMemory with invalid options. Use NewMemory for a working
+    store.
+
 func NewMemory(opts secretstore.Options) *Memory
     NewMemory returns an empty store. Options are checked like secretstore.Open
     checks them; with invalid options every operation fails with

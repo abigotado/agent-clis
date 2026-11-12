@@ -46,6 +46,11 @@ func (o Op) String() string {
 // way the real stores do, copies secrets on the way in and out, compares keys
 // case-sensitively, and can be made to fail per operation with SetErr. It
 // implements secretstore.Store and secretstore.ACLRepairer.
+//
+// The zero value is usable but has no valid options: SetErr works, and every
+// store operation fails with secretstore.ErrInvalidArgument, exactly like a
+// Memory built by NewMemory with invalid options. Use NewMemory for a working
+// store.
 type Memory struct {
 	max         int
 	interaction secretstore.Interaction
@@ -72,7 +77,6 @@ func NewMemory(opts secretstore.Options) *Memory {
 		interaction: opts.Interaction,
 		optionsOK:   optionsOK,
 		items:       make(map[secretstore.Key][]byte),
-		errs:        make(map[Op]error),
 	}
 }
 
@@ -87,6 +91,9 @@ func (m *Memory) SetErr(op Op, err error) {
 	if err == nil {
 		delete(m.errs, op)
 		return
+	}
+	if m.errs == nil {
+		m.errs = make(map[Op]error)
 	}
 	m.errs[op] = err
 }
@@ -152,6 +159,9 @@ func (m *Memory) Save(ctx context.Context, key secretstore.Key, secret []byte) e
 	defer m.mu.Unlock()
 	if err := m.errs[OpSave]; err != nil {
 		return err
+	}
+	if m.items == nil {
+		m.items = make(map[secretstore.Key][]byte)
 	}
 	m.items[key] = bytes.Clone(secret)
 	return nil

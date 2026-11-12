@@ -77,6 +77,7 @@ func TestErrorText(t *testing.T) {
 		{"with reason", Error{Op: "open", Backend: "secretservice", Kind: KindUnavailable, Reason: ReasonServiceUnknown}, "secretstore: open (secretservice): unavailable service-unknown"},
 		{"with status and reason", Error{Op: "delete", Backend: "credman", Kind: KindOther, Status: 5, Reason: ReasonAccessDenied}, "secretstore: delete (credman): other status 5 access-denied"},
 		{"foreign reason text is not echoed", Error{Op: "load", Backend: "secretservice", Kind: KindOther, Reason: "org.example.Error: key=hunter2"}, "secretstore: load (secretservice): other other"},
+		{"foreign op and backend are not echoed", Error{Op: "load key=hunter2", Backend: "svc=hunter2", Kind: KindNotFound}, "secretstore: other (other): not-found"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -127,6 +128,29 @@ func TestContextErrorKeepsTheCause(t *testing.T) {
 			}
 			if !strings.HasPrefix(err.Error(), "secretstore: load: ") {
 				t.Fatalf("contextError text = %q", err)
+			}
+		})
+	}
+}
+
+func TestErrorGoStringIsSanitized(t *testing.T) {
+	tests := []struct {
+		name string
+		err  *Error
+		want string
+	}{
+		{"known fields", &Error{Op: "load", Backend: "memory", Kind: KindNotFound, Status: 7, Reason: ReasonIsLocked}, `&secretstore.Error{Op:"load", Backend:"memory", Kind:"not-found", Status:7, Reason:"is-locked"}`},
+		{"no reason", &Error{Op: "save", Backend: "none", Kind: KindOther}, `&secretstore.Error{Op:"save", Backend:"none", Kind:"other", Status:0, Reason:""}`},
+		{"unknown reason", &Error{Op: "load", Backend: "memory", Kind: KindOther, Reason: "key=hunter2"}, `&secretstore.Error{Op:"load", Backend:"memory", Kind:"other", Status:0, Reason:"other"}`},
+		{"unknown op and backend", &Error{Op: "op=hunter2", Backend: "b=hunter2", Kind: KindOther}, `&secretstore.Error{Op:"other", Backend:"other", Kind:"other", Status:0, Reason:""}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := fmt.Sprintf("%#v", tt.err); got != tt.want {
+				t.Fatalf("%%#v = %s, want %s", got, tt.want)
+			}
+			if got := fmt.Sprintf("%#v", error(tt.err)); strings.Contains(got, "hunter2") {
+				t.Fatalf("%%#v through the error interface leaks: %s", got)
 			}
 		})
 	}

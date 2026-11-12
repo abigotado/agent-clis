@@ -205,3 +205,16 @@ func TestMemoryKeysAreCaseSensitive(t *testing.T) {
 		t.Fatalf("Exists(%v) = %v, %v; want false", upper, ok, err)
 	}
 }
+
+func TestZeroMemoryDoesNotPanic(t *testing.T) {
+	var m Memory
+	m.SetErr(OpLoad, errors.New("injected"))
+	m.SetErr(OpLoad, nil)
+	key := secretstore.Key{Service: "svc", Account: "acct"}
+	if _, err := m.Load(t.Context(), key); !errors.Is(err, secretstore.ErrInvalidArgument) {
+		t.Fatalf("Load on a zero Memory = %v, want ErrInvalidArgument", err)
+	}
+	if err := m.Save(t.Context(), key, []byte("x")); !errors.Is(err, secretstore.ErrInvalidArgument) {
+		t.Fatalf("Save on a zero Memory = %v, want ErrInvalidArgument", err)
+	}
+}

@@ -66,8 +66,10 @@ type ACLRepairer interface {
 // Open returns the native store for this operating system. It never returns a
 // file-backed store; where no backend exists it fails with ErrUnavailable.
 //
-// The first Open in a process fixes the Interaction mode, even if that Open
-// fails, and a later Open with a different mode fails with ErrInvalidArgument.
+// The first Open with valid options in a process fixes the Interaction mode,
+// even if that Open then fails (for example on a canceled context); Open with
+// invalid options fixes nothing. A later Open with a different mode fails with
+// ErrInvalidArgument.
 // Open performs no recovery of interrupted writes.
 func Open(ctx context.Context, opts Options) (Store, error) {
 	if err := validateOptions(opts); err != nil {
