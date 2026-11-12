@@ -150,6 +150,9 @@ static OSStatus kt_acl_open(SecKeychainRef keychain, const char *service, const 
 	CFArrayRef list = NULL;
 	status = SecAccessCopyACLList(copied, &list);
 	if (status != errSecSuccess || list == NULL) {
+		if (list != NULL) {
+			CFRelease(list);
+		}
 		CFRelease(copied);
 		return status != errSecSuccess ? status : errSecInternalComponent;
 	}
@@ -799,7 +802,9 @@ type ACLEntry struct {
 	// the application list is NULL, which means any application.
 	Applications int
 	// SelfApplications is how many of those applications are the running
-	// binary.
+	// binary, by a path match only: it compares the application's recorded
+	// path, not its code identity or signature. Never use it for a claim about
+	// identity; a different binary at the same path counts.
 	SelfApplications int
 	// PromptSelector is the entry's keychain prompt selector.
 	PromptSelector uint32

@@ -27,6 +27,14 @@ import (
 //
 // Production uses the default keychain (a NULL target). These tests cover the
 // explicit-keychain query shape only; the NULL path is not exercised here.
+//
+// t.Cleanup does not run when a test dies on a timeout panic (go test -timeout)
+// or on SIGINT, in these files and in the helper files of this suite. Then the
+// prompt switch can stay off for that process, which is process-scoped and ends
+// with it, and a throwaway keychain file stays in TMPDIR (a
+// TestKeychain* directory made by t.TempDir). Nothing on the user's search list is touched. After
+// such a run, delete the leftover scratch keychain directory in TMPDIR by hand;
+// no setting needs restoring, because the process that changed it is gone.
 
 // unusable reports an environment that cannot run the tests. CI sets
 // SECRETSTORE_REQUIRE_KEYCHAIN=1, where this fails instead of skipping, so a

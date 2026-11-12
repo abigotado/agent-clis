@@ -87,10 +87,9 @@ func (e *Error) Error() string
     "other".
 
 func (e Error) GoString() string
-    GoString has a value receiver so that %#v of an Error value and of an *Error
-    both render the sanitized form, without a leading "&". It renders the error
-    for %#v with the same sanitized fields as Error, so the Go-syntax form
-    cannot echo an unknown Reason, Op or Backend.
+    GoString renders %#v of an Error or *Error, with a value receiver so both
+    print the same sanitized fields as Error, without a leading "&", and never
+    echo an unknown Reason, Op or Backend.
 
 func (e *Error) Unwrap() error
     Unwrap returns the sentinel for the error's Kind, or nil for KindOther.

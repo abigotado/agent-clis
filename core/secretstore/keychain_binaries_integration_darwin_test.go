@@ -24,6 +24,10 @@ import (
 	"github.com/abigotado/agent-clis/core/secretstore/internal/kctest"
 )
 
+// t.Cleanup does not run on a test timeout panic or SIGINT, so a killed run can
+// leave a scratch keychain file in TMPDIR and the process's prompt switch off;
+// see the note in keychain_integration_darwin_test.go for what to do then.
+//
 // TestKeychainAcrossBinaries runs the keychain backend as several different
 // programs against one scratch keychain: a rebuild of the program that wrote an
 // item, at a new path, and programs with another identity. What the backend

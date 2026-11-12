@@ -457,8 +457,8 @@ func TestLockedKeychainKeepsTheStage(t *testing.T) {
 }
 
 // TestLockSensitiveClassification covers the rule for -25308 and -25293 alike:
-// AccessDenied only when the item's own keychain was unlocked both before and
-// after the read, whichever status the keychain returned.
+// AccessDenied only when the item's own keychain was unlocked at both probes,
+// before and after the read, whichever status the keychain returned.
 func TestLockSensitiveClassification(t *testing.T) {
 	for _, ls := range lockStatuses {
 		t.Run(ls.name, func(t *testing.T) { testLockSensitiveClassification(t, ls.status) })
@@ -1177,4 +1177,35 @@ func TestLoadReturnsACopy(t *testing.T) {
 	}
 	clear(got)
 	mustLoad(t, s, "secret")
+}
+
+// TestAddClassificationUsesTheAddTargetProbe: an add is classified by the
+// keychain it goes to, never by the one that holds an item of the same name,
+// so the add probe decides and the item probe is not consulted.
+func TestAddClassificationUsesTheAddTargetProbe(t *testing.T) {
+	refused := &statusError{status: statusAuthFailed}
+	for _, tt := range []struct {
+		name string
+		// failing is the probe call that errors; the other answers unlocked.
+		failing string
+		want    Kind
+	}{
+		{"add probe cannot tell", "addstatus stage", KindInteractionRequired},
+		{"item probe is not consulted", "status stage", KindAccessDenied},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFakeKeychain()
+			f.before = func(call string) error {
+				switch call {
+				case "add stage":
+					return refused
+				case tt.failing:
+					return &statusError{status: -1}
+				}
+				return nil
+			}
+			err := newStaged(f).Save(t.Context(), fakeKey, []byte("v"))
+			wantError(t, err, "save", tt.want, statusAuthFailed)
+		})
+	}
 }

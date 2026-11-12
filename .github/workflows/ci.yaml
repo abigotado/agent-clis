@@ -304,11 +304,18 @@ jobs:
       # Runs the real keychain backend against a scratch keychain created in a
       # temporary directory, outside the user's search list; the login keychain
       # is never reached. With the variable set, a runner that cannot create
-      # one fails the job instead of skipping.
+      # one fails the job instead of skipping. A skipped or unmatched test
+      # still exits 0, so each required test must also report PASS.
       - name: Keychain integration
         env:
           SECRETSTORE_REQUIRE_KEYCHAIN: "1"
-        run: go test -race -count=1 -tags keychainintegration ./secretstore/...
+        run: |
+          set -euo pipefail
+          log="$(mktemp)"
+          go test -race -count=1 -v -tags keychainintegration ./secretstore/... 2>&1 | tee "${log}"
+          for name in TestKeychainScratch TestKeychainHelper TestKeychainAcrossBinaries; do
+            grep -Fq -- "--- PASS: ${name} " "${log}"
+          done
 
   # Credential Manager exists only on Windows, so the real backend needs its
   # own runner. Selected like core-macos. bash is the default shell so the
@@ -374,10 +381,17 @@ jobs:
       # Runs against this runner's real Credential Manager, under random
       # secretstore-test-<hex> targets that the tests delete. With the variable
       # set, an unusable Credential Manager fails the job instead of skipping.
+      # Each required test must also report PASS, so a skip cannot pass.
       - name: Credential Manager integration
         env:
           SECRETSTORE_REQUIRE_CREDMAN: "1"
-        run: go test -race -count=1 -tags credmanintegration ./secretstore/...
+        run: |
+          set -euo pipefail
+          log="$(mktemp)"
+          go test -race -count=1 -v -tags credmanintegration ./secretstore/... 2>&1 | tee "${log}"
+          for name in TestCredmanContract TestCredmanChunkBoundaries TestCredmanServiceBlobLimit; do
+            grep -Fq -- "--- PASS: ${name} " "${log}"
+          done
 
   youtrack:
     name: youtrack-agent-cli (${{ matrix.os }})

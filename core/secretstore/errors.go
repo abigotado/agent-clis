@@ -174,9 +174,9 @@ func (e *Error) Error() string {
 	return b.String()
 }
 
-// GoString has a value receiver so that %#v of an Error value and of an *Error
-// both render the sanitized form, without a leading "&". It renders the error for %#v with the same sanitized fields as Error,
-// so the Go-syntax form cannot echo an unknown Reason, Op or Backend.
+// GoString renders %#v of an Error or *Error, with a value receiver so both
+// print the same sanitized fields as Error, without a leading "&", and never
+// echo an unknown Reason, Op or Backend.
 func (e Error) GoString() string {
 	reason := e.Reason
 	if reason != "" && !reason.known() {

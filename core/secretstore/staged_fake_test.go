@@ -263,6 +263,19 @@ func (f *fakeKeychain) keychainUnlocked(ctx context.Context, name itemName) (boo
 	return unlocked, nil
 }
 
+// addKeychainUnlocked reports the lock state of the add target; the fake has
+// one keychain, so it is the same state under its own call label.
+func (f *fakeKeychain) addKeychainUnlocked(ctx context.Context, name itemName) (bool, error) {
+	if err := f.enter(ctx, "addstatus", name); err != nil {
+		return false, err
+	}
+	f.mu.Lock()
+	unlocked := !f.locked
+	f.mu.Unlock()
+	f.leave("addstatus", name)
+	return unlocked, nil
+}
+
 // crashed is the panic value that models the process dying.
 type crashed struct{}
 

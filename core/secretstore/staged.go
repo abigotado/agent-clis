@@ -85,9 +85,14 @@ type itemAPI interface {
 	delete(ctx context.Context, name itemName) error
 	// keychainUnlocked reports whether the keychain holding the item is
 	// unlocked. For an item that does not exist it reports the keychain an add
-	// of that item would go to. It never decrypts, and any failure to find out
-	// is an error, which callers treat as "not confirmed unlocked".
+	// of that item would go to. It never decrypts and never prompts, and any
+	// failure to find out is an error, which callers treat as "not confirmed
+	// unlocked".
 	keychainUnlocked(ctx context.Context, name itemName) (bool, error)
+	// addKeychainUnlocked reports whether the keychain an add goes to is
+	// unlocked, without looking at any item: a same-named item in another
+	// keychain says nothing about the add target. Same failure rule.
+	addKeychainUnlocked(ctx context.Context, name itemName) (bool, error)
 }
 
 // stagedStore implements Store over an itemAPI with the staged Save.
@@ -165,23 +170,30 @@ func (s *stagedStore) failure(op string, err error, write bool) *Error {
 }
 
 // unlocked reports whether the keychain of name is confirmed unlocked. A
-// failed lookup is not confirmed.
-func (s *stagedStore) unlocked(ctx context.Context, name itemName) bool {
-	unlocked, err := s.api.keychainUnlocked(ctx, name)
+// failed lookup is not confirmed. With forAdd it asks for the keychain an add
+// of name goes to instead of the one that holds an existing item.
+func (s *stagedStore) unlocked(ctx context.Context, name itemName, forAdd bool) bool {
+	probe := s.api.keychainUnlocked
+	if forAdd {
+		probe = s.api.addKeychainUnlocked
+	}
+	unlocked, err := probe(ctx, name)
 	return err == nil && unlocked
 }
 
 // classify classifies a failed primitive on name. unlockedBefore is the lock
-// state taken before the call. A lock-sensitive status (see failure) means
-// AccessDenied, which lets Save delete a stage nobody can read, only when the
-// item's own keychain, or for an item that does not exist yet the keychain an
-// add goes to, was confirmed unlocked both before and after the call. Anything
+// state taken before the call; forAdd says the primitive was an add, whose
+// keychain is the add target rather than the one that holds an item of that
+// name. A lock-sensitive status (see failure) means AccessDenied, which lets
+// Save delete a stage nobody can read, only when that keychain was confirmed
+// unlocked both before and after the call. The two probes are two instants:
+// a lock and unlock that both happen between them is not detected. Anything
 // else, including a failed lookup, is InteractionRequired, which keeps the
 // stage.
-func (s *stagedStore) classify(ctx context.Context, op string, name itemName, unlockedBefore bool, err error, write bool) *Error {
+func (s *stagedStore) classify(ctx context.Context, op string, name itemName, unlockedBefore, forAdd bool, err error, write bool) *Error {
 	var se *statusError
 	if errors.As(err, &se) && (se.status == statusAuthFailed || se.status == statusInteractionNotAllowed) &&
-		unlockedBefore && s.unlocked(ctx, name) {
+		unlockedBefore && s.unlocked(ctx, name, forAdd) {
 		return s.fail(op, KindAccessDenied, se.status)
 	}
 	return s.failure(op, err, write)
@@ -189,10 +201,10 @@ func (s *stagedStore) classify(ctx context.Context, op string, name itemName, un
 
 // lookup reports whether name exists, by reference.
 func (s *stagedStore) lookup(ctx context.Context, op string, name itemName) (bool, error) {
-	before := s.unlocked(ctx, name)
+	before := s.unlocked(ctx, name, false)
 	found, err := s.api.exists(ctx, name)
 	if err != nil {
-		return false, s.classify(ctx, op, name, before, err, false)
+		return false, s.classify(ctx, op, name, before, false, err, false)
 	}
 	return found, nil
 }
@@ -202,11 +214,11 @@ func (s *stagedStore) lookup(ctx context.Context, op string, name itemName) (boo
 func (s *stagedStore) readItem(ctx context.Context, op string, name itemName) ([]byte, error) {
 	// The keychain state is taken before the read because it cannot be taken
 	// later: a lock that opens during the call must not read as unlocked.
-	before := s.unlocked(ctx, name)
+	before := s.unlocked(ctx, name, false)
 	value, err := s.api.read(ctx, name, s.max)
 	if err != nil {
 		clear(value)
-		return nil, s.classify(ctx, op, name, before, err, false)
+		return nil, s.classify(ctx, op, name, before, false, err, false)
 	}
 	if len(value) == 0 {
 		return nil, s.fail(op, KindCorrupt, 0)
@@ -220,9 +232,9 @@ func (s *stagedStore) readItem(ctx context.Context, op string, name itemName) ([
 
 // addItem creates one item; a failure is classified with the lock state.
 func (s *stagedStore) addItem(ctx context.Context, op string, name itemName, value []byte) error {
-	before := s.unlocked(ctx, name)
+	before := s.unlocked(ctx, name, true)
 	if err := s.api.add(ctx, name, value); err != nil {
-		return s.classify(ctx, op, name, before, err, true)
+		return s.classify(ctx, op, name, before, true, err, true)
 	}
 	return nil
 }
@@ -307,12 +319,12 @@ func (s *stagedStore) Load(ctx context.Context, key Key) ([]byte, error) {
 
 // deleteItem deletes one item; a missing item is success.
 func (s *stagedStore) deleteItem(ctx context.Context, op string, name itemName) error {
-	before := s.unlocked(ctx, name)
+	before := s.unlocked(ctx, name, false)
 	err := s.api.delete(ctx, name)
 	if err == nil {
 		return nil
 	}
-	if failure := s.classify(ctx, op, name, before, err, true); failure.Kind != KindNotFound {
+	if failure := s.classify(ctx, op, name, before, false, err, true); failure.Kind != KindNotFound {
 		return failure
 	}
 	return nil

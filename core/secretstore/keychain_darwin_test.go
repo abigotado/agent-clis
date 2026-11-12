@@ -157,8 +157,11 @@ func TestEveryPrimitiveNamesTheTargetKeychain(t *testing.T) {
 				if want := tt.target != 0 && !isAdd; tr.searchList != want {
 					t.Errorf("%s: kSecMatchSearchList = %v, want %v", tr.op, tr.searchList, want)
 				}
-				if wantUI := tt.uiFail && !isAdd; tr.uiFail != wantUI {
-					t.Errorf("%s: UI fail = %v, want %v (never on add)", tr.op, tr.uiFail, wantUI)
+				// The lock probe always fails fast, so it never raises its own
+				// dialog; an add never carries the key.
+				wantUI := (tt.uiFail || tr.op == "status") && !isAdd
+				if tr.uiFail != wantUI {
+					t.Errorf("%s: UI fail = %v, want %v (never on add, always on the probe)", tr.op, tr.uiFail, wantUI)
 				}
 				if !tr.named {
 					t.Errorf("%s: dictionary lacks the service or account", tr.op)
@@ -312,6 +315,97 @@ func TestRepairAccess(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRepairAccessStageLookup: a stage lookup refused with -25293 reads as
+// AccessDenied only when the keychain was unlocked at both probes; a locked
+// keychain needs the user, and the stage stays either way. Any other failure
+// of the stage lookup or read propagates, relabelled "repair".
+func TestRepairAccessStageLookup(t *testing.T) {
+	const other = 100001
+	// stageReadable seeds an account and a readable stage; Load takes the
+	// stage, so the first "read stage" is Load's and a second one is the
+	// repair's own readStage.
+	setup := func() *fakeKeychain {
+		f := newFakeKeychain()
+		f.put(fakeAcctName, "old")
+		f.put(fakeStageName, "newest")
+		return f
+	}
+	refuseLookup := func(f *fakeKeychain, status int64) {
+		f.before = func(call string) error {
+			if call == "exists stage" {
+				return &statusError{status: status}
+			}
+			return nil
+		}
+	}
+	keep := func(t *testing.T, f *fakeKeychain) {
+		t.Helper()
+		f.setLocked(false)
+		if got := f.snapshot(); fmt.Sprint(got) != fmt.Sprint(map[itemName]string{fakeAcctName: "old", fakeStageName: "newest"}) {
+			t.Fatalf("store = %v, want account and stage untouched", got)
+		}
+		if got := f.mutations(); len(got) != 0 {
+			t.Fatalf("mutations = %v, want none", got)
+		}
+	}
+
+	t.Run("lookup refused while locked needs the user", func(t *testing.T) {
+		f := setup()
+		refuseLookup(f, statusAuthFailed)
+		f.after = func(call string) {
+			if call == "read stage" {
+				f.setLocked(true)
+			}
+		}
+		err := newTestKeychainStore(f, InteractionAllowed).RepairAccess(t.Context(), fakeKey)
+		wantError(t, err, "repair", KindInteractionRequired, statusAuthFailed)
+		keep(t, f)
+	})
+
+	t.Run("lookup refused while unlocked is access denied", func(t *testing.T) {
+		f := setup()
+		refuseLookup(f, statusAuthFailed)
+		err := newTestKeychainStore(f, InteractionAllowed).RepairAccess(t.Context(), fakeKey)
+		wantError(t, err, "repair", KindAccessDenied, statusAuthFailed)
+		keep(t, f)
+	})
+
+	t.Run("lookup failure of another kind propagates", func(t *testing.T) {
+		f := setup()
+		refuseLookup(f, other)
+		err := newTestKeychainStore(f, InteractionAllowed).RepairAccess(t.Context(), fakeKey)
+		wantError(t, err, "repair", KindOther, other)
+		keep(t, f)
+	})
+
+	t.Run("stage read failure of another kind propagates", func(t *testing.T) {
+		f := setup()
+		reads := 0
+		f.before = func(call string) error {
+			if call != "read stage" {
+				return nil
+			}
+			if reads++; reads == 2 {
+				return &statusError{status: other}
+			}
+			return nil
+		}
+		err := newTestKeychainStore(f, InteractionAllowed).RepairAccess(t.Context(), fakeKey)
+		wantError(t, err, "repair", KindOther, other)
+		keep(t, f)
+	})
+
+	t.Run("a readable stage proceeds", func(t *testing.T) {
+		f := setup()
+		s := newTestKeychainStore(f, InteractionAllowed)
+		if err := s.RepairAccess(t.Context(), fakeKey); err != nil {
+			t.Fatalf("RepairAccess: %v", err)
+		}
+		mustLoad(t, s, "newest")
+		wantNoStage(t, f)
+	})
 }
 
 func TestKeychainStoreRunsTheStagedSave(t *testing.T) {

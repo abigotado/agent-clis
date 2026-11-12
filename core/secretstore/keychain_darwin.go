@@ -111,43 +111,72 @@ static OSStatus sk_exists(CFStringRef service, CFStringRef account, SecKeychainR
 	return status;
 }
 
-// sk_unlocked reports whether the keychain that holds the item is unlocked.
-// For an item that does not exist it reports the keychain an add would go to:
-// the target, or the default keychain when the target is NULL. Only a missing
-// item takes that path. Any other lookup failure is returned, so a keychain
-// whose lock state cannot be read never looks unlocked.
-static OSStatus sk_unlocked(CFStringRef service, CFStringRef account, SecKeychainRef target, int ui_fail, sk_trace *trace, int *unlocked) {
-	SecKeychainItemRef item = NULL;
-	OSStatus status = sk_lookup(service, account, target, ui_fail, trace, &item);
-	if (trace != NULL) {
-		return status;
-	}
-	SecKeychainRef keychain = NULL;
-	if (status == errSecSuccess) {
-		status = SecKeychainItemCopyKeychain(item, &keychain);
-		CFRelease(item);
-	} else if (status == errSecItemNotFound) {
-		if (target != NULL) {
-			keychain = (SecKeychainRef)CFRetain(target);
-			status = errSecSuccess;
-		} else {
-			status = SecKeychainCopyDefault(&keychain);
-		}
-	}
-	if (status != errSecSuccess) {
-		return status;
-	}
+// sk_keychain_unlocked reads the unlock state of one keychain. It never
+// prompts and never decrypts.
+static OSStatus sk_keychain_unlocked(SecKeychainRef keychain, int *unlocked) {
 	if (keychain == NULL) {
 		return errSecInternalComponent;
 	}
 	SecKeychainStatus keychainStatus = 0;
-	status = SecKeychainGetStatus(keychain, &keychainStatus);
-	CFRelease(keychain);
+	OSStatus status = SecKeychainGetStatus(keychain, &keychainStatus);
 	if (status != errSecSuccess) {
 		return status;
 	}
 	*unlocked = (keychainStatus & kSecUnlockStateStatus) != 0;
 	return errSecSuccess;
+}
+
+// sk_unlocked_for_add reports whether the keychain an add goes to is unlocked:
+// the target, or the default keychain when the target is NULL. It looks at no
+// item, so an existing item of the same name in another keychain cannot
+// answer for the add target.
+static OSStatus sk_unlocked_for_add(SecKeychainRef target, int *unlocked) {
+	SecKeychainRef keychain = NULL;
+	OSStatus status = errSecSuccess;
+	if (target != NULL) {
+		keychain = (SecKeychainRef)CFRetain(target);
+	} else {
+		status = SecKeychainCopyDefault(&keychain);
+	}
+	if (status != errSecSuccess) {
+		return status;
+	}
+	status = sk_keychain_unlocked(keychain, unlocked);
+	if (keychain != NULL) {
+		CFRelease(keychain);
+	}
+	return status;
+}
+
+// sk_unlocked reports whether the keychain that holds the item is unlocked.
+// The lookup always carries kSecUseAuthenticationUIFail, whatever the store's
+// interaction mode, so a probe never raises a dialog of its own. If the item
+// is gone it falls back to the keychain an add would go to. Only a missing
+// item takes that path. Any other lookup failure is returned, so a keychain
+// whose lock state cannot be read never looks unlocked.
+static OSStatus sk_unlocked(CFStringRef service, CFStringRef account, SecKeychainRef target, sk_trace *trace, int *unlocked) {
+	SecKeychainItemRef item = NULL;
+	OSStatus status = sk_lookup(service, account, target, 1, trace, &item);
+	if (trace != NULL) {
+		return status;
+	}
+	if (status == errSecItemNotFound) {
+		return sk_unlocked_for_add(target, unlocked);
+	}
+	if (status != errSecSuccess) {
+		return status;
+	}
+	SecKeychainRef keychain = NULL;
+	status = SecKeychainItemCopyKeychain(item, &keychain);
+	CFRelease(item);
+	if (status != errSecSuccess) {
+		return status;
+	}
+	status = sk_keychain_unlocked(keychain, unlocked);
+	if (keychain != NULL) {
+		CFRelease(keychain);
+	}
+	return status;
 }
 
 static OSStatus sk_read(CFStringRef service, CFStringRef account, SecKeychainRef target, int ui_fail, sk_trace *trace, CFDataRef *data) {
@@ -436,9 +465,21 @@ func (k *keychainItems) keychainUnlocked(_ context.Context, name itemName) (bool
 	defer release()
 	trace := k.trace()
 	var unlocked C.int
-	status := C.sk_unlocked(service, account, k.target, k.uiFailFlag(), trace, &unlocked)
+	status := C.sk_unlocked(service, account, k.target, trace, &unlocked)
 	k.record("status", trace)
 	if err := statusOf(status); err != nil {
+		return false, err
+	}
+	return unlocked != 0, nil
+}
+
+func (k *keychainItems) addKeychainUnlocked(_ context.Context, _ itemName) (bool, error) {
+	if k.dry != nil {
+		// Dry-run mode builds no dictionary for this probe and touches nothing.
+		return false, nil
+	}
+	var unlocked C.int
+	if err := statusOf(C.sk_unlocked_for_add(k.target, &unlocked)); err != nil {
 		return false, err
 	}
 	return unlocked != 0, nil
