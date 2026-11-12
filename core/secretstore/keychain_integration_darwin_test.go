@@ -53,6 +53,26 @@ type scratch struct {
 	kc *kctest.Keychain
 }
 
+// promptsOff turns the process's prompt setting off and restores what it was
+// when the test ends. It runs before any keychain is created or opened, so that
+// nothing in the test can show a dialog; SetInteractionAllowed reads the value
+// back, which makes a restore that did not take effect an error.
+func promptsOff(t *testing.T) {
+	t.Helper()
+	previous, err := kctest.InteractionAllowed()
+	if err != nil {
+		unusable(t, "reading the prompt setting", err)
+	}
+	t.Cleanup(func() {
+		if err := kctest.SetInteractionAllowed(previous); err != nil {
+			t.Errorf("restore the prompt setting to %t: %v", previous, err)
+		}
+	})
+	if err := kctest.SetInteractionAllowed(false); err != nil {
+		unusable(t, "turning prompts off", err)
+	}
+}
+
 // newScratch prepares the process and returns a scratch keychain, in this
 // order: record the user's keychain configuration and the prompt setting, turn
 // prompts off, create the keychain. Cleanup runs in reverse: delete the
@@ -76,20 +96,7 @@ func newScratch(t *testing.T) *scratch {
 		}
 	})
 
-	previous, err := kctest.InteractionAllowed()
-	if err != nil {
-		unusable(t, "reading the prompt setting", err)
-	}
-	t.Cleanup(func() {
-		if err := kctest.SetInteractionAllowed(previous); err != nil {
-			t.Errorf("restore the prompt setting to %t: %v", previous, err)
-		}
-	})
-	// Before any keychain is created or opened, so that nothing in this test can
-	// show a dialog. SetInteractionAllowed reads the value back.
-	if err := kctest.SetInteractionAllowed(false); err != nil {
-		unusable(t, "turning prompts off", err)
-	}
+	promptsOff(t)
 
 	kc, err := kctest.Create(t.TempDir())
 	if err != nil {

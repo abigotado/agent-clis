@@ -73,6 +73,7 @@ const (
 	actionRepairNever = "repair-never"
 	actionRepair      = "repair"
 	actionReadAccount = "read-account"
+	actionSaveStatus  = "save-status"
 )
 
 // helperInput is the first line of the helper's standard input.
@@ -239,6 +240,20 @@ func TestKeychainHelper(t *testing.T) {
 		store := h.store(secretstore.InteractionNever)
 		h.emit("error", kindName(store.Save(ctx, h.key, h.secret(0))))
 		h.emitStage(store)
+
+	case actionSaveStatus:
+		// For a row that expects Save to fail: the Kind and the OSStatus the
+		// error carries, so a refusal the backend classified some other way than
+		// the row expects shows what it was. Neither is secret.
+		store := h.store(secretstore.InteractionNever)
+		err := store.Save(ctx, h.key, h.secret(0))
+		h.emit("error", kindName(err))
+		status := int64(0)
+		var se *secretstore.Error
+		if errors.As(err, &se) {
+			status = se.Status
+		}
+		h.emit("status", strconv.FormatInt(status, 10))
 
 	case actionLoad:
 		store := h.store(secretstore.InteractionNever)

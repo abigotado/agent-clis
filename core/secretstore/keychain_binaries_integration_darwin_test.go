@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -270,6 +271,9 @@ type helperCall struct {
 	secrets [][]byte
 	// step is the step a crash helper stops after.
 	step int
+	// sandbox, when set, is a command prefix the helper runs under, such as
+	// /usr/bin/sandbox-exec with its profile arguments.
+	sandbox []string
 }
 
 // save has bin save secret under key and requires it to succeed.
@@ -321,7 +325,8 @@ func (f *fixture) start(t *testing.T, call helperCall) *helperProcess {
 		t.Fatalf("encode the helper input: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), helperTimeout)
-	cmd := exec.CommandContext(ctx, call.bin.path, "-test.run=^TestKeychainHelper$", "-test.count=1", "-test.timeout=2m")
+	args := []string{"-test.run=^TestKeychainHelper$", "-test.count=1", "-test.timeout=2m"}
+	cmd := helperCommand(ctx, call, args)
 	cmd.Env = helperEnv(
 		helperActionEnv+"="+call.action,
 		helperKeychainEnv+"="+f.scratch.kc.Path(),
@@ -329,9 +334,33 @@ func (f *fixture) start(t *testing.T, call helperCall) *helperProcess {
 		helperAccountEnv+"="+call.key.Account,
 		helperStepEnv+"="+strconv.Itoa(call.step),
 	)
+	p := launchHelper(t, call, cmd, cancel)
+	if _, err := p.stdin.Write(append(input, '\n')); err != nil {
+		p.abort()
+		t.Fatalf("write the helper input: %v\n%s", err, p.describe())
+	}
+	return p
+}
+
+// helperCommand is the command that runs the binary of call with args, under
+// the call's sandbox prefix when it has one.
+func helperCommand(ctx context.Context, call helperCall, args []string) *exec.Cmd {
+	if len(call.sandbox) == 0 {
+		return exec.CommandContext(ctx, call.bin.path, args...)
+	}
+	full := append(slices.Clone(call.sandbox[1:]), call.bin.path)
+	return exec.CommandContext(ctx, call.sandbox[0], append(full, args...)...)
+}
+
+// launchHelper starts cmd, whose environment the caller has set, with its
+// standard input and output piped and its output collected, and registers the
+// cleanup that stops it. A caller that sends input writes it afterwards.
+func launchHelper(t *testing.T, call helperCall, cmd *exec.Cmd, cancel context.CancelFunc) *helperProcess {
+	t.Helper()
 	cmd.WaitDelay = 10 * time.Second
 	p := &helperProcess{call: call, cmd: cmd, lines: make(chan string, 1024), stderr: new(bytes.Buffer), cancel: cancel, fields: map[string]string{}}
 	cmd.Stderr = p.stderr
+	var err error
 	if p.stdin, err = cmd.StdinPipe(); err != nil {
 		cancel()
 		t.Fatalf("open the helper's standard input: %v", err)
@@ -355,11 +384,6 @@ func (f *fixture) start(t *testing.T, call helperCall) *helperProcess {
 		// A read error ends the stream like EOF does: the process is gone or the
 		// pipe closed, and finish reports what it got.
 	}()
-
-	if _, err := p.stdin.Write(append(input, '\n')); err != nil {
-		p.abort()
-		t.Fatalf("write the helper input: %v\n%s", err, p.describe())
-	}
 	return p
 }
 
