@@ -298,6 +298,18 @@ jobs:
       - name: go test without cgo
         run: CGO_ENABLED=0 go test ./...
 
+      - name: go vet with the integration tag
+        run: go vet -tags keychainintegration ./...
+
+      # Runs the real keychain backend against a scratch keychain created in a
+      # temporary directory, outside the user's search list; the login keychain
+      # is never reached. With the variable set, a runner that cannot create
+      # one fails the job instead of skipping.
+      - name: Keychain integration
+        env:
+          SECRETSTORE_REQUIRE_KEYCHAIN: "1"
+        run: go test -race -count=1 -tags keychainintegration ./secretstore/...
+
   # Credential Manager exists only on Windows, so the real backend needs its
   # own runner. Selected like core-macos. bash is the default shell so the
   # steps match the Linux and macOS jobs; the integration run must not skip.
