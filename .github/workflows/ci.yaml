@@ -457,6 +457,62 @@ jobs:
             grep -Fq -- "--- PASS: ${name} " "${log}" || { echo "::error::${name} did not pass"; exit 1; }
           done
 
+  # Builds and tests each CLI against the local core/ instead of the core
+  # version its go.mod pins, so a change to core cannot break a CLI unseen.
+  # The list of CLIs comes from the changes job (every registered module but
+  # core). The job runs when core or a CLI changed; with one CLI the youtrack
+  # flag is that CLI's own selection. No CLI imports core yet (that is M6), so
+  # today this only proves the two modules compose into one workspace; it
+  # starts to catch API breaks with the first import. Blocking by design: there
+  # is no label to excuse a break. go.work is created here and never committed.
+  core-compat:
+    name: core compat (${{ matrix.cli }}, ${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.core == 'true' || needs.changes.outputs.youtrack == 'true' || needs.changes.outputs.all == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        cli: ${{ fromJSON(needs.changes.outputs.clis) }}
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      GOWORK: ${{ github.workspace }}/go.work
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Git Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: ${{ matrix.cli }}/go.mod
+          cache: true
+          cache-dependency-path: ${{ matrix.cli }}/go.sum
+
+      - name: Create the workspace
+        env:
+          CLI: ${{ matrix.cli }}
+        run: |
+          set -euo pipefail
+          go work init ./core "./${CLI}"
+          cat go.work
+
+      - name: go build
+        working-directory: ${{ matrix.cli }}
+        run: go build ./...
+
+      - name: go vet
+        working-directory: ${{ matrix.cli }}
+        run: go vet ./...
+
+      - name: go test
+        working-directory: ${{ matrix.cli }}
+        run: go test -race ./...
+
   youtrack:
     name: youtrack-agent-cli (${{ matrix.os }})
     needs: changes
@@ -699,7 +755,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, repo, core-unit, core-linux, core-macos, core-windows, youtrack, youtrack-windows]
+    needs: [changes, repo, core-compat, core-unit, core-linux, core-macos, core-windows, youtrack, youtrack-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Verify every job
@@ -732,12 +788,12 @@ jobs:
           fi
           # The context must list exactly the jobs in needs above; a missing
           # job would otherwise drop out of the check below.
-          if ! jq -e 'type == "object" and (keys == ["changes", "core-linux", "core-macos", "core-unit", "core-windows", "repo", "youtrack", "youtrack-windows"])' <<<"${NEEDS}" >/dev/null; then
-            echo "::error::needs context does not list exactly changes, core-linux, core-macos, core-unit, core-windows, repo, youtrack, youtrack-windows"
+          if ! jq -e 'type == "object" and (keys == ["changes", "core-compat", "core-linux", "core-macos", "core-unit", "core-windows", "repo", "youtrack", "youtrack-windows"])' <<<"${NEEDS}" >/dev/null; then
+            echo "::error::needs context does not list exactly changes, core-compat, core-linux, core-macos, core-unit, core-windows, repo, youtrack, youtrack-windows"
             exit 1
           fi
           # changes, repo and core-unit always run and must succeed. A selected
-          # job (a CLI's, core-linux, core-macos or core-windows) must succeed when its flag or all is
+          # job (a CLI's, core-compat, core-linux, core-macos or core-windows) must succeed when its flag or all is
           # set, and must have been skipped otherwise: a job that ran
           # unselected, or was skipped when selected, means the selection and
           # the workflow disagree.
@@ -749,11 +805,17 @@ jobs:
           if [ "${CORE_SELECTED}" = true ] || [ "${ALL_SELECTED}" = true ]; then
             core_expected=success
           fi
-          failures="$(jq -r --arg youtrack "${youtrack_expected}" --arg core "${core_expected}" '
+          # core-compat runs when core or a CLI changed.
+          compat_expected=skipped
+          if [ "${CORE_SELECTED}" = true ] || [ "${YOUTRACK_SELECTED}" = true ] || [ "${ALL_SELECTED}" = true ]; then
+            compat_expected=success
+          fi
+          failures="$(jq -r --arg youtrack "${youtrack_expected}" --arg core "${core_expected}" --arg compat "${compat_expected}" '
             to_entries[]
             | .key as $job
             | .value.result as $result
-            | (if $job == "youtrack" or $job == "youtrack-windows" then $youtrack
+            | (if $job == "core-compat" then $compat
+               elif $job == "youtrack" or $job == "youtrack-windows" then $youtrack
                elif $job == "core-linux" or $job == "core-macos" or $job == "core-windows" then $core
                else "success" end) as $want
             | select($result != $want)
