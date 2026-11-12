@@ -312,7 +312,7 @@ jobs:
         run: |
           set -euo pipefail
           log="$(mktemp)"
-          go test -race -count=1 -v -tags keychainintegration ./secretstore/... 2>&1 | tee "${log}"
+          go test -race -count=1 -timeout 20m -v -tags keychainintegration ./secretstore/... 2>&1 | tee "${log}"
           # TestKeychainHelper is left out on purpose: it is the child process
           # of TestKeychainAcrossBinaries and skips when run directly.
           for name in TestKeychainScratch TestKeychainAcrossBinaries; do

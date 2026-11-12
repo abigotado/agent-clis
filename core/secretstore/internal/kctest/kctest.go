@@ -669,7 +669,14 @@ func (k *Keychain) Password() string {
 
 // Ref returns the SecKeychainRef as an integer, for the test to convert to the
 // reference type of the package under test. The keychain keeps ownership.
+//
+// It must not be called after Close or Delete: a NULL reference converted back
+// reaches the user's default keychain. Ref panics then. That is a programming
+// error, and a panic is acceptable in a test-only helper package.
 func (k *Keychain) Ref() uintptr {
+	if k.ref == 0 {
+		panic("kctest: Ref on a closed or deleted keychain")
+	}
 	return uintptr(k.ref)
 }
 

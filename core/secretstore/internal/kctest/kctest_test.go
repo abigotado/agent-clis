@@ -22,8 +22,9 @@ func TestClosedKeychainRefusesEveryCall(t *testing.T) {
 			_, err := k.ACL("service", "account")
 			return err
 		},
-		"ImportPEM": func() error { return k.ImportPEM([]byte("x")) },
-		"Sign":      func() error { return k.Sign("name", "/nonexistent", "id") },
+		"ImportPEM":    func() error { return k.ImportPEM([]byte("x")) },
+		"ImportPKCS12": func() error { return k.ImportPKCS12([]byte("x"), "pass") },
+		"Sign":         func() error { return k.Sign("name", "/nonexistent", "id") },
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
@@ -32,4 +33,19 @@ func TestClosedKeychainRefusesEveryCall(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Delete on a closed keychain is a documented no-op, and Ref refuses because a
+// NULL reference would reach the default keychain.
+func TestClosedKeychainDeleteAndRef(t *testing.T) {
+	k := &Keychain{}
+	if err := k.Delete(); err != nil {
+		t.Fatalf("Delete on a closed keychain = %v, want nil", err)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("Ref on a closed keychain did not panic")
+		}
+	}()
+	k.Ref()
 }

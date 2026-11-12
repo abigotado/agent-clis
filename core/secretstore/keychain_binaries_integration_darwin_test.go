@@ -382,8 +382,9 @@ func (p *helperProcess) abort() {
 	}
 	p.done = true
 	p.cancel()
-	for range p.lines {
-		// Drain so the reader goroutine can finish.
+	for line := range p.lines {
+		// Drain so the reader goroutine can finish; keep the output for describe.
+		p.take(line)
 	}
 	// The result of a killed process says nothing; the row has already failed.
 	_ = p.cmd.Wait()
@@ -418,7 +419,8 @@ func (p *helperProcess) waitFor(t *testing.T, name string) {
 func (p *helperProcess) send(t *testing.T, line string) {
 	t.Helper()
 	if _, err := io.WriteString(p.stdin, line); err != nil {
-		t.Fatalf("write to the helper: %v", err)
+		p.abort()
+		t.Fatalf("write to the helper: %v\n%s", err, p.describe())
 	}
 }
 
