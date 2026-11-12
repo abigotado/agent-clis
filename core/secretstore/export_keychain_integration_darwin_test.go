@@ -56,6 +56,28 @@ func AddLeftoverStageForTest(ctx context.Context, s Store, key Key, value []byte
 	return items.add(ctx, itemName{service: key.Service, account: key.Account}.stage(), value)
 }
 
+// AddAccountItemForTest creates the account item of key with value through the
+// add primitive alone, without the staged sequence: no roll-forward and no
+// stage. It is what a competing writer that recreates the item does.
+func AddAccountItemForTest(ctx context.Context, s Store, key Key, value []byte) error {
+	_, items, err := keychainStoreOf(s)
+	if err != nil {
+		return err
+	}
+	return items.add(ctx, itemName{service: key.Service, account: key.Account}, value)
+}
+
+// SetAfterStepForTest installs the hook that runs after each completed step of
+// Save's own sequence, or removes it with nil.
+func SetAfterStepForTest(s Store, hook func(step int)) error {
+	ks, _, err := keychainStoreOf(s)
+	if err != nil {
+		return err
+	}
+	ks.afterStep = hook
+	return nil
+}
+
 // StageExistsForTest reports whether the stage item of key exists.
 func StageExistsForTest(ctx context.Context, s Store, key Key) (bool, error) {
 	_, items, err := keychainStoreOf(s)

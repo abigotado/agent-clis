@@ -4,7 +4,9 @@
 // integration tests. It exists so the tests themselves hold no cgo: it creates
 // and deletes a scratch file keychain, locks and unlocks it, records the user
 // keychain configuration, switches the process-wide prompt setting, and dumps
-// the access control list of an item.
+// the access control list of an item. For the cross-binary tests it also opens
+// a scratch keychain in another process, imports throwaway signing identities,
+// signs a file with one, and reads a file's code signature.
 //
 // Nothing here touches the login keychain. A scratch keychain is created
 // outside the user's search list, and every query this package builds names it
@@ -17,6 +19,7 @@ package kctest
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -241,6 +244,291 @@ static OSStatus kt_acl_entry(CFArrayRef entries, CFIndex index, SecTrustedApplic
 	}
 	return status;
 }
+// kt_open opens an existing keychain file and unlocks it with its password. A
+// path that is not a keychain fails the unlock, so a missing file is an error.
+static OSStatus kt_open(const char *path, const char *password, SecKeychainRef *keychain) {
+	SecKeychainRef opened = NULL;
+	OSStatus status = SecKeychainOpen(path, &opened);
+	if (status != errSecSuccess) {
+		return status;
+	}
+	if (opened == NULL) {
+		return errSecInternalComponent;
+	}
+	status = SecKeychainUnlock(opened, (UInt32)strlen(password), password, true);
+	if (status != errSecSuccess) {
+		CFRelease(opened);
+		return status;
+	}
+	*keychain = opened;
+	return errSecSuccess;
+}
+
+// The code signing SPI. The Security framework exports these without a public
+// header; a self-signed identity cannot be used through /usr/bin/codesign, which
+// refuses an untrusted one, but the signer API accepts it.
+typedef struct __SecCodeSigner *SecCodeSignerRef;
+OSStatus SecCodeSignerCreate(CFDictionaryRef parameters, SecCSFlags flags, SecCodeSignerRef *signer);
+OSStatus SecCodeSignerAddSignature(SecCodeSignerRef signer, SecStaticCodeRef code, SecCSFlags flags);
+extern const CFStringRef kSecCodeSignerIdentity;
+extern const CFStringRef kSecCodeSignerIdentifier;
+extern const CFStringRef kSecCodeSignerFlags;
+
+// The hardened runtime code signature flag (kSecCodeSignatureRuntime).
+#define KT_CODE_SIGNATURE_RUNTIME 0x10000
+
+// kt_import imports one PEM item, or with pkcs12 a PKCS#12 identity, into the
+// keychain. The imported private key trusts this binary, so signing from this
+// process needs no prompt. It reports how many items were imported.
+static OSStatus kt_import(SecKeychainRef keychain, const UInt8 *bytes, CFIndex length, int pkcs12, const char *passphrase, long *imported) {
+	SecTrustedApplicationRef self = NULL;
+	OSStatus status = SecTrustedApplicationCreateFromPath(NULL, &self);
+	if (status != errSecSuccess) {
+		return status;
+	}
+	if (self == NULL) {
+		return errSecInternalComponent;
+	}
+	const void *values[] = { self };
+	CFArrayRef applications = CFArrayCreate(kCFAllocatorDefault, values, 1, &kCFTypeArrayCallBacks);
+	CFRelease(self);
+	if (applications == NULL) {
+		return errSecAllocate;
+	}
+	SecAccessRef access = NULL;
+	status = SecAccessCreate(CFSTR("secretstore test signing key"), applications, &access);
+	CFRelease(applications);
+	if (status != errSecSuccess) {
+		return status;
+	}
+	if (access == NULL) {
+		return errSecInternalComponent;
+	}
+
+	CFDataRef data = CFDataCreate(kCFAllocatorDefault, bytes, length);
+	CFStringRef passphrase_string = passphrase != NULL ? kt_string(passphrase) : NULL;
+	if (data == NULL || (passphrase != NULL && passphrase_string == NULL)) {
+		status = errSecAllocate;
+	} else {
+		SecItemImportExportKeyParameters parameters;
+		memset(&parameters, 0, sizeof parameters);
+		parameters.version = SEC_KEY_IMPORT_EXPORT_PARAMS_VERSION;
+		parameters.passphrase = passphrase_string;
+		parameters.accessRef = access;
+		SecExternalFormat format = pkcs12 ? kSecFormatPKCS12 : kSecFormatUnknown;
+		SecExternalItemType type = pkcs12 ? kSecItemTypeAggregate : kSecItemTypeUnknown;
+		CFArrayRef items = NULL;
+		status = SecItemImport(data, NULL, &format, &type, 0, &parameters, keychain, &items);
+		if (items != NULL) {
+			*imported = (long)CFArrayGetCount(items);
+			CFRelease(items);
+		}
+	}
+	if (data != NULL) {
+		CFRelease(data);
+	}
+	if (passphrase_string != NULL) {
+		CFRelease(passphrase_string);
+	}
+	CFRelease(access);
+	return status;
+}
+
+// kt_find_identity returns the identity in the keychain whose certificate has
+// the subject summary common_name. The caller releases it.
+static OSStatus kt_find_identity(SecKeychainRef keychain, const char *common_name, SecIdentityRef *identity) {
+	CFStringRef wanted = kt_string(common_name);
+	const void *list_values[] = { keychain };
+	CFArrayRef list = CFArrayCreate(kCFAllocatorDefault, list_values, 1, &kCFTypeArrayCallBacks);
+	CFMutableDictionaryRef query = CFDictionaryCreateMutable(
+		kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+	if (wanted == NULL || list == NULL || query == NULL) {
+		if (wanted != NULL) CFRelease(wanted);
+		if (list != NULL) CFRelease(list);
+		if (query != NULL) CFRelease(query);
+		return errSecAllocate;
+	}
+	CFDictionarySetValue(query, kSecClass, kSecClassIdentity);
+	CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitAll);
+	CFDictionarySetValue(query, kSecReturnRef, kCFBooleanTrue);
+	CFDictionarySetValue(query, kSecMatchSearchList, list);
+	CFTypeRef result = NULL;
+	OSStatus status = SecItemCopyMatching(query, &result);
+	CFRelease(query);
+	CFRelease(list);
+	if (status != errSecSuccess) {
+		if (result != NULL) {
+			CFRelease(result);
+		}
+		CFRelease(wanted);
+		return status;
+	}
+	if (result == NULL || CFGetTypeID(result) != CFArrayGetTypeID()) {
+		if (result != NULL) {
+			CFRelease(result);
+		}
+		CFRelease(wanted);
+		return errSecInternalComponent;
+	}
+	CFArrayRef identities = (CFArrayRef)result;
+	status = errSecItemNotFound;
+	for (CFIndex i = 0; i < CFArrayGetCount(identities); i++) {
+		SecIdentityRef candidate = (SecIdentityRef)CFArrayGetValueAtIndex(identities, i);
+		SecCertificateRef certificate = NULL;
+		if (SecIdentityCopyCertificate(candidate, &certificate) != errSecSuccess || certificate == NULL) {
+			continue;
+		}
+		CFStringRef summary = SecCertificateCopySubjectSummary(certificate);
+		CFRelease(certificate);
+		if (summary == NULL) {
+			continue;
+		}
+		Boolean match = CFEqual(summary, wanted);
+		CFRelease(summary);
+		if (match) {
+			*identity = (SecIdentityRef)CFRetain(candidate);
+			status = errSecSuccess;
+			break;
+		}
+	}
+	CFRelease(identities);
+	CFRelease(wanted);
+	return status;
+}
+
+// kt_sign signs the file at path with the identity named common_name, under the
+// given identifier and with the hardened runtime flag, replacing any signature
+// the file has.
+static OSStatus kt_sign(SecKeychainRef keychain, const char *common_name, const char *path, const char *identifier) {
+	SecIdentityRef identity = NULL;
+	OSStatus status = kt_find_identity(keychain, common_name, &identity);
+	if (status != errSecSuccess) {
+		return status;
+	}
+	CFStringRef identifier_string = kt_string(identifier);
+	int runtime = KT_CODE_SIGNATURE_RUNTIME;
+	CFNumberRef flags = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &runtime);
+	CFURLRef url = CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault, (const UInt8 *)path, (CFIndex)strlen(path), false);
+	if (identifier_string == NULL || flags == NULL || url == NULL) {
+		status = errSecAllocate;
+	} else {
+		const void *keys[] = { kSecCodeSignerIdentity, kSecCodeSignerIdentifier, kSecCodeSignerFlags };
+		const void *values[] = { identity, identifier_string, flags };
+		CFDictionaryRef parameters = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 3,
+			&kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+		if (parameters == NULL) {
+			status = errSecAllocate;
+		} else {
+			SecCodeSignerRef signer = NULL;
+			status = SecCodeSignerCreate(parameters, kSecCSDefaultFlags, &signer);
+			if (status == errSecSuccess && signer == NULL) {
+				status = errSecInternalComponent;
+			}
+			if (status == errSecSuccess) {
+				SecStaticCodeRef code = NULL;
+				status = SecStaticCodeCreateWithPath(url, kSecCSDefaultFlags, &code);
+				if (status == errSecSuccess && code != NULL) {
+					status = SecCodeSignerAddSignature(signer, code, kSecCSDefaultFlags);
+					CFRelease(code);
+				}
+				CFRelease(signer);
+			}
+			CFRelease(parameters);
+		}
+	}
+	if (identifier_string != NULL) CFRelease(identifier_string);
+	if (flags != NULL) CFRelease(flags);
+	if (url != NULL) CFRelease(url);
+	CFRelease(identity);
+	return status;
+}
+
+typedef struct {
+	char identifier[256];
+	char requirement[2048];
+	char leaf[256];
+	char cdhash[129];
+	unsigned int flags;
+	int has_certificates;
+} kt_signature_info;
+
+// kt_signature reads the code signature of the file at path: its identifier,
+// flags, code directory hash, designated requirement and the leaf certificate's
+// subject summary. It reads the file and nothing else.
+static OSStatus kt_signature(const char *path, kt_signature_info *out) {
+	memset(out, 0, sizeof *out);
+	CFURLRef url = CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault, (const UInt8 *)path, (CFIndex)strlen(path), false);
+	if (url == NULL) {
+		return errSecAllocate;
+	}
+	SecStaticCodeRef code = NULL;
+	OSStatus status = SecStaticCodeCreateWithPath(url, kSecCSDefaultFlags, &code);
+	CFRelease(url);
+	if (status != errSecSuccess) {
+		return status;
+	}
+	if (code == NULL) {
+		return errSecInternalComponent;
+	}
+	CFDictionaryRef info = NULL;
+	status = SecCodeCopySigningInformation(code, kSecCSSigningInformation, &info);
+	if (status == errSecSuccess && info == NULL) {
+		status = errSecInternalComponent;
+	}
+	if (status == errSecSuccess) {
+		CFStringRef identifier = (CFStringRef)CFDictionaryGetValue(info, kSecCodeInfoIdentifier);
+		if (identifier != NULL) {
+			CFStringGetCString(identifier, out->identifier, sizeof out->identifier, kCFStringEncodingUTF8);
+		}
+		CFNumberRef flags = (CFNumberRef)CFDictionaryGetValue(info, kSecCodeInfoFlags);
+		if (flags != NULL) {
+			SInt64 value = 0;
+			CFNumberGetValue(flags, kCFNumberSInt64Type, &value);
+			out->flags = (unsigned int)value;
+		}
+		CFDataRef unique = (CFDataRef)CFDictionaryGetValue(info, kSecCodeInfoUnique);
+		if (unique != NULL) {
+			CFIndex length = CFDataGetLength(unique);
+			if (length > 64) {
+				length = 64;
+			}
+			const UInt8 *bytes = CFDataGetBytePtr(unique);
+			for (CFIndex i = 0; i < length; i++) {
+				snprintf(out->cdhash + 2 * i, 3, "%02x", bytes[i]);
+			}
+		}
+		CFArrayRef certificates = (CFArrayRef)CFDictionaryGetValue(info, kSecCodeInfoCertificates);
+		if (certificates != NULL && CFArrayGetCount(certificates) > 0) {
+			out->has_certificates = 1;
+			CFStringRef summary = SecCertificateCopySubjectSummary((SecCertificateRef)CFArrayGetValueAtIndex(certificates, 0));
+			if (summary != NULL) {
+				CFStringGetCString(summary, out->leaf, sizeof out->leaf, kCFStringEncodingUTF8);
+				CFRelease(summary);
+			}
+		}
+		CFRelease(info);
+
+		SecRequirementRef requirement = NULL;
+		status = SecCodeCopyDesignatedRequirement(code, kSecCSDefaultFlags, &requirement);
+		if (status == errSecSuccess && requirement != NULL) {
+			CFStringRef text = NULL;
+			status = SecRequirementCopyString(requirement, kSecCSDefaultFlags, &text);
+			if (status == errSecSuccess && text != NULL) {
+				CFStringGetCString(text, out->requirement, sizeof out->requirement, kCFStringEncodingUTF8);
+			}
+			if (text != NULL) {
+				CFRelease(text);
+			}
+		} else if (status == errSecSuccess) {
+			status = errSecInternalComponent;
+		}
+		if (requirement != NULL) {
+			CFRelease(requirement);
+		}
+	}
+	CFRelease(code);
+	return status;
+}
 */
 import "C"
 
@@ -312,7 +600,7 @@ func Create(dir string) (*Keychain, error) {
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, "secretstore-test-"+name+".keychain-db")
+	path := filepath.Join(dir, namePrefix+name+".keychain-db")
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
 	cPassword := C.CString(password)
@@ -330,6 +618,47 @@ func randomHex(n int) (string, error) {
 		return "", fmt.Errorf("kctest: read random bytes: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// namePrefix starts the file name of every keychain Create makes. Open refuses
+// a file that does not carry it, so a helper process handed the wrong path
+// cannot be pointed at a user keychain.
+const namePrefix = "secretstore-test-"
+
+// Open opens a keychain Create made, in another process, and unlocks it with
+// its password. The caller releases it with Close; Delete still deletes it.
+func Open(path, password string) (*Keychain, error) {
+	if !filepath.IsAbs(path) {
+		return nil, errors.New("kctest: the keychain path must be absolute")
+	}
+	if name := filepath.Base(path); !strings.HasPrefix(name, namePrefix) || !strings.HasSuffix(name, ".keychain-db") {
+		return nil, errors.New("kctest: refusing to open a keychain that Create did not make")
+	}
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+	cPassword := C.CString(password)
+	defer C.free(unsafe.Pointer(cPassword))
+	var ref C.SecKeychainRef
+	if err := check("open and unlock the keychain", C.kt_open(cPath, cPassword, &ref)); err != nil {
+		return nil, err
+	}
+	return &Keychain{ref: ref, path: path, password: password}, nil
+}
+
+// Close releases the reference without deleting the keychain file. A second
+// call does nothing.
+func (k *Keychain) Close() {
+	if k.ref == 0 {
+		return
+	}
+	C.CFRelease(C.CFTypeRef(k.ref))
+	k.ref = 0
+}
+
+// Password returns the keychain's password. A test passes it to a helper
+// process on its standard input, never in an argument or the environment.
+func (k *Keychain) Password() string {
+	return k.password
 }
 
 // Ref returns the SecKeychainRef as an integer, for the test to convert to the
@@ -365,9 +694,9 @@ func (k *Keychain) Unlocked() (bool, error) {
 }
 
 // Delete deletes the keychain file and releases the reference. A second call
-// does nothing.
+// does nothing, and neither does a call on a keychain that was closed.
 func (k *Keychain) Delete() error {
-	if k.deleted {
+	if k.deleted || k.ref == 0 {
 		return nil
 	}
 	k.deleted = true
@@ -532,4 +861,115 @@ func (k *Keychain) ACL(service, account string) ([]ACLEntry, error) {
 		})
 	}
 	return dump, nil
+}
+
+// markerValue is the build marker. A test builds its binary twice with a
+// different -ldflags -X value for MarkerVariable, so the two builds differ in
+// content and therefore in code directory hash. BuildMarker reads it, which
+// shows what a binary was linked with.
+var markerValue = "unset"
+
+// MarkerVariable is the name of the variable in this package that -X sets.
+const MarkerVariable = "markerValue"
+
+// BuildMarker returns the value the binary was linked with, or "unset".
+func BuildMarker() string {
+	return markerValue
+}
+
+// ImportPEM imports one PEM encoded private key or certificate into the
+// keychain. The format is detected, the way /usr/bin/security does. A private
+// key trusts this binary. A key and a certificate that belong together form an
+// identity once both are in the keychain.
+func (k *Keychain) ImportPEM(data []byte) error {
+	return k.importItems(data, false, "")
+}
+
+// ImportPKCS12 imports the identity in a PKCS#12 file into the keychain.
+func (k *Keychain) ImportPKCS12(data []byte, passphrase string) error {
+	return k.importItems(data, true, passphrase)
+}
+
+func (k *Keychain) importItems(data []byte, pkcs12 bool, passphrase string) error {
+	if len(data) == 0 {
+		return errors.New("kctest: nothing to import")
+	}
+	var cPassphrase *C.char
+	if pkcs12 {
+		cPassphrase = C.CString(passphrase)
+		defer C.free(unsafe.Pointer(cPassphrase))
+	}
+	var imported C.long
+	flag := C.int(0)
+	if pkcs12 {
+		flag = 1
+	}
+	status := C.kt_import(k.ref, (*C.UInt8)(unsafe.Pointer(&data[0])), C.CFIndex(len(data)), flag, cPassphrase, &imported)
+	if err := check("SecItemImport", status); err != nil {
+		return err
+	}
+	if imported < 1 {
+		return errors.New("kctest: SecItemImport imported no item")
+	}
+	return nil
+}
+
+// Sign signs the file at path with the identity in the keychain whose
+// certificate has the subject common name, under identifier, with the hardened
+// runtime flag. It replaces any signature the file has. It goes through the
+// SecCodeSigner interface, which unlike /usr/bin/codesign accepts an identity
+// that is not trusted and not on the search list.
+func (k *Keychain) Sign(commonName, path, identifier string) error {
+	cName := C.CString(commonName)
+	defer C.free(unsafe.Pointer(cName))
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+	cIdentifier := C.CString(identifier)
+	defer C.free(unsafe.Pointer(cIdentifier))
+	return check("sign the binary", C.kt_sign(k.ref, cName, cPath, cIdentifier))
+}
+
+// Signature is what a signed file says about itself.
+type Signature struct {
+	Identifier string
+	// Requirement is the designated requirement, the text the keychain access
+	// check evaluates.
+	Requirement string
+	// LeafName is the subject summary of the leaf certificate; empty for an ad hoc
+	// signature, which has none.
+	LeafName string
+	// CDHash is the code directory hash in hex.
+	CDHash          string
+	Flags           uint32
+	HasCertificates bool
+}
+
+// Code signature flags the tests look at.
+const (
+	flagAdHoc   = 0x2
+	flagRuntime = 0x10000
+)
+
+// AdHoc reports whether the signature is ad hoc.
+func (s Signature) AdHoc() bool { return s.Flags&flagAdHoc != 0 }
+
+// Runtime reports whether the hardened runtime flag is set.
+func (s Signature) Runtime() bool { return s.Flags&flagRuntime != 0 }
+
+// CodeSignature reads the code signature of the file at path.
+func CodeSignature(path string) (Signature, error) {
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+	var info C.kt_signature_info
+	if err := check("read the code signature", C.kt_signature(cPath, &info)); err != nil {
+		return Signature{}, err
+	}
+	return Signature{
+		Identifier:      C.GoString(&info.identifier[0]),
+		Requirement:     C.GoString(&info.requirement[0]),
+		LeafName:        C.GoString(&info.leaf[0]),
+		CDHash:          C.GoString(&info.cdhash[0]),
+		Flags:           uint32(info.flags),
+		HasCertificates: info.has_certificates != 0,
+	}, nil
 }
