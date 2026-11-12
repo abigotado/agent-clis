@@ -313,8 +313,10 @@ jobs:
           set -euo pipefail
           log="$(mktemp)"
           go test -race -count=1 -v -tags keychainintegration ./secretstore/... 2>&1 | tee "${log}"
-          for name in TestKeychainScratch TestKeychainHelper TestKeychainAcrossBinaries; do
-            grep -Fq -- "--- PASS: ${name} " "${log}"
+          # TestKeychainHelper is left out on purpose: it is the child process
+          # of TestKeychainAcrossBinaries and skips when run directly.
+          for name in TestKeychainScratch TestKeychainAcrossBinaries; do
+            grep -Fq -- "--- PASS: ${name} " "${log}" || { echo "::error::${name} did not pass"; exit 1; }
           done
 
   # Credential Manager exists only on Windows, so the real backend needs its
@@ -390,7 +392,7 @@ jobs:
           log="$(mktemp)"
           go test -race -count=1 -v -tags credmanintegration ./secretstore/... 2>&1 | tee "${log}"
           for name in TestCredmanContract TestCredmanChunkBoundaries TestCredmanServiceBlobLimit; do
-            grep -Fq -- "--- PASS: ${name} " "${log}"
+            grep -Fq -- "--- PASS: ${name} " "${log}" || { echo "::error::${name} did not pass"; exit 1; }
           done
 
   youtrack:
