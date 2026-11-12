@@ -237,6 +237,17 @@ func (s *chunkedStore) failure(op string, err error) error {
 	}
 }
 
+// writeFailure classifies an error from a credAPI write. A write creates or
+// replaces a credential, so it cannot meaningfully report a missing one; if the
+// system does, that is an unexpected failure and not "the value is absent",
+// which a caller of Save must never read as ErrNotFound.
+func (s *chunkedStore) writeFailure(op string, err error) error {
+	if isCredNotFound(err) {
+		return s.fail(op, KindOther, win32NotFound)
+	}
+	return s.failure(op, err)
+}
+
 func isCredNotFound(err error) bool {
 	var we *win32Error
 	return errors.As(err, &we) && we.code == win32NotFound
@@ -423,9 +434,12 @@ func (s *chunkedStore) Delete(ctx context.Context, key Key) error {
 }
 
 // Save implements Store with the sequence described at the top of the file.
-// The caller serialises Saves of one key. A failure of the final sweep is
-// returned although the new value is already stored, because the store is then
-// not clean; a retry only repeats the sweep.
+// The caller serialises Save and Delete of one key: they share the key's chunk
+// names and the sweep, so a Delete that overlaps a Save can remove the chunks
+// the Save has just written. Once the manifest is written Save has succeeded
+// and returns nil; the final sweep of the other generations is best effort,
+// and a chunk it cannot remove is removed by the next Save or Delete of the
+// key.
 func (s *chunkedStore) Save(ctx context.Context, key Key, secret []byte) error {
 	if err := s.begin(ctx, "save", key); err != nil {
 		return err
@@ -453,7 +467,7 @@ func (s *chunkedStore) Save(ctx context.Context, key Key, secret []byte) error {
 		name := chunkTarget(prefix, gen, i)
 		if err := s.api.write(ctx, name, key.Account, secret[i*chunkSize:min((i+1)*chunkSize, len(secret))]); err != nil {
 			s.discard(ctx, written)
-			return s.failure("save", err)
+			return s.writeFailure("save", err)
 		}
 		written = append(written, name)
 	}
@@ -471,12 +485,18 @@ func (s *chunkedStore) Save(ctx context.Context, key Key, secret []byte) error {
 	}
 	if err := s.api.write(ctx, prefix, key.Account, blob); err != nil {
 		s.discard(ctx, written)
-		return s.failure("save", err)
+		return s.writeFailure("save", err)
 	}
 
-	// The manifest names the new generation, so the old chunks are garbage and
-	// the sweep runs to its end.
-	return s.sweep(context.WithoutCancel(ctx), "save", prefix, gen)
+	// The manifest names the new generation, so the new value is stored and the
+	// old chunks are garbage. The sweep runs to its end, but its failure is not
+	// the Save's: reporting it would tell the caller to retry a Save that
+	// worked, and an unreferenced chunk is harmless until the next Save or
+	// Delete of the key removes it.
+	//
+	// Best effort: the error is deliberately dropped for the reason above.
+	_ = s.sweep(context.WithoutCancel(ctx), "save", prefix, gen)
+	return nil
 }
 
 // discard removes chunks of a Save that did not reach its manifest.

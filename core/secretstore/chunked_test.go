@@ -681,14 +681,42 @@ func TestChunkedTornSave(t *testing.T) {
 					before := f.targets()
 					f.failMutation(k, &win32Error{code: 5})
 					err := s.Save(t.Context(), chunkedKey, newValue)
+					if k > manifestStep {
+						// The manifest is written, so the Save succeeded; only the
+						// best-effort sweep of an old chunk failed.
+						if err != nil {
+							t.Fatalf("Save = %v, want success once the manifest is written", err)
+						}
+						f.setHooks(nil, nil)
+						chunkedLoad(t, s, newValue)
+						// The chunk the sweep could not remove is garbage that the
+						// next Save removes.
+						next := []byte("the next value")
+						if err := s.Save(t.Context(), chunkedKey, next); err != nil {
+							t.Fatalf("next Save: %v", err)
+						}
+						chunkedLoad(t, s, next)
+						if got := len(f.targets()); got != 2 {
+							t.Fatalf("after the next Save %d credentials are stored (%q), want the manifest and one chunk", got, f.targets())
+						}
+						// So does a Delete, when no Save follows.
+						f, s := setup(t)
+						f.failMutation(k, &win32Error{code: 5})
+						if err := s.Save(t.Context(), chunkedKey, newValue); err != nil {
+							t.Fatalf("Save: %v", err)
+						}
+						f.setHooks(nil, nil)
+						if err := s.Delete(t.Context(), chunkedKey); err != nil {
+							t.Fatalf("Delete: %v", err)
+						}
+						if got := f.targets(); len(got) != 0 {
+							t.Fatalf("after Delete %q remain, want nothing", got)
+						}
+						return
+					}
 					wantCredError(t, err, "save", KindOther, 5)
 					got, loadErr := s.Load(t.Context(), chunkedKey)
 					switch {
-					case k > manifestStep:
-						// The value is stored; only the sweep failed.
-						if loadErr != nil || !bytes.Equal(got, newValue) {
-							t.Fatalf("Load = %d bytes, %v, want the new value", len(got), loadErr)
-						}
 					case withOld:
 						if loadErr != nil || !bytes.Equal(got, oldValue) {
 							t.Fatalf("Load = %d bytes, %v, want the old value", len(got), loadErr)
@@ -696,7 +724,7 @@ func TestChunkedTornSave(t *testing.T) {
 					default:
 						wantCredError(t, loadErr, "load", KindNotFound, win32NotFound)
 					}
-					if k <= manifestStep && !slices.Equal(f.targets(), before) {
+					if !slices.Equal(f.targets(), before) {
 						t.Fatalf("a failed Save left %q, want %q", f.targets(), before)
 					}
 				})
@@ -922,8 +950,12 @@ func TestChunkedErrorMapping(t *testing.T) {
 							t.Fatalf("Delete of a missing value: %v", err)
 						}
 					case "save":
-						// A write cannot fail as not found; it classifies.
-						wantCredError(t, err, "save", KindNotFound, 1168)
+						// A write creates the credential, so a not-found from it is
+						// an unexpected failure, never "the value is absent".
+						wantCredError(t, err, "save", KindOther, 1168)
+						if errors.Is(err, ErrNotFound) {
+							t.Fatalf("Save = %v, must not match ErrNotFound", err)
+						}
 					}
 					return
 				}
@@ -940,6 +972,27 @@ func TestChunkedErrorMapping(t *testing.T) {
 			t.Fatalf("Load = %v, want the deadline error", err)
 		}
 	})
+}
+
+// TestChunkedWriteNotFoundIsNotAbsence: a not-found from the chunk write or from
+// the manifest write is KindOther, and the Save cleans up after itself.
+func TestChunkedWriteNotFoundIsNotAbsence(t *testing.T) {
+	value := patterned(2*chunkSize+1, 1)
+	// Three chunks (1..3), then the manifest (4).
+	for _, k := range []int{1, 3, 4} {
+		t.Run("mutation "+strconv.Itoa(k), func(t *testing.T) {
+			f, s := newChunked(t, MaxSecretBytesLimit)
+			f.failMutation(k, &win32Error{code: win32NotFound})
+			err := s.Save(t.Context(), chunkedKey, value)
+			wantCredError(t, err, "save", KindOther, win32NotFound)
+			if errors.Is(err, ErrNotFound) {
+				t.Fatalf("Save = %v, must not match ErrNotFound", err)
+			}
+			if got := f.targets(); len(got) != 0 {
+				t.Fatalf("a failed Save left %q", got)
+			}
+		})
+	}
 }
 
 func TestChunkedContext(t *testing.T) {

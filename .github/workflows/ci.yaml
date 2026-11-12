@@ -354,6 +354,23 @@ jobs:
       - name: go test
         run: go test -race ./...
 
+      # The CREDENTIALW layout differs on 32-bit Windows, and no later step
+      # builds for it. These two tests are pure Go, so the 386 binary runs on
+      # the amd64 runner. The race detector needs cgo, which a 386 build here
+      # has no toolchain for, so it is off. A -run that matched nothing would
+      # still pass, so each test must report PASS.
+      - name: Credential layout on 32-bit Windows
+        env:
+          GOARCH: "386"
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          out="$(go test -count=1 -v -run '^(TestCredentialLayout|TestWin32CodesMatchTheSystem)$' ./secretstore/)"
+          printf '%s\n' "${out}"
+          for name in TestCredentialLayout TestWin32CodesMatchTheSystem; do
+            grep -Fq -- "--- PASS: ${name} " <<<"${out}"
+          done
+
       # Runs against this runner's real Credential Manager, under random
       # secretstore-test-<hex> targets that the tests delete. With the variable
       # set, an unusable Credential Manager fails the job instead of skipping.

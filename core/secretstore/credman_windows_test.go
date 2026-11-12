@@ -9,10 +9,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -250,12 +252,90 @@ func TestCredmanSweepLeavesOtherNamesAlone(t *testing.T) {
 	}
 }
 
-func TestCredmanRefusesAnOversizedBlob(t *testing.T) {
+// rawWrite calls CredWriteW with a credential built here, bypassing the Go-side
+// size guard of credman.write, so a test sees what the service itself accepts.
+func rawWrite(c *credman, target, userName string, blob []byte) error {
+	name, err := windows.UTF16PtrFromString(target)
+	if err != nil {
+		return err
+	}
+	user, err := windows.UTF16PtrFromString(userName)
+	if err != nil {
+		return err
+	}
+	cred := credential{
+		Type:               credTypeGeneric,
+		TargetName:         name,
+		CredentialBlobSize: uint32(len(blob)),
+		Persist:            credPersistLocalHost,
+		UserName:           user,
+	}
+	if len(blob) > 0 {
+		cred.CredentialBlob = &blob[0]
+	}
+	r1, _, callErr := c.procWrite.Call(uintptr(unsafe.Pointer(&cred)), 0)
+	runtime.KeepAlive(blob)
+	runtime.KeepAlive(name)
+	runtime.KeepAlive(user)
+	if r1 == 0 {
+		return win32Failure(callErr)
+	}
+	return nil
+}
+
+// TestCredmanServiceBlobLimit pins chunkSize to what the real service accepts:
+// 2560 bytes are stored and 2561 are refused by CredWriteW itself.
+func TestCredmanServiceBlobLimit(t *testing.T) {
 	c := realCredman(t)
-	err := c.write(t.Context(), "secretstore-test-"+randomService(t)+"/big", "x", make([]byte, chunkSize+1))
+	service := "secretstore-test-" + randomService(t)
+	for _, tt := range []struct {
+		size   int
+		stored bool
+	}{
+		{chunkSize, true},
+		{chunkSize + 1, false},
+	} {
+		t.Run(strconv.Itoa(tt.size), func(t *testing.T) {
+			target := service + "/limit-" + strconv.Itoa(tt.size)
+			// Registered before the write so that a service that accepts a blob
+			// it should refuse is still cleaned up.
+			t.Cleanup(func() { removeTarget(t, c, target) })
+			err := rawWrite(c, target, "x", make([]byte, tt.size))
+			if tt.stored {
+				if err != nil {
+					t.Fatalf("CredWriteW of %d bytes = %v, want success", tt.size, err)
+				}
+				got, err := c.read(t.Context(), target, chunkSize)
+				if err != nil || len(got) != tt.size {
+					t.Fatalf("read = %d bytes, %v, want %d bytes", len(got), err, tt.size)
+				}
+				return
+			}
+			var we *win32Error
+			if !errors.As(err, &we) || we.code == 0 {
+				t.Fatalf("CredWriteW of %d bytes = %v, want the service to refuse it with a win32 error", tt.size, err)
+			}
+			t.Logf("CredWriteW refuses %d bytes with Win32 error %d", tt.size, we.code)
+			if _, err := c.read(t.Context(), target, chunkSize+1); !isCredNotFound(err) {
+				t.Fatalf("read after the refused write = %v, want ERROR_NOT_FOUND", err)
+			}
+		})
+	}
+}
+
+// TestCredmanWriteGuardsTheBlobSize checks the guard in credman.write, which
+// refuses an oversized blob before the service is called.
+func TestCredmanWriteGuardsTheBlobSize(t *testing.T) {
+	c := realCredman(t)
+	target := "secretstore-test-" + randomService(t) + "/big"
+	t.Cleanup(func() { removeTarget(t, c, target) })
+	err := c.write(t.Context(), target, "x", make([]byte, chunkSize+1))
 	var we *win32Error
-	if !errors.As(err, &we) {
-		t.Fatalf("write of an oversized blob = %v, want a win32Error", err)
+	if !errors.As(err, &we) || we.code != int64(windows.ERROR_INVALID_PARAMETER) {
+		t.Fatalf("write of an oversized blob = %v, want ERROR_INVALID_PARAMETER from the guard", err)
+	}
+	if _, err := c.read(t.Context(), target, chunkSize+1); !isCredNotFound(err) {
+		t.Fatalf("read after the refused write = %v, want ERROR_NOT_FOUND: the guard must not store anything", err)
 	}
 }
 
@@ -273,4 +353,31 @@ func TestCredmanZeroLengthBlobAndSizeBound(t *testing.T) {
 	if err != nil || len(got) != 100 {
 		t.Fatalf("read = %d bytes, %v", len(got), err)
 	}
+
+	t.Run("zero-length blob", func(t *testing.T) {
+		empty := "secretstore-test-" + randomService(t) + "/empty"
+		t.Cleanup(func() { removeTarget(t, c, empty) })
+		// The store never writes an empty blob (Save refuses an empty secret
+		// and every chunk has data), so this only pins what read returns for
+		// one that another program stored. The service decides whether it
+		// accepts a zero-length blob at all; both outcomes are asserted.
+		if err := c.write(t.Context(), empty, "u", nil); err != nil {
+			var we *win32Error
+			if !errors.As(err, &we) || we.code == 0 {
+				t.Fatalf("write of a zero-length blob = %v, want success or a win32 refusal", err)
+			}
+			t.Logf("the service refuses a zero-length blob with Win32 error %d", we.code)
+			if _, err := c.read(t.Context(), empty, chunkSize); !isCredNotFound(err) {
+				t.Fatalf("read after the refused write = %v, want ERROR_NOT_FOUND", err)
+			}
+			return
+		}
+		got, err := c.read(t.Context(), empty, chunkSize)
+		if err != nil {
+			t.Fatalf("read of a zero-length blob: %v", err)
+		}
+		if got == nil || len(got) != 0 {
+			t.Fatalf("read of a zero-length blob = %#v, want a non-nil empty slice", got)
+		}
+	})
 }

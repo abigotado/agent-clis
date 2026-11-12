@@ -113,6 +113,9 @@ func (c *credman) read(ctx context.Context, target string, max int) ([]byte, err
 	var out []byte
 	err := c.readCredential(ctx, target, func(cred *credential) error {
 		if int64(cred.CredentialBlobSize) > int64(max) {
+			// The rejected blob may be a secret; wipe the system buffer
+			// before it is freed, as on the success path.
+			clear(blobOf(cred))
 			return errBlobTooLarge
 		}
 		blob := blobOf(cred)
