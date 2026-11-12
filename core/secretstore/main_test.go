@@ -21,6 +21,10 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// platformHelpers holds the scenarios that platform-specific test files add in
+// an init function; they run in a fresh process like the ones below.
+var platformHelpers = map[string]func() error{}
+
 func runHelper(name string) int {
 	var err error
 	switch name {
@@ -33,7 +37,11 @@ func runHelper(name string) int {
 	case "core-dumps":
 		err = helperCoreDumps()
 	default:
-		err = fmt.Errorf("unknown helper %q", name)
+		if helper, ok := platformHelpers[name]; ok {
+			err = helper()
+		} else {
+			err = fmt.Errorf("unknown helper %q", name)
+		}
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

@@ -240,6 +240,66 @@ jobs:
             fi
           done
 
+  # The cgo Security.framework backend only compiles on macOS, so it needs its
+  # own runner. Selected like a CLI job: when core or everything changed.
+  core-macos:
+    name: core (macOS keychain backend)
+    needs: changes
+    if: needs.changes.outputs.core == 'true' || needs.changes.outputs.all == 'true'
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - name: Git Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: core/go.mod
+          cache: true
+          cache-dependency-path: core/go.mod
+
+      # setup-go sets GOTOOLCHAIN=local, so a toolchain line it did not honour
+      # would silently test on another Go. Compare with the line itself.
+      - name: Go toolchain matches go.mod
+        run: |
+          set -euo pipefail
+          want="$(sed -n 's/^toolchain //p' go.mod)"
+          test -n "${want}"
+          go version
+          go version | grep -Fq " ${want} "
+
+      # Without these checks a runner that silently dropped cgo, or a build
+      # constraint typo, would pass every test while skipping the backend.
+      - name: Backend files are selected for the right build
+        run: |
+          set -euo pipefail
+          cgo_files="$(go list -f '{{join .CgoFiles " "}}' ./secretstore)"
+          echo "cgo build, CgoFiles: ${cgo_files}"
+          case " ${cgo_files} " in
+            *" keychain_darwin.go "*) ;;
+            *) echo "::error::keychain_darwin.go is not compiled with cgo enabled"; exit 1 ;;
+          esac
+          go_files="$(CGO_ENABLED=0 go list -f '{{join .GoFiles " "}}' ./secretstore)"
+          echo "no-cgo build, GoFiles: ${go_files}"
+          case " ${go_files} " in
+            *" open_darwin_nocgo.go "*) ;;
+            *) echo "::error::open_darwin_nocgo.go is not compiled with cgo disabled"; exit 1 ;;
+          esac
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -race ./...
+
+      - name: go test without cgo
+        run: CGO_ENABLED=0 go test ./...
+
   youtrack:
     name: youtrack-agent-cli (${{ matrix.os }})
     needs: changes
@@ -482,7 +542,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, repo, core-unit, youtrack, youtrack-windows]
+    needs: [changes, repo, core-unit, core-macos, youtrack, youtrack-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Verify every job
@@ -509,23 +569,30 @@ jobs:
           fi
           # The context must list exactly the jobs in needs above; a missing
           # job would otherwise drop out of the check below.
-          if ! jq -e 'type == "object" and (keys == ["changes", "core-unit", "repo", "youtrack", "youtrack-windows"])' <<<"${NEEDS}" >/dev/null; then
-            echo "::error::needs context does not list exactly changes, core-unit, repo, youtrack, youtrack-windows"
+          if ! jq -e 'type == "object" and (keys == ["changes", "core-macos", "core-unit", "repo", "youtrack", "youtrack-windows"])' <<<"${NEEDS}" >/dev/null; then
+            echo "::error::needs context does not list exactly changes, core-macos, core-unit, repo, youtrack, youtrack-windows"
             exit 1
           fi
-          # changes, repo and core-unit always run and must succeed. A CLI job
-          # must succeed when its flag or all is set, and must have been
-          # skipped otherwise: a job that ran unselected, or was skipped when
-          # selected, means the selection and the workflow disagree.
+          # changes, repo and core-unit always run and must succeed. A selected
+          # job (a CLI's, or core-macos) must succeed when its flag or all is
+          # set, and must have been skipped otherwise: a job that ran
+          # unselected, or was skipped when selected, means the selection and
+          # the workflow disagree.
           youtrack_expected=skipped
           if [ "${YOUTRACK_SELECTED}" = true ] || [ "${ALL_SELECTED}" = true ]; then
             youtrack_expected=success
           fi
-          failures="$(jq -r --arg youtrack "${youtrack_expected}" '
+          core_expected=skipped
+          if [ "${CORE_SELECTED}" = true ] || [ "${ALL_SELECTED}" = true ]; then
+            core_expected=success
+          fi
+          failures="$(jq -r --arg youtrack "${youtrack_expected}" --arg core "${core_expected}" '
             to_entries[]
             | .key as $job
             | .value.result as $result
-            | (if $job == "youtrack" or $job == "youtrack-windows" then $youtrack else "success" end) as $want
+            | (if $job == "youtrack" or $job == "youtrack-windows" then $youtrack
+               elif $job == "core-macos" then $core
+               else "success" end) as $want
             | select($result != $want)
             | "\($job)=\($result) (want \($want))"
           ' <<<"${NEEDS}")"

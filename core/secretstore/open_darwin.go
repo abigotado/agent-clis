@@ -4,6 +4,6 @@ package secretstore
 
 import "context"
 
-func openNative(_ context.Context, _ Options) (Store, error) {
-	return nil, newError("open", "none", KindUnavailable)
+func openNative(_ context.Context, opts Options) (Store, error) {
+	return openKeychain(opts, setUserInteractionAllowed)
 }
