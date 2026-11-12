@@ -34,7 +34,9 @@ static CFMutableDictionaryRef sk_dict(CFStringRef service, CFStringRef account, 
 	CFDictionarySetValue(dict, kSecClass, kSecClassGenericPassword);
 	CFDictionarySetValue(dict, kSecAttrService, service);
 	CFDictionarySetValue(dict, kSecAttrAccount, account);
-	if (ui_fail) {
+	// SecItemAdd rejects the authentication UI key, so only lookups, reads and
+	// deletes carry it.
+	if (ui_fail && !for_add) {
 		CFDictionarySetValue(dict, kSecUseAuthenticationUI, kSecUseAuthenticationUIFail);
 	}
 	if (target != NULL) {
@@ -568,6 +570,23 @@ func (s *keychainStore) RepairAccess(ctx context.Context, key Key) error {
 		return relabel(err, "repair")
 	}
 	defer clear(value)
+	// Load ignores a stage this identity cannot read. Saving the account value
+	// over it would destroy a newer value, so refuse.
+	stage := itemName{service: key.Service, account: key.Account}.stage()
+	present, err := s.api.exists(ctx, stage)
+	if err != nil {
+		return s.failure("repair", err, false)
+	}
+	if present {
+		staged, readable, err := s.readStage(ctx, "repair", stage)
+		clear(staged)
+		if err != nil {
+			return relabel(err, "repair")
+		}
+		if !readable {
+			return s.fail("repair", KindAccessDenied, 0)
+		}
+	}
 	if err := s.Save(ctx, key, value); err != nil {
 		return relabel(err, "repair")
 	}

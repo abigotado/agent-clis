@@ -16,6 +16,10 @@
 // should hold their own lock around Save and around reads that must be
 // consistent with it; the package does not provide cross-process locking.
 //
+// On macOS the Security framework receives the secret in an immutable CFData
+// that is released without being zeroed; only the Go copies are zeroed, on a
+// best-effort basis.
+//
 // Package secretstoretest provides an in-memory fake and a behaviour suite
 // that a Store implementation must pass.
 package secretstore

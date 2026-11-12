@@ -174,14 +174,15 @@ func (e *Error) Error() string {
 	return b.String()
 }
 
-// GoString renders the error for %#v with the same sanitized fields as Error,
+// GoString has a value receiver so that %#v of an Error value and of an *Error
+// both render the sanitized form, without a leading "&". It renders the error for %#v with the same sanitized fields as Error,
 // so the Go-syntax form cannot echo an unknown Reason, Op or Backend.
-func (e *Error) GoString() string {
+func (e Error) GoString() string {
 	reason := e.Reason
 	if reason != "" && !reason.known() {
 		reason = ReasonOther
 	}
-	return fmt.Sprintf("&secretstore.Error{Op:%q, Backend:%q, Kind:%q, Status:%d, Reason:%q}",
+	return fmt.Sprintf("secretstore.Error{Op:%q, Backend:%q, Kind:%q, Status:%d, Reason:%q}",
 		knownOp(e.Op), knownBackend(e.Backend), e.Kind.String(), e.Status, string(reason))
 }
 

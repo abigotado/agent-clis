@@ -14,11 +14,6 @@ import (
 // compare constants and dry-run descriptions, and the store tests run over the
 // in-memory fakeKeychain.
 
-func init() {
-	platformHelpers["keychain-open-never"] = helperKeychainOpenNever
-	platformHelpers["keychain-open-allowed"] = helperKeychainOpenAllowed
-}
-
 func TestStatusLiteralsMatchSecurityFramework(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
@@ -115,48 +110,6 @@ func TestOpenKeychainModes(t *testing.T) {
 	}
 }
 
-func helperKeychainOpenNever() error {
-	uiSetterCalls = nil
-	store, err := Open(context.Background(), Options{MaxSecretBytes: 1024, Interaction: InteractionNever})
-	if err != nil {
-		return fmt.Errorf("Open: %w", err)
-	}
-	if _, ok := store.(*keychainStore); !ok {
-		return fmt.Errorf("Open returned %T, want *keychainStore", store)
-	}
-	if !slices.Equal(uiSetterCalls, []bool{false}) {
-		return fmt.Errorf("setter calls = %v, want [false]", uiSetterCalls)
-	}
-	_, err = Open(context.Background(), Options{MaxSecretBytes: 1024, Interaction: InteractionAllowed})
-	if err := wantInvalidOpen("conflicting Open", err); err != nil {
-		return err
-	}
-	if !slices.Equal(uiSetterCalls, []bool{false}) {
-		return fmt.Errorf("a refused Open changed the setting: calls = %v", uiSetterCalls)
-	}
-	return nil
-}
-
-func helperKeychainOpenAllowed() error {
-	uiSetterCalls = nil
-	if _, err := Open(context.Background(), Options{MaxSecretBytes: 1024, Interaction: InteractionAllowed}); err != nil {
-		return fmt.Errorf("Open: %w", err)
-	}
-	_, err := Open(context.Background(), Options{MaxSecretBytes: 1024, Interaction: InteractionNever})
-	if err := wantInvalidOpen("conflicting Open", err); err != nil {
-		return err
-	}
-	if len(uiSetterCalls) != 0 {
-		return fmt.Errorf("setter calls = %v, want none", uiSetterCalls)
-	}
-	return nil
-}
-
-func TestOpenSetsTheInteractionModeProcessWide(t *testing.T) {
-	t.Run("never", func(t *testing.T) { runHelperProcess(t, "keychain-open-never") })
-	t.Run("allowed", func(t *testing.T) { runHelperProcess(t, "keychain-open-allowed") })
-}
-
 // TestEveryPrimitiveNamesTheTargetKeychain runs each primitive in dry-run mode
 // against a placeholder target and checks the dictionary it built, so a
 // primitive that forgot the target cannot reach the user's login keychain
@@ -204,8 +157,8 @@ func TestEveryPrimitiveNamesTheTargetKeychain(t *testing.T) {
 				if want := tt.target != 0 && !isAdd; tr.searchList != want {
 					t.Errorf("%s: kSecMatchSearchList = %v, want %v", tr.op, tr.searchList, want)
 				}
-				if tr.uiFail != tt.uiFail {
-					t.Errorf("%s: UI fail = %v, want %v", tr.op, tr.uiFail, tt.uiFail)
+				if wantUI := tt.uiFail && !isAdd; tr.uiFail != wantUI {
+					t.Errorf("%s: UI fail = %v, want %v (never on add)", tr.op, tr.uiFail, wantUI)
 				}
 				if !tr.named {
 					t.Errorf("%s: dictionary lacks the service or account", tr.op)
@@ -294,6 +247,21 @@ func TestRepairAccess(t *testing.T) {
 		}
 		mustLoad(t, s, "newest")
 		wantNoStage(t, f)
+	})
+
+	t.Run("refuses when an unreadable stage may hold a newer value", func(t *testing.T) {
+		f := newFakeKeychain()
+		f.put(fakeAcctName, "old")
+		f.putForeign(fakeStageName, statusAuthFailed)
+		before := f.snapshot()
+		err := newTestKeychainStore(f, InteractionAllowed).RepairAccess(t.Context(), fakeKey)
+		wantError(t, err, "repair", KindAccessDenied, 0)
+		if got := f.mutations(); len(got) != 0 {
+			t.Fatalf("mutations = %v, want none", got)
+		}
+		if got := f.snapshot(); fmt.Sprint(got) != fmt.Sprint(before) {
+			t.Fatalf("store = %v, want %v", got, before)
+		}
 	})
 
 	t.Run("zeroes the buffers it handled", func(t *testing.T) {

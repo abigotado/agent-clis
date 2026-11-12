@@ -139,15 +139,18 @@ func TestErrorGoStringIsSanitized(t *testing.T) {
 		err  *Error
 		want string
 	}{
-		{"known fields", &Error{Op: "load", Backend: "memory", Kind: KindNotFound, Status: 7, Reason: ReasonIsLocked}, `&secretstore.Error{Op:"load", Backend:"memory", Kind:"not-found", Status:7, Reason:"is-locked"}`},
-		{"no reason", &Error{Op: "save", Backend: "none", Kind: KindOther}, `&secretstore.Error{Op:"save", Backend:"none", Kind:"other", Status:0, Reason:""}`},
-		{"unknown reason", &Error{Op: "load", Backend: "memory", Kind: KindOther, Reason: "key=hunter2"}, `&secretstore.Error{Op:"load", Backend:"memory", Kind:"other", Status:0, Reason:"other"}`},
-		{"unknown op and backend", &Error{Op: "op=hunter2", Backend: "b=hunter2", Kind: KindOther}, `&secretstore.Error{Op:"other", Backend:"other", Kind:"other", Status:0, Reason:""}`},
+		{"known fields", &Error{Op: "load", Backend: "memory", Kind: KindNotFound, Status: 7, Reason: ReasonIsLocked}, `secretstore.Error{Op:"load", Backend:"memory", Kind:"not-found", Status:7, Reason:"is-locked"}`},
+		{"no reason", &Error{Op: "save", Backend: "none", Kind: KindOther}, `secretstore.Error{Op:"save", Backend:"none", Kind:"other", Status:0, Reason:""}`},
+		{"unknown reason", &Error{Op: "load", Backend: "memory", Kind: KindOther, Reason: "key=hunter2"}, `secretstore.Error{Op:"load", Backend:"memory", Kind:"other", Status:0, Reason:"other"}`},
+		{"unknown op and backend", &Error{Op: "op=hunter2", Backend: "b=hunter2", Kind: KindOther}, `secretstore.Error{Op:"other", Backend:"other", Kind:"other", Status:0, Reason:""}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := fmt.Sprintf("%#v", tt.err); got != tt.want {
 				t.Fatalf("%%#v = %s, want %s", got, tt.want)
+			}
+			if got := fmt.Sprintf("%#v", *tt.err); got != tt.want {
+				t.Fatalf("%%#v of a value = %s, want %s", got, tt.want)
 			}
 			if got := fmt.Sprintf("%#v", error(tt.err)); strings.Contains(got, "hunter2") {
 				t.Fatalf("%%#v through the error interface leaks: %s", got)
