@@ -84,6 +84,13 @@ func newDHKeyPair(random io.Reader) (*dhKeyPair, error) {
 	return k, nil
 }
 
+// wipe zeroes the private exponent's words. The exponent has no other use once
+// the key is derived. big.Int offers no guarantee about intermediate values
+// that Exp left behind, so this is best effort.
+func (k *dhKeyPair) wipe() {
+	clear(k.priv.Bits())
+}
+
 // newDHKeyPairFromExponent builds a pair from a known exponent, for vectors.
 func newDHKeyPairFromExponent(priv *big.Int) *dhKeyPair {
 	p := dhPrime()
@@ -113,6 +120,7 @@ func (k *dhKeyPair) deriveKey(peer []byte) ([]byte, error) {
 	shared := make([]byte, dhValueBytes)
 	z.FillBytes(shared)
 	defer clear(shared)
+	defer clear(z.Bits())
 	key, err := hkdf.Key(sha256.New, shared, nil, "", dhKeyBytes)
 	if err != nil {
 		return nil, errDHPeer

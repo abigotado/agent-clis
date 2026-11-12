@@ -36,6 +36,8 @@ func runHelper(name string) int {
 		err = helperInvalidOptionsDoNotRecord()
 	case "core-dumps":
 		err = helperCoreDumps()
+	case "isolated-bus-env":
+		err = helperIsolatedBusEnv()
 	default:
 		if helper, ok := platformHelpers[name]; ok {
 			err = helper()
@@ -51,11 +53,26 @@ func runHelper(name string) int {
 	return 0
 }
 
+// helperEnvironment is the environment of a helper process: the parent's, with
+// the session bus hidden. A helper calls Open, which on Linux dials the session
+// bus and probes the Secret Service, so a helper must never inherit the
+// developer's bus: neither DBUS_SESSION_BUS_ADDRESS nor the
+// $XDG_RUNTIME_DIR/bus socket Open falls back to. The overrides come last, so
+// they win over the parent's values.
+func helperEnvironment(t *testing.T, name string) []string {
+	t.Helper()
+	return append(os.Environ(),
+		helperEnv+"="+name,
+		"DBUS_SESSION_BUS_ADDRESS=",
+		"XDG_RUNTIME_DIR="+t.TempDir(),
+	)
+}
+
 // runHelperProcess re-executes the test binary for one scenario.
 func runHelperProcess(t *testing.T, name string) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), os.Args[0])
-	cmd.Env = append(os.Environ(), helperEnv+"="+name)
+	cmd.Env = helperEnvironment(t, name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("helper %q failed: %v\n%s", name, err, out)
@@ -63,6 +80,26 @@ func runHelperProcess(t *testing.T, name string) {
 	if got := strings.TrimSpace(string(out)); got != "ok" {
 		t.Fatalf("helper %q printed %q, want ok", name, got)
 	}
+}
+
+// helperIsolatedBusEnv fails if the process can see a session bus: it asserts
+// the environment runHelperProcess built.
+func helperIsolatedBusEnv() error {
+	if addr, ok := os.LookupEnv("DBUS_SESSION_BUS_ADDRESS"); !ok || addr != "" {
+		return errors.New("DBUS_SESSION_BUS_ADDRESS is not set to the empty string")
+	}
+	dir := os.Getenv("XDG_RUNTIME_DIR")
+	if dir == "" {
+		return errors.New("XDG_RUNTIME_DIR is empty, so it would not hide a bus socket")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read XDG_RUNTIME_DIR: %w", err)
+	}
+	if len(entries) != 0 {
+		return fmt.Errorf("XDG_RUNTIME_DIR holds %d entries, want an empty directory", len(entries))
+	}
+	return nil
 }
 
 func notInvalidArgument(step string, err error) error {

@@ -300,6 +300,9 @@ func TestSecretServiceOpen(t *testing.T) {
 	if _, err := secretstore.Open(t.Context(), opts); !errors.Is(err, secretstore.ErrUnavailable) {
 		t.Fatalf("Open with a tcp address = %v, want ErrUnavailable", err)
 	}
+	// An empty address falls back to $XDG_RUNTIME_DIR/bus, so that must hold no
+	// socket for the refusal to be what is tested.
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "")
 	if _, err := secretstore.Open(t.Context(), opts); !errors.Is(err, secretstore.ErrUnavailable) {
 		t.Fatalf("Open with an empty address = %v, want ErrUnavailable", err)

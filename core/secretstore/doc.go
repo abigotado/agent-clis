@@ -12,6 +12,14 @@
 // later Open with the other mode fails with ErrInvalidArgument, including when
 // that first Open itself failed; an Open with invalid options fixes nothing.
 //
+// On Linux the session bus address is DBUS_SESSION_BUS_ADDRESS when it is set,
+// and then only a unix: address is used; any other transport is refused and
+// does not fall back. When it is unset or empty the address is
+// $XDG_RUNTIME_DIR/bus, as libdbus does, but only if XDG_RUNTIME_DIR is an
+// absolute path and bus there is a socket itself, not a symlink, owned by the
+// effective user. Otherwise Open fails with ErrUnavailable, and the error never
+// names the path. No bus is ever launched.
+//
 // Callers that save a credential while another process may read or rewrite it
 // should hold their own lock around Save and around reads that must be
 // consistent with it; the package does not provide cross-process locking.

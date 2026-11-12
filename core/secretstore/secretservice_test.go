@@ -868,8 +868,8 @@ func TestSecretServiceDeleteIsIdempotentUnderRaces(t *testing.T) {
 		name string
 		hook func(f *fakeSS)
 	}{
-		{"item vanishes before the lock check", func(f *fakeSS) { f.errs["Get"] = dbusError(errNameNoSuchObject) }},
-		{"item vanishes before Delete", func(f *fakeSS) { f.errs["Delete"] = dbusError(errNameNoSuchObject) }},
+		{"item vanishes before the lock check", func(f *fakeSS) { f.vanishOn = "Get" }},
+		{"item vanishes before Delete", func(f *fakeSS) { f.vanishOn = "Delete" }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -894,5 +894,203 @@ func TestSecretServiceCollectionMissing(t *testing.T) {
 	}
 	if err := s.Save(t.Context(), ssKey, []byte("v")); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("Save = %v", err)
+	}
+}
+
+// addMatches adds n items for key, which the module never writes.
+func addMatches(f *fakeSS, key Key, n int) {
+	for range n {
+		f.addItem(storeAttrs(key), []byte("v"))
+	}
+}
+
+func countMatches(f *fakeSS, key Key) int {
+	return len(f.search(storeAttrs(key)))
+}
+
+// TestSecretServiceRemovalIsNotCutAtOneSearch covers a key with more items than
+// one search reads. Delete and Save's duplicate removal must go on until none
+// are left, and report it when some are left after the bound.
+func TestSecretServiceRemovalIsNotCutAtOneSearch(t *testing.T) {
+	// One round removes maxSearchResults items and there are maxRemoveRounds of
+	// them, so this many are removable and one more is not.
+	removable := maxSearchResults * maxRemoveRounds
+	tests := []struct {
+		name    string
+		matches int
+		wantErr bool
+	}{
+		{"one", 1, false},
+		{"exactly one search", maxSearchResults, false},
+		{"one more than one search", maxSearchResults + 1, false},
+		{"several searches", 3*maxSearchResults + 5, false},
+		{"exactly the bound", removable, false},
+		{"one more than the bound", removable + 1, true},
+	}
+	for _, tt := range tests {
+		t.Run("delete: "+tt.name, func(t *testing.T) {
+			f := newFakeSS()
+			s := newSSStore(f, InteractionNever)
+			addMatches(f, ssKey, tt.matches)
+			bystander := f.addItem(storeAttrs(Key{Service: ssKey.Service, Account: "bob"}), []byte("bob"))
+			err := s.Delete(t.Context(), ssKey)
+			if tt.wantErr {
+				wantSSError(t, err, KindOther, ReasonTooManyMatches)
+				if got := countMatches(f, ssKey); got != 1 {
+					t.Fatalf("%d matches left, want the one beyond the bound", got)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Delete: %v", err)
+				}
+				ok, err := s.Exists(t.Context(), ssKey)
+				if err != nil || ok {
+					t.Fatalf("Exists after Delete = %v, %v; want false", ok, err)
+				}
+			}
+			if f.item(bystander.path) == nil {
+				t.Fatal("Delete removed another account's item")
+			}
+		})
+		t.Run("save: "+tt.name, func(t *testing.T) {
+			f := newFakeSS()
+			f.keepOnCreate = true
+			s := newSSStore(f, InteractionNever)
+			addMatches(f, ssKey, tt.matches)
+			err := s.Save(t.Context(), ssKey, []byte("new"))
+			if tt.wantErr {
+				// The new item is one of the matches: the others are removable
+				// up to the bound, and one more than that is not.
+				wantSSError(t, err, KindOther, ReasonTooManyMatches)
+				return
+			}
+			if err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			got, err := s.Load(t.Context(), ssKey)
+			if err != nil || string(got) != "new" {
+				t.Fatalf("Load = %q, %v; want the new value from a single item", got, err)
+			}
+		})
+	}
+}
+
+func TestSecretServiceRemovalGivesUpOnItemsThatComeBack(t *testing.T) {
+	for _, op := range []string{"delete", "save"} {
+		t.Run(op, func(t *testing.T) {
+			f := newFakeSS()
+			f.readdOnDelete = true
+			f.keepOnCreate = true
+			s := newSSStore(f, InteractionNever)
+			f.addItem(storeAttrs(ssKey), []byte("old"))
+			var err error
+			if op == "delete" {
+				err = s.Delete(t.Context(), ssKey)
+			} else {
+				err = s.Save(t.Context(), ssKey, []byte("new"))
+			}
+			wantSSError(t, err, KindOther, ReasonTooManyMatches)
+			var se *Error
+			if errors.As(err, &se) && se.Op != op {
+				t.Fatalf("Op = %q, want %q", se.Op, op)
+			}
+			// A round per search, then the search that finds what is left.
+			if got := len(f.calls("SearchItems")); got != maxRemoveRounds+1 {
+				t.Fatalf("%d searches, want %d: the loop must stop at its bound", got, maxRemoveRounds+1)
+			}
+		})
+	}
+}
+
+// TestSecretServiceReadsOfAnOverfullKey checks that a search cut at its limit
+// is never read as a single item.
+func TestSecretServiceReadsOfAnOverfullKey(t *testing.T) {
+	f := newFakeSS()
+	s := newSSStore(f, InteractionNever)
+	addMatches(f, ssKey, maxSearchResults+1)
+	if ok, err := s.Exists(t.Context(), ssKey); err != nil || !ok {
+		t.Fatalf("Exists = %v, %v; want true", ok, err)
+	}
+	_, err := s.Load(t.Context(), ssKey)
+	wantSSError(t, err, KindCorrupt, "")
+	if len(f.calls("GetSecret")) != 0 {
+		t.Fatal("Load read a secret from one of many items")
+	}
+}
+
+func TestCompletedSignal(t *testing.T) {
+	const (
+		owner  = ":1.42"
+		prompt = dbus.ObjectPath("/org/freedesktop/secrets/prompt/p1")
+		name   = "org.freedesktop.Secret.Prompt.Completed"
+	)
+	result := dbus.MakeVariant(dbus.ObjectPath("/item"))
+	good := func() *dbus.Signal {
+		return &dbus.Signal{Sender: owner, Path: prompt, Name: name, Body: []any{false, result}}
+	}
+	tests := []struct {
+		name         string
+		sig          func() *dbus.Signal
+		owner        string
+		wantRelevant bool
+		wantErr      error
+		wantDismiss  bool
+	}{
+		{"from the service", good, owner, true, nil, false},
+		{"dismissed", func() *dbus.Signal {
+			sig := good()
+			sig.Body[0] = true
+			return sig
+		}, owner, true, nil, true},
+		{"another sender with the prompt's path", func() *dbus.Signal {
+			sig := good()
+			sig.Sender = ":1.666"
+			return sig
+		}, owner, false, nil, false},
+		{"another sender with a malformed body", func() *dbus.Signal {
+			sig := good()
+			sig.Sender = ":1.666"
+			sig.Body = []any{"junk"}
+			return sig
+		}, owner, false, nil, false},
+		{"no sender", func() *dbus.Signal {
+			sig := good()
+			sig.Sender = ""
+			return sig
+		}, owner, false, nil, false},
+		{"owner unknown", good, "", false, nil, false},
+		{"another prompt", func() *dbus.Signal {
+			sig := good()
+			sig.Path = "/org/freedesktop/secrets/prompt/p2"
+			return sig
+		}, owner, false, nil, false},
+		{"another signal", func() *dbus.Signal {
+			sig := good()
+			sig.Name = "org.freedesktop.Secret.Prompt.Other"
+			return sig
+		}, owner, false, nil, false},
+		{"body of the wrong length", func() *dbus.Signal {
+			sig := good()
+			sig.Body = []any{false}
+			return sig
+		}, owner, true, errMalformedSignal, false},
+		{"body of the wrong types", func() *dbus.Signal {
+			sig := good()
+			sig.Body = []any{"no", result}
+			return sig
+		}, owner, true, errMalformedSignal, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, relevant, err := completedSignal(tt.sig(), prompt, tt.owner)
+			if relevant != tt.wantRelevant || !errors.Is(err, tt.wantErr) || (err == nil) != (tt.wantErr == nil) {
+				t.Fatalf("completedSignal = relevant %v, err %v; want relevant %v, err %v", relevant, err, tt.wantRelevant, tt.wantErr)
+			}
+			if tt.wantRelevant && tt.wantErr == nil {
+				if got.dismissed != tt.wantDismiss || got.result.Value() != result.Value() {
+					t.Fatalf("completion = %+v, want dismissed %v and the signal's result", got, tt.wantDismiss)
+				}
+			}
+		})
 	}
 }

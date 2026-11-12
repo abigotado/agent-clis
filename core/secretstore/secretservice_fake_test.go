@@ -26,6 +26,9 @@ type fakeSS struct {
 	// Behaviour switches.
 	refuseDH     bool // OpenSession(dh) answers NotSupported
 	keepOnCreate bool // CreateItem ignores replace and keeps duplicates
+	// readdOnDelete makes every Delete of an item add a new item with the same
+	// attributes, like a writer that keeps recreating it.
+	readdOnDelete bool
 	// unlockPrompt, when set, is the prompt Unlock returns; the objects are
 	// unlocked when it completes.
 	unlockPrompt dbus.ObjectPath
@@ -36,6 +39,11 @@ type fakeSS struct {
 	pendingNew   *fakeSSItem // an item CreateItem made once its prompt completes
 	// stayLocked makes a completed unlock prompt leave the objects locked.
 	stayLocked bool
+
+	// vanishOn names a method (Get or Delete) on which the item it is called on
+	// is removed by someone else first, so the call answers NoSuchObject and
+	// later searches no longer find the item.
+	vanishOn string
 
 	// Hooks and errors.
 	errs      map[string]error // method name -> error to return
@@ -182,6 +190,10 @@ func (b *fakeBus) call(ctx context.Context, path dbus.ObjectPath, method string,
 		f.record("Get:%s:%v", path, args[1])
 	default:
 		f.record("%s:%s", short, path)
+	}
+	if short == f.vanishOn {
+		f.removeItem(path)
+		return nil, dbusError(errNameNoSuchObject)
 	}
 	if err, ok := f.errs[short]; ok {
 		return nil, err
@@ -379,6 +391,9 @@ func (f *fakeSS) deleteItem(path dbus.ObjectPath) ([]any, error) {
 		return []any{f.deletePrompt}, nil
 	}
 	f.removeItem(path)
+	if f.readdOnDelete {
+		f.addItem(it.attrs, it.value)
+	}
 	return []any{noObject}, nil
 }
 

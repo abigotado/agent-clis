@@ -13,12 +13,15 @@ import (
 // Service logic: secretservice.go decides what is asked and how errors
 // classify.
 
-var errMalformedSignal = errors.New("secretstore: malformed Completed signal")
+var errNoServiceOwner = errors.New("secretstore: the Secret Service name has no unique owner")
 
 // dbusConn is one private session bus connection with authentication and
 // Hello done.
 type dbusConn struct {
 	conn *dbus.Conn
+	// owner is the unique name of the Secret Service, resolved by the first
+	// watchCompleted and kept for the life of the connection.
+	owner string
 }
 
 var _ ssBus = (*dbusConn)(nil)
@@ -108,10 +111,35 @@ func (c *dbusConn) close() {
 	_ = c.conn.Close()
 }
 
+// serviceOwner resolves the unique name behind the Secret Service name, once
+// per connection. A signal is accepted only from this name.
+func (c *dbusConn) serviceOwner(ctx context.Context) (string, error) {
+	if c.owner != "" {
+		return c.owner, nil
+	}
+	var owner string
+	call := c.conn.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.GetNameOwner", 0, serviceDest)
+	if call.Err != nil {
+		return "", call.Err
+	}
+	if err := call.Store(&owner); err != nil {
+		return "", err
+	}
+	if owner == "" {
+		return "", errNoServiceOwner
+	}
+	c.owner = owner
+	return owner, nil
+}
+
 func (c *dbusConn) watchCompleted(ctx context.Context, prompt dbus.ObjectPath) (ssWatch, error) {
+	owner, err := c.serviceOwner(ctx)
+	if err != nil {
+		return nil, err
+	}
 	signals := make(chan *dbus.Signal, 16)
 	c.conn.Signal(signals)
-	err := c.conn.AddMatchSignalContext(ctx,
+	err = c.conn.AddMatchSignalContext(ctx,
 		dbus.WithMatchSender(serviceDest),
 		dbus.WithMatchObjectPath(prompt),
 		dbus.WithMatchInterface(ifacePrompt),
@@ -121,7 +149,7 @@ func (c *dbusConn) watchCompleted(ctx context.Context, prompt dbus.ObjectPath) (
 		c.conn.RemoveSignal(signals)
 		return nil, err
 	}
-	return &dbusWatch{conn: c.conn, prompt: prompt, signals: signals}, nil
+	return &dbusWatch{conn: c.conn, prompt: prompt, owner: owner, signals: signals}, nil
 }
 
 // dbusWatch is a Completed subscription on a private connection. The match rule
@@ -129,6 +157,7 @@ func (c *dbusConn) watchCompleted(ctx context.Context, prompt dbus.ObjectPath) (
 type dbusWatch struct {
 	conn    *dbus.Conn
 	prompt  dbus.ObjectPath
+	owner   string
 	signals chan *dbus.Signal
 }
 
@@ -139,18 +168,11 @@ func (w *dbusWatch) wait(ctx context.Context) (ssCompletion, error) {
 			if !ok {
 				return ssCompletion{}, dbus.ErrClosed
 			}
-			if signal.Path != w.prompt || signal.Name != ifacePrompt+".Completed" {
+			completion, relevant, err := completedSignal(signal, w.prompt, w.owner)
+			if !relevant {
 				continue
 			}
-			if len(signal.Body) != 2 {
-				return ssCompletion{}, errMalformedSignal
-			}
-			dismissed, ok1 := signal.Body[0].(bool)
-			result, ok2 := signal.Body[1].(dbus.Variant)
-			if !ok1 || !ok2 {
-				return ssCompletion{}, errMalformedSignal
-			}
-			return ssCompletion{dismissed: dismissed, result: result}, nil
+			return completion, err
 		case <-ctx.Done():
 			return ssCompletion{}, ctx.Err()
 		}

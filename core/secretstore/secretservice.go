@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,8 +41,13 @@ const (
 	// dismissTimeout bounds the Dismiss call made after the context ended, which
 	// runs on a context that no longer carries the cancellation.
 	dismissTimeout = 2 * time.Second
-	// maxSearchResults bounds the item paths one search reply is read for.
+	// maxSearchResults bounds the item paths one search reply is read for. A
+	// longer reply is cut, so more than one item is always seen as more than
+	// one: Load reports corruption and Exists reports true.
 	maxSearchResults = 64
+	// maxRemoveRounds bounds the search-and-delete rounds that remove every item
+	// of a key. Each round removes at most maxSearchResults items.
+	maxRemoveRounds = 8
 )
 
 const (
@@ -125,6 +131,8 @@ type busEndpoint struct {
 	abstract bool
 	name     string // a filesystem path, or an abstract socket name
 }
+
+var errMalformedSignal = errors.New("secretstore: malformed Completed signal")
 
 var errBusAddress = errors.New("secretstore: session bus address is not a usable unix address")
 
@@ -411,6 +419,31 @@ func (s *secretServiceStore) runPrompt(ctx context.Context, bus ssBus, op string
 	return completion.result, nil
 }
 
+// completedSignal reads sig as the Completed signal of prompt sent by owner,
+// the unique bus name that owns the Secret Service. A signal about another
+// prompt or from another sender is not relevant: any bus client can emit a
+// signal with a prompt's path, but the bus sets the sender, so only the
+// service's own signal may complete a prompt or dismiss it. The sender is
+// checked before the body, so another client cannot fail the wait with a
+// malformed one.
+func completedSignal(sig *dbus.Signal, prompt dbus.ObjectPath, owner string) (completion ssCompletion, relevant bool, err error) {
+	if sig.Path != prompt || sig.Name != ifacePrompt+".Completed" {
+		return ssCompletion{}, false, nil
+	}
+	if owner == "" || sig.Sender != owner {
+		return ssCompletion{}, false, nil
+	}
+	if len(sig.Body) != 2 {
+		return ssCompletion{}, true, errMalformedSignal
+	}
+	dismissed, ok1 := sig.Body[0].(bool)
+	result, ok2 := sig.Body[1].(dbus.Variant)
+	if !ok1 || !ok2 {
+		return ssCompletion{}, true, errMalformedSignal
+	}
+	return ssCompletion{dismissed: dismissed, result: result}, true, nil
+}
+
 // dismiss asks the provider to close a prompt this process started or was
 // handed. It is best effort and runs on a context that outlives the
 // cancellation of ctx, bounded by dismissTimeout.
@@ -487,16 +520,57 @@ func (s *secretServiceStore) Delete(ctx context.Context, key Key) error {
 	if err != nil {
 		return err
 	}
-	items, err := s.search(ctx, bus, "delete", collection, key)
+	return s.removeMatching(ctx, bus, "delete", collection, key, noObject)
+}
+
+// removeMatching deletes every item with key's attributes except keep. A search
+// is cut at maxSearchResults, so it searches and deletes again until a search
+// finds nothing to delete. Matches that survive maxRemoveRounds rounds, because
+// the provider keeps them or something keeps adding them, are
+// ReasonTooManyMatches and not a success.
+func (s *secretServiceStore) removeMatching(ctx context.Context, bus ssBus, op string, collection dbus.ObjectPath, key Key, keep dbus.ObjectPath) error {
+	for range maxRemoveRounds {
+		removed, err := s.removeRound(ctx, bus, op, collection, key, keep)
+		if err != nil {
+			return err
+		}
+		if !removed {
+			return nil
+		}
+	}
+	// The last round may have removed the last of them; only a search can tell.
+	rest, err := s.searchOthers(ctx, bus, op, collection, key, keep)
 	if err != nil {
 		return err
 	}
-	for _, item := range items {
-		if err := s.deleteItem(ctx, bus, "delete", item); err != nil {
-			return err
-		}
+	if len(rest) > 0 {
+		return s.fail(op, KindOther, ReasonTooManyMatches)
 	}
 	return nil
+}
+
+// searchOthers returns the matches of key other than keep.
+func (s *secretServiceStore) searchOthers(ctx context.Context, bus ssBus, op string, collection dbus.ObjectPath, key Key, keep dbus.ObjectPath) ([]dbus.ObjectPath, error) {
+	items, err := s.search(ctx, bus, op, collection, key)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(items, func(item dbus.ObjectPath) bool { return item == keep }), nil
+}
+
+// removeRound deletes one search's matches other than keep and reports whether
+// there were any.
+func (s *secretServiceStore) removeRound(ctx context.Context, bus ssBus, op string, collection dbus.ObjectPath, key Key, keep dbus.ObjectPath) (bool, error) {
+	items, err := s.searchOthers(ctx, bus, op, collection, key, keep)
+	if err != nil {
+		return false, err
+	}
+	for _, item := range items {
+		if err := s.deleteItem(ctx, bus, op, item); err != nil {
+			return false, err
+		}
+	}
+	return len(items) > 0, nil
 }
 
 // deleteItem removes one item. An item that is already gone is a success.
@@ -621,6 +695,7 @@ func (s *secretServiceStore) openDHSession(ctx context.Context, bus ssBus, op st
 	if err != nil {
 		return nil, s.fail(op, KindOther, ReasonOther)
 	}
+	defer pair.wipe()
 	body, err := bus.call(ctx, servicePath, methodOpenSession, dhAlgorithm, dbus.MakeVariant(pair.pub))
 	if err != nil {
 		return nil, s.failure(op, err)
@@ -808,19 +883,7 @@ func (s *secretServiceStore) removeOthers(ctx context.Context, bus ssBus, collec
 	if keep == noObject {
 		return nil
 	}
-	items, err := s.search(ctx, bus, "save", collection, key)
-	if err != nil {
-		return err
-	}
-	for _, item := range items {
-		if item == keep {
-			continue
-		}
-		if err := s.deleteItem(ctx, bus, "save", item); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.removeMatching(ctx, bus, "save", collection, key, keep)
 }
 
 // openSecretService builds the store over the session bus at addr and checks

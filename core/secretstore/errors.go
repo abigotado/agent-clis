@@ -84,6 +84,9 @@ const (
 	ReasonNoSession      Reason = "no-session"
 	ReasonNoSuchObject   Reason = "no-such-object"
 	ReasonAccessDenied   Reason = "access-denied"
+	// ReasonTooManyMatches means items for one key were still there after the
+	// bounded number of removal rounds.
+	ReasonTooManyMatches Reason = "too-many-matches"
 	ReasonOther          Reason = "other"
 )
 
@@ -91,7 +94,7 @@ func (r Reason) known() bool {
 	switch r {
 	case ReasonServiceUnknown, ReasonNameHasNoOwner, ReasonNoReply,
 		ReasonNotSupported, ReasonIsLocked, ReasonNoSession,
-		ReasonNoSuchObject, ReasonAccessDenied, ReasonOther:
+		ReasonNoSuchObject, ReasonAccessDenied, ReasonTooManyMatches, ReasonOther:
 		return true
 	default:
 		return false

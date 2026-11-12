@@ -309,3 +309,20 @@ func TestDHDecryptFailuresAreOneError(t *testing.T) {
 		}
 	})
 }
+
+func TestDHKeyPairWipeZeroesTheExponent(t *testing.T) {
+	pair, err := newDHKeyPair(rand.Reader)
+	if err != nil {
+		t.Fatalf("newDHKeyPair: %v", err)
+	}
+	words := pair.priv.Bits()
+	if len(words) == 0 {
+		t.Fatal("a fresh exponent has no words, so the test could not tell a wipe from nothing")
+	}
+	pair.wipe()
+	for i, w := range words {
+		if w != 0 {
+			t.Fatalf("exponent word %d is %#x after wipe", i, w)
+		}
+	}
+}

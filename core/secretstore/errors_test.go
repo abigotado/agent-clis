@@ -98,6 +98,7 @@ func TestReasonSetIsClosed(t *testing.T) {
 		ReasonNoSession:      "no-session",
 		ReasonNoSuchObject:   "no-such-object",
 		ReasonAccessDenied:   "access-denied",
+		ReasonTooManyMatches: "too-many-matches",
 		ReasonOther:          "other",
 	}
 	for reason, text := range want {
