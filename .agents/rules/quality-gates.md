@@ -19,16 +19,21 @@ Install it once per clone:
 .githooks/install
 ```
 
-This sets `core.hooksPath`. Installing and uninstalling mutate local Git config
-and are the developer's decision, never the agent's — which is why they sit in
-`ask`, not `allow`, in `.agents/permissions.toml`.
+This sets `core.hooksPath`. Installing only restores the repository's own gate,
+so `.githooks/install` is in `allow` in `.agents/permissions.toml` and an agent
+may run it in a new clone or worktree. Uninstalling removes the gate and stays
+the developer's decision, never the agent's, which is why
+`.githooks/uninstall` sits in `ask`.
 
 A worktree whose config carries an inherited `core.hooksPath` needs
 `git config --worktree core.hooksPath .githooks`: `.githooks/install` uses
 `--local`, which the worktree value overrides. Without it the worktree can run
 another checkout's hook.
 
-`git push --no-verify` and `git config --local core.hooksPath` are denied. The
+`git push --no-verify` and `git config --local core.hooksPath` are denied; the
+`--local` spelling stays denied even when it would point at `.githooks`, so the
+two ways to restore the hook are `.githooks/install` and the `--worktree` form
+above. The
 `pre_push_guard` hook in `.agents/hooks.toml` is the real enforcement: prefix
 rules cannot cover every spelling, so the guard parses the command. Do not work
 around it — if the gate is wrong, fix the gate.

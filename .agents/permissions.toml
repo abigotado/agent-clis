@@ -67,39 +67,31 @@ ask = [
 # entry here. The boundary is that an unlisted command falls through to a
 # prompt in `default` mode, plus the Codex read-only/workspace sandbox profiles.
 deny = [
-  # Local credentials. Read, Write, and Edit are kept symmetric: denying only
-  # Read would still let a blanket-allowed Write clobber a credential file.
+  # Local credentials. Read and Edit are kept symmetric: denying only Read
+  # would still let a blanket-allowed Write clobber a credential file. An
+  # `Edit(...)` deny also covers Write, MultiEdit and NotebookEdit; a
+  # `Write(...)` deny parses in Claude and matches nothing, so strict
+  # validation (providers/claude.toml) refuses one.
   # YouTrack tokens belong in the OS keychain, never on disk
   # in the repo — see .agents/rules/secrets.md.
   "Read(./.env*)",
   "Read(./**/.env*)",
-  "Write(./.env*)",
-  "Write(./**/.env*)",
   "Edit(./.env*)",
   "Edit(./**/.env*)",
   "Read(./.netrc)",
-  "Write(./.netrc)",
   "Edit(./.netrc)",
   "Read(./*.pem)",
   "Read(./**/*.pem)",
-  "Write(./*.pem)",
-  "Write(./**/*.pem)",
   "Edit(./*.pem)",
   "Edit(./**/*.pem)",
   # Compiler-owned generated mirrors. Listed as concrete generated paths rather
   # than a blanket `.claude/**`, because git worktrees live under
   # `.claude/worktrees/` and must stay editable.
-  "Write(./.claude/agents/**)",
-  "Write(./.claude/rules/**)",
-  "Write(./.claude/hooks/**)",
-  "Write(./.claude/skills/**)",
-  "Write(./.claude/settings.json)",
   "Edit(./.claude/agents/**)",
   "Edit(./.claude/rules/**)",
   "Edit(./.claude/hooks/**)",
   "Edit(./.claude/skills/**)",
   "Edit(./.claude/settings.json)",
-  "Write(./.codex/**)",
   "Edit(./.codex/**)",
   # Destructive git and filesystem prefixes, including common spellings.
   "Bash(git reset --hard:*)",

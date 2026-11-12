@@ -1,9 +1,21 @@
+# Each role pins `claude_effort` to the level the operator's delegation table
+# gives it, so a call that omits `effort` runs at that level rather than being
+# refused. A pin is a fixed level, not a floor: a plan under the plan gate, a
+# security or auth change, and a contract migration still pass `effort: xhigh`
+# at spawn. No role caps its turns: a capped subagent stops without a report,
+# and a reviewer stopped that way records no review.
+#
+# Only the orchestrator lists `Agent`. A Claude subagent cannot start another
+# subagent, so the tool is useful only when the orchestrator is the main-thread
+# agent (`claude --agent orchestrator`); Codex delegation depth comes from
+# `providers/codex.toml`, not from this list.
+
 [agents.orchestrator]
 description = "Coordinate non-trivial agent-clis work through planning, advisory review, implementation, tests, review, and an independent second opinion."
 prompt_file = "agents/orchestrator.md"
 claude_model = "opus"
+claude_effort = "high"
 claude_tools = ["Read", "Grep", "Glob", "Bash", "Agent"]
-claude_max_turns = 30
 codex_model = "gpt-5.6-sol"
 codex_reasoning_effort = "high"
 read_only = true
@@ -12,8 +24,8 @@ read_only = true
 description = "Produce dependency-ordered agent-clis implementation plans without editing files."
 prompt_file = "agents/planner.md"
 claude_model = "opus"
-claude_tools = ["Read", "Grep", "Glob", "Bash", "Agent"]
-claude_max_turns = 18
+claude_effort = "high"
+claude_tools = ["Read", "Grep", "Glob", "Bash"]
 codex_model = "gpt-5.6-sol"
 codex_reasoning_effort = "high"
 read_only = true
@@ -22,8 +34,8 @@ read_only = true
 description = "Read-only adversarial review of an agent-clis implementation plan before any code is written."
 prompt_file = "agents/advisor.md"
 claude_model = "opus"
+claude_effort = "high"
 claude_tools = ["Read", "Grep", "Glob", "Bash"]
-claude_max_turns = 18
 codex_model = "gpt-5.6-sol"
 codex_reasoning_effort = "high"
 read_only = true
@@ -32,8 +44,8 @@ read_only = true
 description = "Trace agent-clis packages, commands, tests, and existing patterns with file and line evidence."
 prompt_file = "agents/explorer.md"
 claude_model = "haiku"
+claude_effort = "medium"
 claude_tools = ["Read", "Grep", "Glob", "Bash"]
-claude_max_turns = 20
 codex_model = "gpt-5.6-terra"
 codex_reasoning_effort = "medium"
 read_only = true
@@ -42,38 +54,38 @@ read_only = true
 description = "Implement scoped Go changes in agent-clis after planning."
 prompt_file = "agents/coder.md"
 claude_model = "sonnet"
+claude_effort = "medium"
 claude_tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"]
-claude_max_turns = 40
 codex_model = "gpt-5.6-terra"
-codex_reasoning_effort = "high"
+codex_reasoning_effort = "medium"
 read_only = false
 
 [agents.test-writer]
 description = "Add focused agent-clis table-driven unit tests and httptest boundary tests for changed behavior."
 prompt_file = "agents/test-writer.md"
 claude_model = "sonnet"
+claude_effort = "medium"
 claude_tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"]
-claude_max_turns = 28
 codex_model = "gpt-5.6-terra"
-codex_reasoning_effort = "high"
+codex_reasoning_effort = "medium"
 read_only = false
 
 [agents.cli-contract-guardian]
 description = "Validate agent-clis exit codes, JSON envelope, flag naming, and package dependency direction against silent breaking changes."
 prompt_file = "agents/cli-contract-guardian.md"
 claude_model = "sonnet"
+claude_effort = "high"
 claude_tools = ["Read", "Grep", "Glob", "Bash"]
-claude_max_turns = 20
 codex_model = "gpt-5.6-terra"
-codex_reasoning_effort = "medium"
+codex_reasoning_effort = "high"
 read_only = true
 
 [agents.reviewer]
 description = "Review agent-clis changes for correctness, architecture, regressions, and missing tests."
 prompt_file = "agents/reviewer.md"
 claude_model = "opus"
+claude_effort = "xhigh"
 claude_tools = ["Read", "Grep", "Glob", "Bash"]
-claude_max_turns = 18
 codex_model = "gpt-5.6-sol"
 codex_reasoning_effort = "high"
 read_only = true
@@ -82,8 +94,8 @@ read_only = true
 description = "Independent second-opinion review of completed agent-clis changes; findings first, no implementation."
 prompt_file = "agents/adversarial-review.md"
 claude_model = "opus"
+claude_effort = "high"
 claude_tools = ["Read", "Grep", "Glob", "Bash"]
-claude_max_turns = 18
 codex_model = "gpt-5.6-sol"
 codex_reasoning_effort = "high"
 read_only = true

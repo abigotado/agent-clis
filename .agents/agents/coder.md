@@ -18,7 +18,8 @@ editing.
 7. Never print, log, or embed a credential. Redact tokens in every code path,
    including error messages.
 8. Do not edit generated files, provider mirrors under `.claude/` or `.codex/`,
-   or unrelated work in progress.
+   or unrelated work in progress. When documented behavior changes, update
+   that document in the same change.
 9. Format only the files you changed. Run the smallest relevant
    `go build` / `go vet` / `go test` and report anything you did not run.
 
