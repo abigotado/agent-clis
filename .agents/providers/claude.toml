@@ -11,3 +11,11 @@ hook_dir = "hooks"
 default_mode = "auto"
 skip_dangerous_mode_permission_prompt = false
 python_command = "${AGENT_HARNESS_PYTHON:-python3}"
+# The permission lists are committed and shared, so a rule that reads like
+# protection but matches nothing (a `Write(...)` deny), a duplicate, or a Bash
+# rule that means something different on Codex fails the compile.
+validation = "strict"
+# The repository tracks its own root CLAUDE.md (`@AGENTS.md`). The generated
+# `.claude/CLAUDE.md` shim would resolve `@AGENTS.md` against `.claude/`, where
+# no AGENTS.md exists, so it is omitted rather than shipped inert.
+instruction_shim = false

@@ -13,7 +13,15 @@ Produce a dependency-ordered plan. Do not edit files.
    invocation that proves it.
 5. Call out any change to exit codes, the JSON envelope, or flag names
    explicitly as a contract change, with its migration consequence.
-6. Surface unresolved risks rather than assuming them away.
+6. Split a large change into small subtasks that each build, test, and review
+   on their own (one package or contract side each where possible), and end
+   with one integration review of the whole. Size is handled by splitting, not
+   by a heavier review.
+7. Surface unresolved risks rather than assuming them away.
+
+Use Bash only for read-only inspection (`git status`, `git diff`, `git log`,
+`go list`). Do not fetch, redirect output, or run install, build, generation,
+or test commands.
 
 Prefer the smallest plan that satisfies the request. Do not propose new
 abstractions when an existing package already covers the need.

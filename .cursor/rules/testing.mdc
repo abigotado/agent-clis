@@ -27,6 +27,12 @@ touched-schema refusal; durable exclusive/concurrent claim protection; and
 verified-write local/output failures distinct from unknown outcomes. Capabilities
 report configuration, never server permission.
 
+Time is injected, never waited on: do not assert on elapsed real time, sleep to
+wait for something, or set a real timeout near what the work takes. Use a
+controlled clock or fire the timeout at the boundary; a real timeout is only a
+hang guard. When writing or converting a test, break the code on purpose once
+and see it fail.
+
 Exit codes and envelope shape are contract tests. Before review, inside each
 changed module with `GOWORK=off`, run `gofmt -l $(git ls-files '*.go')` (it must
 print nothing), `go vet ./...`, and `go test -race ./...`.

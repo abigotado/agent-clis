@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Point this clone's Git hooks at .githooks/.
 #
-# This mutates local Git config, so it is the developer's decision and never the
-# agent's — see .agents/rules/quality-gates.md.
+# It sets the local core.hooksPath, replacing any hooks directory set there. An
+# agent may run it where no hooks path is set; a custom hooks directory is the
+# developer's to chain, and `uninstall` stays the developer's call. See
+# .agents/rules/quality-gates.md.
 set -euo pipefail
 
 repo_root=$(git rev-parse --show-toplevel)

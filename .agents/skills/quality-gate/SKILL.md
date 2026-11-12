@@ -39,5 +39,10 @@ Report the exact command and outcome for each. Name anything you did not run
 and say why. Never describe an untouched surface as green, and never report a
 gate as passing on the strength of a previous run.
 
-Do not install or uninstall the Git hook — `.githooks/install` mutates local
-Git config and is the developer's decision.
+If the hook is not installed in this clone (`git config --get core.hooksPath`
+prints nothing), `.githooks/install` installs it; a worktree whose inherited
+`core.hooksPath` points at another checkout's `.githooks` takes
+`git config --worktree core.hooksPath .githooks`. A custom hooks directory is
+the developer's to chain: report it rather than overwrite it. Never uninstall
+the hook: `.githooks/uninstall` removes the gate and is the developer's
+decision.
