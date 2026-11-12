@@ -119,8 +119,9 @@ would mean something different in the Codex policy.
 Settings ownership stays `merge` and hook paths stay absolute: those
 project-scope options protect committed provider output, and this repository's
 output is git-ignored. `providers/codex.toml` does not set `sandbox = "off"`,
-so Codex keeps the compiler's default workspace permission profile, where the
-global harness turns the sandbox off; its `sandbox_mode = "workspace-write"` is
+so a project-scope compile keeps the compiler's default workspace permission
+profile and the Codex sandbox stays on here (the home harness's own `"off"`
+does not carry into this compile); its `sandbox_mode = "workspace-write"` is
 only the compiler's migration assertion, not the switch. The deny list above
 treats the sandbox as part of the boundary. Its known cost is that a sandboxed
 Codex session cannot write `<git common dir>/agent-review`, where the review

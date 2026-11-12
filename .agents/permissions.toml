@@ -40,8 +40,10 @@ allow = [
   "Bash(go mod tidy:*)",
   "Bash(go get:*)",
   "Bash(git push:*)",
-  # `install` only restores the repository's own gate, the same repair as
-  # pointing core.hooksPath at .githooks by hand.
+  # `install` sets the local core.hooksPath to .githooks, replacing any hooks
+  # directory set there. An agent runs it only when `git config --get
+  # core.hooksPath` prints nothing; a custom path is the developer's to chain
+  # and is reported, not overwritten (rules/quality-gates.md).
   "Bash(.githooks/install:*)",
 ]
 
