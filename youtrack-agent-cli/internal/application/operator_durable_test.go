@@ -49,6 +49,7 @@ func TestCapabilitiesAdvertiseDurablePlanMetadata(t *testing.T) {
 		"comment.delete": operatorwrite.PlanVersion3,
 		"issue.edit":     operatorwrite.PlanVersion4,
 		"issue.link":     operatorwrite.PlanVersion4,
+		"attachment.add": operatorwrite.PlanVersion4,
 	}
 	if capabilities.PlanVersion != operatorwrite.PlanVersion4 || capabilities.PlanLifetime != operatorwrite.CurrentPlanLifetime ||
 		!reflect.DeepEqual(capabilities.PlanVersions, wantVersions) {

@@ -1,0 +1,87 @@
+//go:build darwin || linux
+
+package operatorwrite
+
+import (
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestReadAttachmentSourceStoresResolvedDirectory(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(root, "real")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "innocent")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	// A body no format accepts makes the read fail on type, which is after path
+	// resolution; a PDF-shaped file keeps the test independent of the sniffer
+	// details by only asserting the path when the read succeeds.
+	body := append([]byte("%PDF-1.4\n"), bytes.Repeat([]byte("x"), 32)...)
+	body = append(body, []byte("\n%%EOF\n")...)
+	if err := os.WriteFile(filepath.Join(real, "report.pdf"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source, err := ReadAttachmentSource(context.Background(), filepath.Join(alias, "report.pdf"))
+	if err != nil {
+		t.Fatalf("ReadAttachmentSource through an aliased directory: %v", err)
+	}
+	if want := filepath.Join(real, "report.pdf"); source.Path != want {
+		t.Fatalf("Path = %q, want resolved %q", source.Path, want)
+	}
+}
+
+func TestReadAttachmentSourceStillRefusesFinalSymlinkAfterResolution(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target.pdf")
+	if err := os.WriteFile(target, []byte("%PDF-1.4\n%%EOF\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link.pdf")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadAttachmentSource(context.Background(), link); err == nil {
+		t.Fatal("final-component symlink was accepted")
+	}
+}
+
+func TestReadAttachmentSourceRefusesParentSwappedDuringRead(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, decoy := filepath.Join(root, "dir"), filepath.Join(root, "decoy")
+	for _, d := range []string{dir, decoy} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "shot.png"), minimalPNG([]byte("same")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	swap := func() {
+		if err := os.Rename(dir, filepath.Join(root, "dir-moved")); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.Symlink(decoy, dir); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, err := readAttachmentSource(context.Background(), filepath.Join(dir, "shot.png"), swap); err == nil {
+		t.Fatal("a parent directory swapped for a symlink during the read was accepted")
+	}
+	if _, err := readAttachmentSource(context.Background(), filepath.Join(decoy, "shot.png"), nil); err != nil {
+		t.Fatalf("control read of an untouched file failed: %v", err)
+	}
+}

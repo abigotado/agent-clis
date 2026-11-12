@@ -77,7 +77,7 @@ func TestIssueLinkSnapshotValidation(t *testing.T) {
 }
 
 func TestOtherKindsRefuseALink(t *testing.T) {
-	for _, kind := range []Kind{KindIssueUpdate, KindIssueEdit, KindCommentDelete, KindCommentAdd} {
+	for _, kind := range []Kind{KindIssueUpdate, KindIssueEdit, KindCommentDelete, KindCommentAdd, KindAttachmentAdd} {
 		t.Run(string(kind), func(t *testing.T) {
 			var s Snapshot
 			switch kind {
@@ -85,6 +85,8 @@ func TestOtherKindsRefuseALink(t *testing.T) {
 				s = editSnapshot(t)
 			case KindCommentDelete:
 				s = testCommentDeleteSnapshot(t)
+			case KindAttachmentAdd:
+				s = attachmentSnapshot(t)
 			default:
 				s = testSnapshot(t, kind)
 			}

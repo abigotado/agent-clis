@@ -63,7 +63,7 @@ func TestIssueCreateUserFieldsCapabilityRequiresExplicitProfileChange(t *testing
 // TestCapabilityRanksAreDistinctAndAgreeWithTheCanonicalOrder fails a merge that
 // gives two capabilities one rank or leaves the validator's order out of step.
 func TestCapabilityRanksAreDistinctAndAgreeWithTheCanonicalOrder(t *testing.T) {
-	known := []Capability{CapabilityRead, CapabilityIssueCreate, CapabilityIssueUpdate, CapabilityCommentAdd, CapabilityCommentDelete, CapabilityIssueEdit, CapabilityIssueCreateUserFields, CapabilityIssueLink}
+	known := []Capability{CapabilityRead, CapabilityIssueCreate, CapabilityIssueUpdate, CapabilityCommentAdd, CapabilityCommentDelete, CapabilityIssueEdit, CapabilityIssueCreateUserFields, CapabilityIssueLink, CapabilityAttachmentAdd}
 	seen := map[int]Capability{}
 	for _, capability := range known {
 		rank := capabilityRank(capability)

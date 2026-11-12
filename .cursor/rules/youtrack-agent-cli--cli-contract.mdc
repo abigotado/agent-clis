@@ -175,6 +175,14 @@ Two hazards that are easy to reintroduce:
   `desired_link_observed_without_causal_proof`, `linked_issue_unavailable` (a
   linked issue answers 404 or an auth/permission refusal) or `inconclusive`,
   never a reconciled result. Older binaries refuse `issue.link` records.
+- `operator-write` kind `attachment.add` (additive) uploads one local file under
+  the new `attachment-add` capability (canonical rank 8: after `issue-link`); `capabilities` lists it
+  and its plan is `plan_version` 4. Snapshot flags `--file` and `--name` are
+  additive. New reasons: `OPERATOR_ATTACHMENT_TYPE_UNSUPPORTED`,
+  `OPERATOR_ATTACHMENT_SOURCE_INVALID`, `OPERATOR_ATTACHMENT_TOO_LARGE`,
+  `OPERATOR_ATTACHMENT_NAME_INVALID` and `OPERATOR_ATTACHMENT_NAME_EXISTS`
+  (exit 2); `OPERATOR_ATTACHMENT_SOURCE_STALE`, `OPERATOR_ATTACHMENT_STALE` and
+  `OPERATOR_ATTACHMENTS_TRUNCATED` (exit 9); reconcile code `ATTACHMENT_OBSERVED`.
 - Operator-write refusals with exit 2 carry stable `error.code` values
   `OPERATOR_FIELD_UNSUPPORTED`, `OPERATOR_FIELD_REQUIRED`,
   `OPERATOR_FIELD_ALREADY_EMPTY` and `OPERATOR_FIELD_ALREADY_SET`.
