@@ -168,7 +168,7 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 			if input.ProjectID != "" || input.CommentID != "" || len(fieldNames) != 0 || len(valueNames) != 0 || len(fieldIDs) != 0 || len(valueIDs) != 0 || len(clearNames) != 0 || len(clearIDs) != 0 || clearValue {
 				return errx.Usage("attachment.add snapshot takes only --id, --file, optional --name, and --out")
 			}
-		} else if input.FilePath != "" || input.AttachmentName != "" {
+		} else if changed("file", "name") {
 			return errx.Usage("--file and --name are accepted only with --kind attachment.add")
 		}
 		fields, err := operatorFieldSelections(input.Kind, fieldNames, valueNames, fieldIDs, valueIDs, clearNames, clearIDs, clearValue)

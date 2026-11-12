@@ -81,6 +81,12 @@ func TestAttachmentCLISnapshotFlagMatrix(t *testing.T) {
 	}{
 		{"file on comment.add", []string{"--kind", "comment.add", "--id", "APP-12", "--file", "x.png"}},
 		{"name on issue.edit", []string{"--kind", "issue.edit", "--id", "APP-12", "--name", "x.png"}},
+		{"empty file on issue.link", []string{"--kind", "issue.link", "--id", "APP-12", "--target-id", "APP-13", "--link-type", "Relates", "--file", ""}},
+		{"empty name on issue.link", []string{"--kind", "issue.link", "--id", "APP-12", "--target-id", "APP-13", "--link-type", "Relates", "--name", ""}},
+		{"file on issue.link", []string{"--kind", "issue.link", "--id", "APP-12", "--target-id", "APP-13", "--link-type", "Relates", "--file", "x.png"}},
+		{"empty name on comment.add", []string{"--kind", "comment.add", "--id", "APP-12", "--name", ""}},
+		{"link target on attachment.add", []string{"--kind", "attachment.add", "--id", "APP-12", "--file", "x.png", "--target-id", "APP-13"}},
+		{"direction on attachment.add", []string{"--kind", "attachment.add", "--id", "APP-12", "--file", "x.png", "--direction", "outward"}},
 		{"attachment without file", []string{"--kind", "attachment.add", "--id", "APP-12"}},
 		{"name without file", []string{"--kind", "attachment.add", "--id", "APP-12", "--name", "x.png"}},
 		{"with field", []string{"--kind", "attachment.add", "--id", "APP-12", "--file", "x.png", "--field", "Stage", "--value", "Done"}},
