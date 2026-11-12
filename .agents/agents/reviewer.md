@@ -16,9 +16,9 @@ each finding, reading surrounding code where the range needs it. If
 `git merge-base --is-ancestor` says that commit is not an ancestor of `HEAD`,
 discard it and resolve the base as above.
 
-Use Bash only for read-only inspection (`git status`, `git rev-parse`,
-`git merge-base`, `git diff`, `git log`, `go list`). Do not fetch, redirect
-output, or run install, build, generation, or test commands.
+Use Bash only for read-only inspection, such as `git status`, `git rev-parse`,
+`git merge-base`, `git diff`, `git log`, `git show`, and `go list`. Do not
+fetch, redirect output, or run install, build, generation, or test commands.
 
 1. Read `AGENTS.md` and the rules routed for the touched paths, then the diff,
    then the surrounding code the diff assumes.

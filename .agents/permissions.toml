@@ -27,10 +27,11 @@ allow = [
   "Bash(go install:*)",
   # Local and reversible, and a commit still passes the hook that keeps agent
   # and provider names out of published Git metadata. Sending it anywhere is
-  # `git push`, which stays in `ask` below.
+  # `git push`, allowed below but still checked by the pre-push gate.
   "Bash(git commit:*)",
-  # Running the gate is reading: gofmt, vet, build, test. Only `install` and
-  # `uninstall`, which mutate local Git config, stay in `ask`.
+  # Running the gate is reading: gofmt, vet, build, test. Of the scripts that
+  # change local Git config, `install` is allowed below and only `uninstall`
+  # stays in `ask`.
   "Bash(.githooks/pre-push:*)",
   # Ordinary unattended work: resolving Go module dependencies and publishing a
   # branch. These sat in `ask`, which on Codex compiles to a prefix rule and,
@@ -60,12 +61,15 @@ ask = [
 # absent from `ask`. They are prefixes of their own allowed `--check` forms, and
 # the Codex policy compiles `ask` into prefix rules while ignoring `allow`, so
 # an explicit entry would make the read-only checks prompt too. With no entry
-# they fall through to `default_mode = "default"`, which prompts anyway.
+# they fall through to the session's permission mode: the auto-mode classifier
+# under this repository's `default_mode = "auto"`, a prompt in `default`.
 
 # Deny is defense-in-depth, not the security boundary. Claude matches Bash
 # rules on literal command prefixes, so a rewritten equivalent bypasses any
-# entry here. The boundary is that an unlisted command falls through to a
-# prompt in `default` mode, plus the Codex read-only/workspace sandbox profiles.
+# entry here. The boundary is that an unlisted command falls through to the
+# session's permission mode (the auto-mode classifier under this repository's
+# `default_mode = "auto"`, a prompt in `default`), plus the Codex read-only and
+# workspace sandbox profiles.
 deny = [
   # Local credentials. Read and Edit are kept symmetric: denying only Read
   # would still let a blanket-allowed Write clobber a credential file. An

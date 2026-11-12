@@ -19,10 +19,12 @@ Install it once per clone:
 .githooks/install
 ```
 
-This sets `core.hooksPath`. Installing only restores the repository's own gate,
-so `.githooks/install` is in `allow` in `.agents/permissions.toml` and an agent
-may run it in a new clone or worktree. Uninstalling removes the gate and stays
-the developer's decision, never the agent's, which is why
+This sets the local `core.hooksPath` to `.githooks`, replacing any hooks
+directory set there. `.githooks/install` is in `allow` in
+`.agents/permissions.toml`: an agent may run it where the hook is not installed,
+meaning `git config --get core.hooksPath` prints nothing. A custom hooks
+directory is the developer's to chain, never the agent's to overwrite.
+Uninstalling removes the gate and stays the developer's decision, which is why
 `.githooks/uninstall` sits in `ask`.
 
 A worktree whose config carries an inherited `core.hooksPath` needs

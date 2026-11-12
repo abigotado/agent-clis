@@ -1,8 +1,10 @@
 # Each role pins `claude_effort` to the level the operator's delegation table
-# gives it, so a call that omits `effort` runs at that level rather than being
-# refused. A pin is a fixed level, not a floor: a plan under the plan gate, a
-# security or auth change, and a contract migration still pass `effort: xhigh`
-# at spawn. No role caps its turns: a capped subagent stops without a report,
+# gives it (the orchestrator and cli-contract-guardian have no row there; `high`
+# is a judgement), so a call that omits `effort` runs at that level rather than
+# being refused. A pin is a fixed level, not a floor, and a value passed at spawn
+# overrides it either way: a plan under the plan gate, a security or auth change,
+# and a contract migration pass `effort: xhigh`; a re-review after a fix passes
+# `model: sonnet` and `effort: medium`. No role caps its turns: a capped subagent stops without a report,
 # and a reviewer stopped that way records no review.
 #
 # Only the orchestrator lists `Agent`. A Claude subagent cannot start another

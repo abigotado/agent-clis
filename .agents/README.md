@@ -101,10 +101,13 @@ when a `PreToolUse` hook crashes, times out, or cannot find its interpreter.
 ## Agents and permissions
 
 Every role in `agents.toml` pins `claude_effort` to the level of the operator's
-delegation table, and none caps its turns: a capped subagent stops without a
-report, and a reviewer stopped that way records no review. A pin is a fixed
-level, not a floor, so a plan under the plan gate, a security or auth change,
-or a contract migration still passes `effort: xhigh` when it spawns the role.
+delegation table (the orchestrator and cli-contract-guardian have no row there,
+so theirs is a judgement), and none caps its turns: a capped subagent stops
+without a report, and a reviewer stopped that way records no review. A pin is a
+fixed level, not a floor, and a value passed at spawn overrides it either way: a
+plan under the plan gate, a security or auth change, or a contract migration
+passes `effort: xhigh`, and a re-review after a fix passes `model: sonnet` with
+`effort: medium`.
 `reviewer` and `adversarial-review` close with `Reviewed commit: <sha>` and a
 verdict line, which is what the review record is keyed to.
 
@@ -115,13 +118,15 @@ would mean something different in the Codex policy.
 
 Settings ownership stays `merge` and hook paths stay absolute: those
 project-scope options protect committed provider output, and this repository's
-output is git-ignored. The Codex profile keeps `sandbox_mode =
-"workspace-write"`, where the global harness runs Codex with no sandbox: the
-deny list above treats the sandbox as part of the boundary. Its known cost is
-that a sandboxed Codex session cannot write outside the workspace, which
-includes the review record under the main checkout's Git directory and the
-CLI's own state directory; record a Codex review from the session that started
-the job, or run that step outside the sandbox.
+output is git-ignored. `providers/codex.toml` does not set `sandbox = "off"`,
+so Codex keeps the compiler's default workspace permission profile, where the
+global harness turns the sandbox off; its `sandbox_mode = "workspace-write"` is
+only the compiler's migration assertion, not the switch. The deny list above
+treats the sandbox as part of the boundary. Its known cost is that a sandboxed
+Codex session cannot write `<git common dir>/agent-review`, where the review
+record lives (verified from a linked worktree), or the CLI's own state
+directory; record a Codex review from the session that started the job, or run
+that step outside the sandbox.
 
 ## Adding a rule
 
