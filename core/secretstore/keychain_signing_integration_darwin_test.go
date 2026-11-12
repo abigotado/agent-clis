@@ -68,7 +68,7 @@ import (
 var markerLinkerVariable = reflect.TypeFor[kctest.Keychain]().PkgPath() + "." + kctest.MarkerVariable
 
 const (
-	helperBuildTimeout    = 10 * time.Minute
+	helperBuildTimeout    = 5 * time.Minute
 	codesignPath          = "/usr/bin/codesign"
 	opensslPath           = "/usr/bin/openssl"
 	requireCertSigningEnv = "SECRETSTORE_REQUIRE_CERT_SIGNING"
@@ -368,7 +368,9 @@ func newBinarySet(t *testing.T, config kctest.Config) binarySet {
 		set.method = "ad hoc signatures with an identifier-only requirement"
 		reason := "no signing certificate could be used on this machine; the row \"a different certificate, same identifier\" did not run"
 		t.Logf("%s", reason)
-		fmt.Printf("::notice title=keychain integration::%s\n", reason)
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			fmt.Printf("::notice title=keychain integration::%s\n", reason)
+		}
 	}
 	t.Logf("helper binaries signed with: %s", set.method)
 

@@ -430,7 +430,10 @@ static OSStatus kt_sign(SecKeychainRef keychain, const char *common_name, const 
 			if (status == errSecSuccess) {
 				SecStaticCodeRef code = NULL;
 				status = SecStaticCodeCreateWithPath(url, kSecCSDefaultFlags, &code);
-				if (status == errSecSuccess && code != NULL) {
+				if (status == errSecSuccess && code == NULL) {
+					status = errSecInternalComponent;
+				}
+				if (status == errSecSuccess) {
 					status = SecCodeSignerAddSignature(signer, code, kSecCSDefaultFlags);
 					CFRelease(code);
 				}
@@ -675,13 +678,31 @@ func (k *Keychain) Path() string {
 	return k.path
 }
 
+// errClosed is returned by a method called on a closed or deleted keychain. A
+// NULL SecKeychainRef would make the Security calls act on the user's default
+// keychain, so no method reaches them without a live reference.
+var errClosed = errors.New("kctest: the keychain is closed or deleted")
+
+func (k *Keychain) live() error {
+	if k.ref == 0 {
+		return errClosed
+	}
+	return nil
+}
+
 // Lock locks the keychain.
 func (k *Keychain) Lock() error {
+	if err := k.live(); err != nil {
+		return err
+	}
 	return check("SecKeychainLock", C.SecKeychainLock(k.ref))
 }
 
 // Unlock unlocks the keychain with its password, without a prompt.
 func (k *Keychain) Unlock() error {
+	if err := k.live(); err != nil {
+		return err
+	}
 	cPassword := C.CString(k.password)
 	defer C.free(unsafe.Pointer(cPassword))
 	return check("SecKeychainUnlock", C.kt_unlock(k.ref, cPassword))
@@ -689,6 +710,9 @@ func (k *Keychain) Unlock() error {
 
 // Unlocked reports whether the keychain is unlocked.
 func (k *Keychain) Unlocked() (bool, error) {
+	if err := k.live(); err != nil {
+		return false, err
+	}
 	var unlocked C.int
 	if err := check("SecKeychainGetStatus", C.kt_unlocked(k.ref, &unlocked)); err != nil {
 		return false, err
@@ -829,6 +853,9 @@ func (e ACLEntry) String() string {
 // this keychain. It looks the item up by reference, so it decrypts nothing and
 // cannot show a prompt.
 func (k *Keychain) ACL(service, account string) ([]ACLEntry, error) {
+	if err := k.live(); err != nil {
+		return nil, err
+	}
 	cService := C.CString(service)
 	defer C.free(unsafe.Pointer(cService))
 	cAccount := C.CString(account)
@@ -896,6 +923,9 @@ func (k *Keychain) ImportPKCS12(data []byte, passphrase string) error {
 }
 
 func (k *Keychain) importItems(data []byte, pkcs12 bool, passphrase string) error {
+	if err := k.live(); err != nil {
+		return err
+	}
 	if len(data) == 0 {
 		return errors.New("kctest: nothing to import")
 	}
@@ -925,6 +955,9 @@ func (k *Keychain) importItems(data []byte, pkcs12 bool, passphrase string) erro
 // SecCodeSigner interface, which unlike /usr/bin/codesign accepts an identity
 // that is not trusted and not on the search list.
 func (k *Keychain) Sign(commonName, path, identifier string) error {
+	if err := k.live(); err != nil {
+		return err
+	}
 	cName := C.CString(commonName)
 	defer C.free(unsafe.Pointer(cName))
 	cPath := C.CString(path)

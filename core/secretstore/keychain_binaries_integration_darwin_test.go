@@ -43,6 +43,9 @@ import (
 //
 //	SECRETSTORE_REQUIRE_KEYCHAIN=1 go test -race -count=1 -v -tags keychainintegration \
 //	  -run '^TestKeychainAcrossBinaries$' ./secretstore
+//
+// Building and signing the helper binaries takes minutes on a cold cache, so add
+// -timeout 20m: go test's default of 10m is too close to a cold run.
 func TestKeychainAcrossBinaries(t *testing.T) {
 	s := newScratch(t)
 	config, err := kctest.Snapshot()
@@ -71,40 +74,33 @@ func TestKeychainAcrossBinaries(t *testing.T) {
 		f.expectLoad(t, f.binaries.a1, key, secret)
 	})
 
-	for _, foreign := range []struct {
-		name string
-		pick func(binarySet) testBinary
-	}{
-		// With no second certificate B differs by identifier, which is still
-		// another identity.
-		{"a program with another identity is denied", func(b binarySet) testBinary { return b.b }},
-		{"an ad hoc program is denied", func(b binarySet) testBinary { return b.adhoc }},
-	} {
-		t.Run(foreign.name, func(t *testing.T) {
-			key, secret := scratchKey(t), randomSecret(t)
-			f.save(t, f.binaries.a1, key, secret)
-			bin := foreign.pick(f.binaries)
-			r := f.invoke(t, helperCall{bin: bin, action: actionLoad, key: key})
-			r.want(t, "error", "access-denied")
-			r.want(t, "unlocked", "true")
-			// The refusal changed nothing.
-			f.expectLoad(t, f.binaries.a1, key, secret)
-			f.requireUnlocked(t)
-		})
+	// With certificates B is the same identifier under a different certificate;
+	// with the ad hoc fallback there is no second certificate, so B differs by
+	// identifier, which is still another identity. The fallback is announced when
+	// the binaries are signed and does not fail under SECRETSTORE_REQUIRE_KEYCHAIN.
+	foreignName := "a program with another identifier is denied"
+	if f.binaries.certificates {
+		foreignName = "a different certificate with the same identifier is denied"
 	}
-
-	t.Run("a different certificate with the same identifier is denied", func(t *testing.T) {
-		if !f.binaries.certificates {
-			// The documented gap of the ad hoc fallback, announced when the binaries
-			// are signed; it does not fail under SECRETSTORE_REQUIRE_KEYCHAIN.
-			t.Skipf("not run: %s", f.binaries.method)
-		}
+	t.Run(foreignName, func(t *testing.T) {
 		key, secret := scratchKey(t), randomSecret(t)
 		f.save(t, f.binaries.a1, key, secret)
 		r := f.invoke(t, helperCall{bin: f.binaries.b, action: actionLoad, key: key})
 		r.want(t, "error", "access-denied")
 		r.want(t, "unlocked", "true")
+		// The refusal changed nothing.
 		f.expectLoad(t, f.binaries.a1, key, secret)
+		f.requireUnlocked(t)
+	})
+
+	t.Run("an ad hoc program is denied", func(t *testing.T) {
+		key, secret := scratchKey(t), randomSecret(t)
+		f.save(t, f.binaries.a1, key, secret)
+		r := f.invoke(t, helperCall{bin: f.binaries.adhoc, action: actionLoad, key: key})
+		r.want(t, "error", "access-denied")
+		r.want(t, "unlocked", "true")
+		f.expectLoad(t, f.binaries.a1, key, secret)
+		f.requireUnlocked(t)
 	})
 
 	t.Run("two saves by a rebuild leave no stage for the original", func(t *testing.T) {
@@ -138,9 +134,26 @@ func TestKeychainAcrossBinaries(t *testing.T) {
 			r.want(t, "value", digestOf(newest))
 			r.want(t, "stage", "present")
 
-			// The next Save rolls the stage forward and leaves none.
-			f.save(t, f.binaries.a1, key, next)
-			f.expectLoad(t, f.binaries.a2, key, next)
+			// Load took the stage and changed nothing, so the next Save has the
+			// stage to roll forward. A Save of A1 that stops after its own first
+			// step has already rolled the stage forward, so the account item alone,
+			// which Load does not read while a stage exists, holds the newest value
+			// in every window: the old one there means the stage was discarded, a
+			// missing one that the roll-forward did not run.
+			call = helperCall{bin: f.binaries.a1, action: actionCrash, key: key, secrets: [][]byte{next}, step: 1}
+			rolled := f.start(t, call).finish(t)
+			rolled.verifyBinary(t, call.bin)
+			if rolled.exit != helperCrashExit {
+				t.Fatalf("the helper exited with %d, want the crash status %d\n%s", rolled.exit, helperCrashExit, rolled.describe())
+			}
+			account := f.invoke(t, helperCall{bin: f.binaries.a1, action: actionReadAccount, key: key})
+			account.want(t, "account_error", "none")
+			account.want(t, "account_value", digestOf(newest))
+
+			// The Save that was cut short is repeated and completes.
+			last := randomSecret(t)
+			f.save(t, f.binaries.a1, key, last)
+			f.expectLoad(t, f.binaries.a2, key, last)
 		})
 	}
 
@@ -191,6 +204,11 @@ func TestKeychainAcrossBinaries(t *testing.T) {
 		r.want(t, "load_error", "none")
 		r.want(t, "value", digestOf(secret))
 		r.want(t, "stage", "absent")
+		// A repair that rewrote the list before it was refused would list this
+		// binary; the item still names only the original's path.
+		if got := r.get(t, "acl_after_self"); got != "0" && got != "unreadable" {
+			t.Errorf("after the refused repair the item's access list names this binary %s time(s), want 0 (the list was rewritten)\n%s", got, r.describe())
+		}
 	})
 
 	t.Run("RepairAccess rewrites an item a rebuild can read to its own access list", func(t *testing.T) {
@@ -204,7 +222,10 @@ func TestKeychainAcrossBinaries(t *testing.T) {
 		// The helper dumped the list and checked it against rule 1 for the
 		// rebuild, whose path the item did not name before.
 		r.want(t, "acl", "rule1")
-		t.Logf("trusted-application count of the rebuild before the repair: %s", r.get(t, "acl_before_self"))
+		// The item was written by the original, so it did not name the rebuild.
+		if got := r.get(t, "acl_before_self"); got != "0" && got != "unreadable" {
+			t.Errorf("before the repair the item's access list names the rebuild %s time(s), want 0\n%s", got, r.describe())
+		}
 		f.expectLoad(t, f.binaries.a1, key, secret)
 	})
 
@@ -301,7 +322,7 @@ func (f *fixture) start(t *testing.T, call helperCall) *helperProcess {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), helperTimeout)
 	cmd := exec.CommandContext(ctx, call.bin.path, "-test.run=^TestKeychainHelper$", "-test.count=1", "-test.timeout=2m")
-	cmd.Env = append(os.Environ(),
+	cmd.Env = helperEnv(
 		helperActionEnv+"="+call.action,
 		helperKeychainEnv+"="+f.scratch.kc.Path(),
 		helperServiceEnv+"="+call.key.Service,
@@ -336,9 +357,21 @@ func (f *fixture) start(t *testing.T, call helperCall) *helperProcess {
 	}()
 
 	if _, err := p.stdin.Write(append(input, '\n')); err != nil {
-		t.Fatalf("write the helper input: %v", err)
+		p.abort()
+		t.Fatalf("write the helper input: %v\n%s", err, p.describe())
 	}
 	return p
+}
+
+// helperEnv is the whole environment of a helper: the few variables a process
+// needs to run, and the helper's own. Nothing else is inherited, so a DYLD_*
+// variable or a credential in the developer's shell never reaches a signed copy.
+func helperEnv(own ...string) []string {
+	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
+	if tmp, ok := os.LookupEnv("TMPDIR"); ok {
+		env = append(env, "TMPDIR="+tmp)
+	}
+	return append(env, own...)
 }
 
 // abort stops a helper that is still running and reaps it. It is the cleanup of

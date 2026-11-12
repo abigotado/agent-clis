@@ -92,3 +92,17 @@ func StageExistsForTest(ctx context.Context, s Store, key Key) (bool, error) {
 func StageAccountForTest(key Key) string {
 	return itemName{service: key.Service, account: key.Account}.stage().account
 }
+
+// ReadAccountItemForTest reads the account item of key alone, ignoring its
+// stage, which Load would read first.
+func ReadAccountItemForTest(ctx context.Context, s Store, key Key) ([]byte, error) {
+	ks, items, err := keychainStoreOf(s)
+	if err != nil {
+		return nil, err
+	}
+	value, err := items.read(ctx, itemName{service: key.Service, account: key.Account}, ks.max)
+	if err != nil {
+		return nil, ks.failure("load", err, false)
+	}
+	return value, nil
+}

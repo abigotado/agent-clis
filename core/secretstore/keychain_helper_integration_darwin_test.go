@@ -72,6 +72,7 @@ const (
 	actionAddStage    = "add-stage"
 	actionRepairNever = "repair-never"
 	actionRepair      = "repair"
+	actionReadAccount = "read-account"
 )
 
 // helperInput is the first line of the helper's standard input.
@@ -314,8 +315,25 @@ func TestKeychainHelper(t *testing.T) {
 			t.Fatalf("%T does not implement ACLRepairer", store)
 		}
 		h.emit("error", kindName(repairer.RepairAccess(ctx, h.key)))
+		// A refusal must come before any change: dump the list by reference and
+		// count this binary in it. Unreadable is possible for a binary the item
+		// does not trust, and a rewritten list would have made it readable.
+		after := "unreadable"
+		if entries, err := h.kc.ACL(h.key.Service, h.key.Account); err == nil {
+			after = decryptSelfApplications(entries)
+		}
+		h.emit("acl_after_self", after)
 		h.emitLoad(store, "load_error")
 		h.emitStage(store)
+
+	case actionReadAccount:
+		store := h.store(secretstore.InteractionNever)
+		value, err := secretstore.ReadAccountItemForTest(ctx, store, h.key)
+		h.emit("account_error", kindName(err))
+		if err == nil {
+			h.emit("account_value", digestOf(value))
+		}
+		clear(value)
 
 	case actionRepair:
 		store := h.store(secretstore.InteractionAllowed)
