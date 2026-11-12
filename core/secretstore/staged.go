@@ -84,8 +84,9 @@ type itemAPI interface {
 	// statusItemNotFound.
 	delete(ctx context.Context, name itemName) error
 	// keychainUnlocked reports whether the keychain holding the item is
-	// unlocked. It looks the item up by reference, so it fails for a missing
-	// item, and it never decrypts.
+	// unlocked. For an item that does not exist it reports the keychain an add
+	// of that item would go to. It never decrypts, and any failure to find out
+	// is an error, which callers treat as "not confirmed unlocked".
 	keychainUnlocked(ctx context.Context, name itemName) (bool, error)
 }
 
@@ -123,9 +124,15 @@ func (s *stagedStore) fail(op string, kind Kind, status int64) *Error {
 	return &Error{Op: op, Backend: s.backend, Kind: kind, Status: status}
 }
 
-// failure classifies an error from a primitive that is not a decrypting read.
-// write says whether the primitive changes the store, which decides how an
-// unrecognised status reads.
+// failure classifies an error from a primitive without any knowledge of the
+// keychain's lock state. write says whether the primitive changes the store,
+// which decides how an unrecognised status reads.
+//
+// -25293 and -25308 are both what a locked keychain returns with the UI
+// disabled (a locked file keychain returns -25293, not -25308), and both are
+// what a refused access control list returns. Without a confirmed unlocked
+// keychain they mean the user is needed, never a foreign code identity; only
+// classify can upgrade them to KindAccessDenied.
 func (s *stagedStore) failure(op string, err error, write bool) *Error {
 	if errors.Is(err, errValueTooLarge) {
 		return s.fail(op, KindTooLarge, 0)
@@ -137,9 +144,7 @@ func (s *stagedStore) failure(op string, err error, write bool) *Error {
 	switch se.status {
 	case statusItemNotFound:
 		return s.fail(op, KindNotFound, se.status)
-	case statusAuthFailed:
-		return s.fail(op, KindAccessDenied, se.status)
-	case statusInteractionNotAllowed:
+	case statusAuthFailed, statusInteractionNotAllowed:
 		return s.fail(op, KindInteractionRequired, se.status)
 	case statusUserCanceled:
 		return s.fail(op, KindCanceled, se.status)
@@ -159,36 +164,49 @@ func (s *stagedStore) failure(op string, err error, write bool) *Error {
 	return s.fail(op, KindOther, se.status)
 }
 
-// readFailure classifies a failed decrypting read. -25308 is ambiguous: it is
-// what a locked keychain returns, and it is also what a refused access control
-// list returns with the UI disabled. It means AccessDenied, which lets Save
-// delete a stage nobody can read, only when the item's own keychain was
-// unlocked both before and after the read. Anything else, including a failed
-// status lookup, is InteractionRequired, which keeps the stage.
-func (s *stagedStore) readFailure(ctx context.Context, op string, name itemName, unlockedBefore bool, err error) *Error {
+// unlocked reports whether the keychain of name is confirmed unlocked. A
+// failed lookup is not confirmed.
+func (s *stagedStore) unlocked(ctx context.Context, name itemName) bool {
+	unlocked, err := s.api.keychainUnlocked(ctx, name)
+	return err == nil && unlocked
+}
+
+// classify classifies a failed primitive on name. unlockedBefore is the lock
+// state taken before the call. A lock-sensitive status (see failure) means
+// AccessDenied, which lets Save delete a stage nobody can read, only when the
+// item's own keychain, or for an item that does not exist yet the keychain an
+// add goes to, was confirmed unlocked both before and after the call. Anything
+// else, including a failed lookup, is InteractionRequired, which keeps the
+// stage.
+func (s *stagedStore) classify(ctx context.Context, op string, name itemName, unlockedBefore bool, err error, write bool) *Error {
 	var se *statusError
-	if !errors.As(err, &se) || se.status != statusInteractionNotAllowed {
-		return s.failure(op, err, false)
+	if errors.As(err, &se) && (se.status == statusAuthFailed || se.status == statusInteractionNotAllowed) &&
+		unlockedBefore && s.unlocked(ctx, name) {
+		return s.fail(op, KindAccessDenied, se.status)
 	}
-	if unlockedBefore {
-		if unlockedAfter, statusErr := s.api.keychainUnlocked(ctx, name); statusErr == nil && unlockedAfter {
-			return s.fail(op, KindAccessDenied, se.status)
-		}
+	return s.failure(op, err, write)
+}
+
+// lookup reports whether name exists, by reference.
+func (s *stagedStore) lookup(ctx context.Context, op string, name itemName) (bool, error) {
+	before := s.unlocked(ctx, name)
+	found, err := s.api.exists(ctx, name)
+	if err != nil {
+		return false, s.classify(ctx, op, name, before, err, false)
 	}
-	return s.fail(op, KindInteractionRequired, se.status)
+	return found, nil
 }
 
 // readItem reads and checks one item: a missing item is KindNotFound, an empty
 // value KindCorrupt and a value above the bound KindTooLarge.
 func (s *stagedStore) readItem(ctx context.Context, op string, name itemName) ([]byte, error) {
 	// The keychain state is taken before the read because it cannot be taken
-	// later: a failed lookup here only matters if the read then returns -25308.
-	unlockedBefore, probeErr := s.api.keychainUnlocked(ctx, name)
-	unlockedBefore = unlockedBefore && probeErr == nil
+	// later: a lock that opens during the call must not read as unlocked.
+	before := s.unlocked(ctx, name)
 	value, err := s.api.read(ctx, name, s.max)
 	if err != nil {
 		clear(value)
-		return nil, s.readFailure(ctx, op, name, unlockedBefore, err)
+		return nil, s.classify(ctx, op, name, before, err, false)
 	}
 	if len(value) == 0 {
 		return nil, s.fail(op, KindCorrupt, 0)
@@ -198,6 +216,15 @@ func (s *stagedStore) readItem(ctx context.Context, op string, name itemName) ([
 		return nil, s.fail(op, KindTooLarge, 0)
 	}
 	return value, nil
+}
+
+// addItem creates one item; a failure is classified with the lock state.
+func (s *stagedStore) addItem(ctx context.Context, op string, name itemName, value []byte) error {
+	before := s.unlocked(ctx, name)
+	if err := s.api.add(ctx, name, value); err != nil {
+		return s.classify(ctx, op, name, before, err, true)
+	}
+	return nil
 }
 
 func kindOf(err error, kind Kind) bool {
@@ -235,9 +262,9 @@ func (s *stagedStore) Exists(ctx context.Context, key Key) (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return false, contextError("exists", err)
 		}
-		found, err := s.api.exists(ctx, item)
+		found, err := s.lookup(ctx, "exists", item)
 		if err != nil {
-			return false, s.failure("exists", err, false)
+			return false, err
 		}
 		if found {
 			return true, nil
@@ -280,11 +307,12 @@ func (s *stagedStore) Load(ctx context.Context, key Key) ([]byte, error) {
 
 // deleteItem deletes one item; a missing item is success.
 func (s *stagedStore) deleteItem(ctx context.Context, op string, name itemName) error {
+	before := s.unlocked(ctx, name)
 	err := s.api.delete(ctx, name)
 	if err == nil {
 		return nil
 	}
-	if failure := s.failure(op, err, true); failure.Kind != KindNotFound {
+	if failure := s.classify(ctx, op, name, before, err, true); failure.Kind != KindNotFound {
 		return failure
 	}
 	return nil
@@ -329,8 +357,8 @@ func (s *stagedStore) Save(ctx context.Context, key Key, secret []byte) error {
 
 	// Step 1. Nothing exists of this Save yet, so a failure leaves nothing to
 	// clean up, and in particular no stage that is not ours to delete.
-	if err := s.api.add(ctx, stage, secret); err != nil {
-		return s.failure("save", err, true)
+	if err := s.addItem(ctx, "save", stage, secret); err != nil {
+		return err
 	}
 	s.step(1)
 
@@ -350,8 +378,8 @@ func (s *stagedStore) Save(ctx context.Context, key Key, secret []byte) error {
 
 	// Step 3. A duplicate means someone recreated the account item in the
 	// window. The stage is kept: it may be the only copy.
-	if err := s.api.add(ctx, name, secret); err != nil {
-		return s.failure("save", err, true)
+	if err := s.addItem(ctx, "save", name, secret); err != nil {
+		return err
 	}
 	s.step(3)
 
@@ -393,8 +421,8 @@ func (s *stagedStore) rollForward(ctx context.Context, name, stage itemName) err
 	if err := s.deleteItem(ctx, "save", name); err != nil {
 		return err
 	}
-	if err := s.api.add(ctx, name, value); err != nil {
-		return s.failure("save", err, true)
+	if err := s.addItem(ctx, "save", name, value); err != nil {
+		return err
 	}
 	return s.deleteItem(ctx, "save", stage)
 }

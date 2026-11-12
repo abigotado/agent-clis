@@ -112,15 +112,28 @@ static OSStatus sk_exists(CFStringRef service, CFStringRef account, SecKeychainR
 }
 
 // sk_unlocked reports whether the keychain that holds the item is unlocked.
+// For an item that does not exist it reports the keychain an add would go to:
+// the target, or the default keychain when the target is NULL. Only a missing
+// item takes that path. Any other lookup failure is returned, so a keychain
+// whose lock state cannot be read never looks unlocked.
 static OSStatus sk_unlocked(CFStringRef service, CFStringRef account, SecKeychainRef target, int ui_fail, sk_trace *trace, int *unlocked) {
 	SecKeychainItemRef item = NULL;
 	OSStatus status = sk_lookup(service, account, target, ui_fail, trace, &item);
-	if (status != errSecSuccess) {
+	if (trace != NULL) {
 		return status;
 	}
 	SecKeychainRef keychain = NULL;
-	status = SecKeychainItemCopyKeychain(item, &keychain);
-	CFRelease(item);
+	if (status == errSecSuccess) {
+		status = SecKeychainItemCopyKeychain(item, &keychain);
+		CFRelease(item);
+	} else if (status == errSecItemNotFound) {
+		if (target != NULL) {
+			keychain = (SecKeychainRef)CFRetain(target);
+			status = errSecSuccess;
+		} else {
+			status = SecKeychainCopyDefault(&keychain);
+		}
+	}
 	if (status != errSecSuccess) {
 		return status;
 	}
@@ -573,9 +586,9 @@ func (s *keychainStore) RepairAccess(ctx context.Context, key Key) error {
 	// Load ignores a stage this identity cannot read. Saving the account value
 	// over it would destroy a newer value, so refuse.
 	stage := itemName{service: key.Service, account: key.Account}.stage()
-	present, err := s.api.exists(ctx, stage)
+	present, err := s.lookup(ctx, "repair", stage)
 	if err != nil {
-		return s.failure("repair", err, false)
+		return err
 	}
 	if present {
 		staged, readable, err := s.readStage(ctx, "repair", stage)

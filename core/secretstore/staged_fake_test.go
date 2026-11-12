@@ -18,7 +18,11 @@ type fakeKeychain struct {
 	mu     sync.Mutex
 	items  map[itemName]*fakeItem
 	locked bool
-	log    []string
+	// lockStatus is what a locked keychain returns to a read, add or delete.
+	// Zero means statusInteractionNotAllowed; a locked file keychain with the
+	// UI disabled really returns statusAuthFailed.
+	lockStatus int64
+	log        []string
 	// before may return an error, which the primitive then returns without
 	// touching the store.
 	before func(call string) error
@@ -71,6 +75,22 @@ func (f *fakeKeychain) setLocked(locked bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.locked = locked
+}
+
+// setLockedWith locks the keychain and makes it fail with status.
+func (f *fakeKeychain) setLockedWith(status int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.locked = true
+	f.lockStatus = status
+}
+
+// lockedStatus is the status a locked keychain returns. The caller holds mu.
+func (f *fakeKeychain) lockedStatus() int64 {
+	if f.lockStatus == 0 {
+		return statusInteractionNotAllowed
+	}
+	return f.lockStatus
 }
 
 // value returns the stored value, and false if the item is absent.
@@ -163,14 +183,14 @@ func (f *fakeKeychain) read(ctx context.Context, name itemName, limit int) ([]by
 	}
 	f.mu.Lock()
 	item, ok := f.items[name]
-	locked := f.locked
+	locked, lockStatus := f.locked, f.lockedStatus()
 	f.mu.Unlock()
 	f.leave("read", name)
 	switch {
 	case !ok:
 		return nil, &statusError{status: statusItemNotFound}
 	case locked:
-		return nil, &statusError{status: statusInteractionNotAllowed}
+		return nil, &statusError{status: lockStatus}
 	case item.denyStatus != 0:
 		return nil, &statusError{status: item.denyStatus}
 	case len(item.value) > limit:
@@ -187,7 +207,7 @@ func (f *fakeKeychain) add(ctx context.Context, name itemName, value []byte) err
 	var err error
 	switch _, exists := f.items[name]; {
 	case f.locked:
-		err = &statusError{status: statusInteractionNotAllowed}
+		err = &statusError{status: f.lockedStatus()}
 	case exists:
 		err = &statusError{status: statusDuplicateItem}
 	default:
@@ -209,7 +229,7 @@ func (f *fakeKeychain) delete(ctx context.Context, name itemName) error {
 	var err error
 	switch _, exists := f.items[name]; {
 	case f.locked:
-		err = &statusError{status: statusInteractionNotAllowed}
+		err = &statusError{status: f.lockedStatus()}
 	case !exists:
 		err = &statusError{status: statusItemNotFound}
 	default:
@@ -230,18 +250,16 @@ func isNotFound(err error) bool {
 	return errors.As(err, &se) && se.status == statusItemNotFound
 }
 
+// keychainUnlocked reports the lock state of the one keychain the fake models,
+// for an item that exists and for one that does not (an add's target).
 func (f *fakeKeychain) keychainUnlocked(ctx context.Context, name itemName) (bool, error) {
 	if err := f.enter(ctx, "status", name); err != nil {
 		return false, err
 	}
 	f.mu.Lock()
-	_, ok := f.items[name]
 	unlocked := !f.locked
 	f.mu.Unlock()
 	f.leave("status", name)
-	if !ok {
-		return false, &statusError{status: statusItemNotFound}
-	}
 	return unlocked, nil
 }
 

@@ -372,36 +372,100 @@ func TestForeignStage(t *testing.T) {
 	})
 }
 
-func TestLockedKeychainKeepsTheStage(t *testing.T) {
-	setup := func() (*fakeKeychain, *stagedStore) {
-		f := newFakeKeychain()
-		f.put(fakeAcctName, "old")
-		f.put(fakeStageName, "newest")
-		f.setLocked(true)
-		return f, newStaged(f)
-	}
-	t.Run("Save", func(t *testing.T) {
-		f, s := setup()
-		wantError(t, s.Save(t.Context(), fakeKey, []byte("v3")), "save", KindInteractionRequired, statusInteractionNotAllowed)
-		if got := f.mutations(); len(got) != 0 {
-			t.Fatalf("mutations = %v, want none", got)
-		}
-		f.setLocked(false)
-		if got := f.snapshot(); !reflect.DeepEqual(got, map[itemName]string{fakeAcctName: "old", fakeStageName: "newest"}) {
-			t.Fatalf("store = %v, want the stage and the account untouched", got)
-		}
-		mustLoad(t, s, "newest")
-	})
-	t.Run("Load does not fall back to the older account", func(t *testing.T) {
-		_, s := setup()
-		_, err := s.Load(t.Context(), fakeKey)
-		wantError(t, err, "load", KindInteractionRequired, statusInteractionNotAllowed)
-	})
+// lockStatuses are the statuses a locked keychain returns with the UI disabled:
+// -25308 on some systems and -25293 on a locked file keychain.
+var lockStatuses = []struct {
+	name   string
+	status int64
+}{
+	{"interaction not allowed", statusInteractionNotAllowed},
+	{"auth failed", statusAuthFailed},
 }
 
-// TestInteractionNotAllowedClassification covers the -25308 rule: AccessDenied
-// only when the item's own keychain was unlocked both before and after the read.
-func TestInteractionNotAllowedClassification(t *testing.T) {
+// TestLockedKeychainKeepsTheStage: a locked keychain needs the user whichever
+// status it reports, and nothing it refuses may be taken for a foreign identity
+// whose stage Save then deletes.
+func TestLockedKeychainKeepsTheStage(t *testing.T) {
+	for _, ls := range lockStatuses {
+		setup := func() (*fakeKeychain, *stagedStore) {
+			f := newFakeKeychain()
+			f.put(fakeAcctName, "old")
+			f.put(fakeStageName, "newest")
+			f.setLockedWith(ls.status)
+			return f, newStaged(f)
+		}
+		t.Run(ls.name+"/Save", func(t *testing.T) {
+			f, s := setup()
+			wantError(t, s.Save(t.Context(), fakeKey, []byte("v3")), "save", KindInteractionRequired, ls.status)
+			if got := f.mutations(); len(got) != 0 {
+				t.Fatalf("mutations = %v, want none", got)
+			}
+			f.setLocked(false)
+			if got := f.snapshot(); !reflect.DeepEqual(got, map[itemName]string{fakeAcctName: "old", fakeStageName: "newest"}) {
+				t.Fatalf("store = %v, want the stage and the account untouched", got)
+			}
+			mustLoad(t, s, "newest")
+		})
+		t.Run(ls.name+"/Load does not fall back to the older account", func(t *testing.T) {
+			_, s := setup()
+			_, err := s.Load(t.Context(), fakeKey)
+			wantError(t, err, "load", KindInteractionRequired, ls.status)
+		})
+		t.Run(ls.name+"/Save of a new item", func(t *testing.T) {
+			f := newFakeKeychain()
+			f.setLockedWith(ls.status)
+			wantError(t, newStaged(f).Save(t.Context(), fakeKey, []byte("v1")), "save", KindInteractionRequired, ls.status)
+			if got := f.snapshot(); len(got) != 0 {
+				t.Fatalf("store = %v, want it empty", got)
+			}
+		})
+		t.Run(ls.name+"/Save of a new item whose stage read is refused too", func(t *testing.T) {
+			// The real keychain refuses even the read of a stage that is not
+			// there, so the read must not delete anything either.
+			f := newFakeKeychain()
+			f.setLockedWith(ls.status)
+			f.before = func(call string) error {
+				if call == "read stage" {
+					return &statusError{status: ls.status}
+				}
+				return nil
+			}
+			wantError(t, newStaged(f).Save(t.Context(), fakeKey, []byte("v1")), "save", KindInteractionRequired, ls.status)
+			if got := f.mutations(); len(got) != 0 {
+				t.Fatalf("mutations = %v, want none", got)
+			}
+		})
+		t.Run(ls.name+"/Save over an item", func(t *testing.T) {
+			f := newFakeKeychain()
+			f.put(fakeAcctName, "old")
+			f.setLockedWith(ls.status)
+			wantError(t, newStaged(f).Save(t.Context(), fakeKey, []byte("v2")), "save", KindInteractionRequired, ls.status)
+			f.setLocked(false)
+			if got := f.snapshot(); !reflect.DeepEqual(got, map[itemName]string{fakeAcctName: "old"}) {
+				t.Fatalf("store = %v, want the account untouched", got)
+			}
+		})
+		t.Run(ls.name+"/Delete", func(t *testing.T) {
+			f, s := setup()
+			wantError(t, s.Delete(t.Context(), fakeKey), "delete", KindInteractionRequired, ls.status)
+			f.setLocked(false)
+			if got := f.snapshot(); !reflect.DeepEqual(got, map[itemName]string{fakeAcctName: "old", fakeStageName: "newest"}) {
+				t.Fatalf("store = %v, want it untouched", got)
+			}
+		})
+	}
+}
+
+// TestLockSensitiveClassification covers the rule for -25308 and -25293 alike:
+// AccessDenied only when the item's own keychain was unlocked both before and
+// after the read, whichever status the keychain returned.
+func TestLockSensitiveClassification(t *testing.T) {
+	for _, ls := range lockStatuses {
+		t.Run(ls.name, func(t *testing.T) { testLockSensitiveClassification(t, ls.status) })
+	}
+}
+
+func testLockSensitiveClassification(t *testing.T, status int64) {
 	for _, tt := range []struct {
 		name  string
 		setup func(f *fakeKeychain)
@@ -411,14 +475,14 @@ func TestInteractionNotAllowedClassification(t *testing.T) {
 	}{
 		{
 			name:  "unlocked before and after is a refused access list",
-			setup: func(f *fakeKeychain) { f.putForeign(fakeStageName, statusInteractionNotAllowed) },
+			setup: func(f *fakeKeychain) { f.putForeign(fakeStageName, status) },
 			want:  KindAccessDenied,
 		},
 		{
 			name: "locked before and after",
 			setup: func(f *fakeKeychain) {
 				f.put(fakeStageName, "newest")
-				f.setLocked(true)
+				f.setLockedWith(status)
 			},
 			want:      KindInteractionRequired,
 			stageKept: true,
@@ -428,7 +492,7 @@ func TestInteractionNotAllowedClassification(t *testing.T) {
 			name: "unlocked between the read and the second status",
 			setup: func(f *fakeKeychain) {
 				f.put(fakeStageName, "newest")
-				f.setLocked(true)
+				f.setLockedWith(status)
 				f.after = func(call string) {
 					if call == "read stage" {
 						f.setLocked(false)
@@ -441,7 +505,7 @@ func TestInteractionNotAllowedClassification(t *testing.T) {
 		{
 			name: "locked between the read and the second status",
 			setup: func(f *fakeKeychain) {
-				f.putForeign(fakeStageName, statusInteractionNotAllowed)
+				f.putForeign(fakeStageName, status)
 				f.after = func(call string) {
 					if call == "read stage" {
 						f.setLocked(true)
@@ -454,7 +518,7 @@ func TestInteractionNotAllowedClassification(t *testing.T) {
 		{
 			name: "status lookup fails after the read",
 			setup: func(f *fakeKeychain) {
-				f.putForeign(fakeStageName, statusInteractionNotAllowed)
+				f.putForeign(fakeStageName, status)
 				statusCalls := 0
 				f.before = func(call string) error {
 					if call != "status stage" {
@@ -473,7 +537,7 @@ func TestInteractionNotAllowedClassification(t *testing.T) {
 		{
 			name: "status lookup fails before the read",
 			setup: func(f *fakeKeychain) {
-				f.putForeign(fakeStageName, statusInteractionNotAllowed)
+				f.putForeign(fakeStageName, status)
 				statusCalls := 0
 				f.before = func(call string) error {
 					if call != "status stage" {
@@ -502,7 +566,7 @@ func TestInteractionNotAllowedClassification(t *testing.T) {
 				}
 				return
 			}
-			wantError(t, err, "save", tt.want, statusInteractionNotAllowed)
+			wantError(t, err, "save", tt.want, status)
 			if _, ok := f.value(fakeStageName); ok != tt.stageKept {
 				t.Fatalf("stage present = %v, want %v", ok, tt.stageKept)
 			}
@@ -525,8 +589,59 @@ func TestInteractionNotAllowedClassification(t *testing.T) {
 				}
 				return
 			}
-			wantError(t, err, "load", tt.want, statusInteractionNotAllowed)
+			wantError(t, err, "load", tt.want, status)
 		})
+	}
+}
+
+// TestLockRaceOnWrites: a refused add or delete reads as AccessDenied only if
+// the keychain was unlocked both before and after the call. The hook fails the
+// call and flips the lock while the call is in flight, so the probe taken
+// before it and the probe taken after it disagree.
+func TestLockRaceOnWrites(t *testing.T) {
+	for _, ls := range lockStatuses {
+		for _, tt := range []struct {
+			name         string
+			target       string
+			lockedBefore bool
+			lockedAfter  bool
+			want         Kind
+		}{
+			{"add, unlocked before and after", "add stage", false, false, KindAccessDenied},
+			{"add, locked before and after", "add stage", true, true, KindInteractionRequired},
+			{"add, unlocked during the call", "add stage", true, false, KindInteractionRequired},
+			{"add, locked during the call", "add stage", false, true, KindInteractionRequired},
+			{"delete, unlocked before and after", "delete acct", false, false, KindAccessDenied},
+			{"delete, locked before and after", "delete acct", true, true, KindInteractionRequired},
+			{"delete, unlocked during the call", "delete acct", true, false, KindInteractionRequired},
+			{"delete, locked during the call", "delete acct", false, true, KindInteractionRequired},
+		} {
+			t.Run(ls.name+"/"+tt.name, func(t *testing.T) {
+				f := newFakeKeychain()
+				f.put(fakeAcctName, "old")
+				// The delete rows reach step 2 only with an unlocked keychain,
+				// so the lock before the call is set once step 1 is done.
+				lock := func() { f.setLocked(tt.lockedBefore) }
+				if tt.target == "delete acct" {
+					f.after = func(call string) {
+						if call == "add stage" {
+							lock()
+						}
+					}
+				} else {
+					lock()
+				}
+				f.before = func(call string) error {
+					if call != tt.target {
+						return nil
+					}
+					f.setLocked(tt.lockedAfter)
+					return &statusError{status: ls.status}
+				}
+				err := newStaged(f).Save(t.Context(), fakeKey, []byte("new"))
+				wantError(t, err, "save", tt.want, ls.status)
+			})
+		}
 	}
 }
 
@@ -600,20 +715,36 @@ func TestSaveFailureCleanup(t *testing.T) {
 		wantKind  Kind
 		stageKept bool
 		wantAcct  string // "" means absent
+		// lockDuring locks the keychain during the failing call, so the
+		// failure reads as a lock and the stage cleanup fails too.
+		lockDuring bool
 	}{
-		{"step 1 add stage", "add stage", -1, KindReadOnly, false, "old"},
-		{"step 2 delete account", "delete acct", -1, KindReadOnly, false, "old"},
-		{"step 2 delete account locked", "delete acct", statusInteractionNotAllowed, KindInteractionRequired, false, "old"},
-		{"step 3 add account", "add acct", -1, KindReadOnly, true, ""},
-		{"step 3 add account canceled", "add acct", statusUserCanceled, KindCanceled, true, ""},
+		{"step 1 add stage", "add stage", -1, KindReadOnly, false, "old", false},
+		{"step 2 delete account", "delete acct", -1, KindReadOnly, false, "old", false},
+		{"step 2 delete account locked", "delete acct", statusInteractionNotAllowed, KindInteractionRequired, true, "old", true},
+		{"step 2 delete account locked, auth failed", "delete acct", statusAuthFailed, KindInteractionRequired, true, "old", true},
+		{"step 2 delete account refused on an unlocked keychain", "delete acct", statusAuthFailed, KindAccessDenied, false, "old", false},
+		{"step 3 add account", "add acct", -1, KindReadOnly, true, "", false},
+		{"step 3 add account canceled", "add acct", statusUserCanceled, KindCanceled, true, "", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFakeKeychain()
 			f.put(fakeAcctName, "old")
 			failOn(f, tt.fail, tt.status)
+			if tt.lockDuring {
+				inject := f.before
+				f.before = func(call string) error {
+					err := inject(call)
+					if err != nil {
+						f.setLocked(true)
+					}
+					return err
+				}
+			}
 			s := newStaged(f)
 			wantError(t, s.Save(t.Context(), fakeKey, []byte("new")), "save", tt.wantKind, tt.status)
 			f.before = nil
+			f.setLocked(false)
 			if _, ok := f.value(fakeStageName); ok != tt.stageKept {
 				t.Fatalf("stage present = %v, want %v", ok, tt.stageKept)
 			}
@@ -728,21 +859,28 @@ func TestStatusTable(t *testing.T) {
 			}
 		}
 	}
+	// Both lock-sensitive statuses mean AccessDenied only on a keychain
+	// confirmed unlocked, and InteractionRequired on a locked one.
 	readRows := []struct {
 		name   string
 		status int64
+		locked bool
 		want   Kind
 	}{
-		{"not found", statusItemNotFound, KindNotFound},
-		{"auth failed", statusAuthFailed, KindAccessDenied},
-		{"user canceled", statusUserCanceled, KindCanceled},
-		{"duplicate on a read is not contention", statusDuplicateItem, KindOther},
-		{"unclassified", -4242, KindOther},
+		{"not found", statusItemNotFound, false, KindNotFound},
+		{"auth failed on an unlocked keychain", statusAuthFailed, false, KindAccessDenied},
+		{"auth failed on a locked keychain", statusAuthFailed, true, KindInteractionRequired},
+		{"interaction not allowed on an unlocked keychain", statusInteractionNotAllowed, false, KindAccessDenied},
+		{"interaction not allowed on a locked keychain", statusInteractionNotAllowed, true, KindInteractionRequired},
+		{"user canceled", statusUserCanceled, false, KindCanceled},
+		{"duplicate on a read is not contention", statusDuplicateItem, false, KindOther},
+		{"unclassified", -4242, false, KindOther},
 	}
 	for _, tt := range readRows {
 		t.Run("read "+tt.name, func(t *testing.T) {
 			f := newFakeKeychain()
 			f.put(fakeAcctName, "v")
+			f.setLocked(tt.locked)
 			failWith("read acct", tt.status)(f)
 			_, err := newStaged(f).Load(t.Context(), fakeKey)
 			wantError(t, err, "load", tt.want, tt.status)
@@ -786,15 +924,19 @@ func TestStatusTable(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		status int64
+		locked bool
 		want   Kind
 	}{
-		{"auth failed", statusAuthFailed, KindAccessDenied},
-		{"interaction not allowed", statusInteractionNotAllowed, KindInteractionRequired},
-		{"user canceled", statusUserCanceled, KindCanceled},
-		{"unclassified", -4242, KindOther},
+		{"auth failed on an unlocked keychain", statusAuthFailed, false, KindAccessDenied},
+		{"auth failed on a locked keychain", statusAuthFailed, true, KindInteractionRequired},
+		{"interaction not allowed on an unlocked keychain", statusInteractionNotAllowed, false, KindAccessDenied},
+		{"interaction not allowed on a locked keychain", statusInteractionNotAllowed, true, KindInteractionRequired},
+		{"user canceled", statusUserCanceled, false, KindCanceled},
+		{"unclassified", -4242, false, KindOther},
 	} {
 		t.Run("exists lookup "+tt.name, func(t *testing.T) {
 			f := newFakeKeychain()
+			f.setLocked(tt.locked)
 			failWith("exists acct", tt.status)(f)
 			_, err := newStaged(f).Exists(t.Context(), fakeKey)
 			wantError(t, err, "exists", tt.want, tt.status)
@@ -805,19 +947,39 @@ func TestStatusTable(t *testing.T) {
 		name   string
 		target string
 		status int64
-		want   Kind
+		// lockedBefore is the call after which the keychain is locked, so the
+		// failing call sees it locked before it runs; "start" is from the
+		// beginning and "" is never.
+		lockedBefore string
+		want         Kind
 	}{
-		{"step 1 duplicate", "add stage", statusDuplicateItem, KindContended},
-		{"step 3 duplicate", "add acct", statusDuplicateItem, KindContended},
-		{"add auth failed", "add stage", statusAuthFailed, KindAccessDenied},
-		{"add interaction not allowed", "add stage", statusInteractionNotAllowed, KindInteractionRequired},
-		{"add canceled", "add stage", statusUserCanceled, KindCanceled},
-		{"add unclassified is read-only", "add stage", 100001, KindReadOnly},
-		{"delete unclassified is read-only", "delete acct", 100001, KindReadOnly},
+		{"step 1 duplicate", "add stage", statusDuplicateItem, "", KindContended},
+		{"step 3 duplicate", "add acct", statusDuplicateItem, "", KindContended},
+		{"add auth failed on an unlocked keychain", "add stage", statusAuthFailed, "", KindAccessDenied},
+		{"add auth failed on a locked keychain", "add stage", statusAuthFailed, "start", KindInteractionRequired},
+		{"add interaction not allowed on an unlocked keychain", "add stage", statusInteractionNotAllowed, "", KindAccessDenied},
+		{"add interaction not allowed on a locked keychain", "add stage", statusInteractionNotAllowed, "start", KindInteractionRequired},
+		{"delete auth failed on an unlocked keychain", "delete acct", statusAuthFailed, "", KindAccessDenied},
+		{"delete auth failed on a locked keychain", "delete acct", statusAuthFailed, "add stage", KindInteractionRequired},
+		{"delete interaction not allowed on a locked keychain", "delete acct", statusInteractionNotAllowed, "add stage", KindInteractionRequired},
+		{"add canceled", "add stage", statusUserCanceled, "", KindCanceled},
+		{"add unclassified is read-only", "add stage", 100001, "", KindReadOnly},
+		{"delete unclassified is read-only", "delete acct", 100001, "", KindReadOnly},
 	} {
 		t.Run("write "+tt.name, func(t *testing.T) {
 			f := newFakeKeychain()
 			f.put(fakeAcctName, "old")
+			switch tt.lockedBefore {
+			case "":
+			case "start":
+				f.setLocked(true)
+			default:
+				f.after = func(call string) {
+					if call == tt.lockedBefore {
+						f.setLocked(true)
+					}
+				}
+			}
 			failWith(tt.target, tt.status)(f)
 			wantError(t, newStaged(f).Save(t.Context(), fakeKey, []byte("new")), "save", tt.want, tt.status)
 		})
