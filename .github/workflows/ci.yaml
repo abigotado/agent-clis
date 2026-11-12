@@ -395,6 +395,68 @@ jobs:
             grep -Fq -- "--- PASS: ${name} " "${log}" || { echo "::error::${name} did not pass"; exit 1; }
           done
 
+  core-linux:
+    name: core (Linux Secret Service backend)
+    needs: changes
+    if: needs.changes.outputs.core == 'true' || needs.changes.outputs.all == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: core
+    steps:
+      - name: Git Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: core/go.mod
+          cache: true
+          cache-dependency-path: core/go.sum
+
+      # setup-go sets GOTOOLCHAIN=local, so a toolchain line it did not honour
+      # would silently test on another Go. Compare with the line itself.
+      - name: Go toolchain matches go.mod
+        run: |
+          set -euo pipefail
+          want="$(sed -n 's/^toolchain //p' go.mod)"
+          test -n "${want}"
+          go version
+          go version | grep -Fq " ${want} "
+
+      # The packages are not pinned, so the provider can change between runs.
+      # The tests start their own dbus-daemon and gnome-keyring-daemon and
+      # never use the runner's session bus.
+      - name: Install the Secret Service provider
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gnome-keyring dbus
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go vet with the integration tag
+        run: go vet -tags secretserviceintegration ./...
+
+      # Runs against a private bus and keyring the tests create in a temporary
+      # directory. With the variable set, a missing daemon fails the job
+      # instead of skipping. Each required test must also report PASS, so a
+      # skip cannot pass.
+      - name: Secret Service integration
+        env:
+          SECRETSTORE_REQUIRE_SECRET_SERVICE: "1"
+        run: |
+          set -euo pipefail
+          log="$(mktemp)"
+          go test -race -count=1 -v -tags secretserviceintegration ./secretstore/... 2>&1 | tee "${log}"
+          for name in TestSecretServiceContract TestSecretServiceContractPlain TestSecretServiceUsesDH TestSecretServiceLocked TestSecretServiceNoProvider TestSecretServiceOpen; do
+            grep -Fq -- "--- PASS: ${name} " "${log}" || { echo "::error::${name} did not pass"; exit 1; }
+          done
+
   youtrack:
     name: youtrack-agent-cli (${{ matrix.os }})
     needs: changes
@@ -637,7 +699,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, repo, core-unit, core-macos, core-windows, youtrack, youtrack-windows]
+    needs: [changes, repo, core-unit, core-linux, core-macos, core-windows, youtrack, youtrack-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Verify every job
@@ -670,12 +732,12 @@ jobs:
           fi
           # The context must list exactly the jobs in needs above; a missing
           # job would otherwise drop out of the check below.
-          if ! jq -e 'type == "object" and (keys == ["changes", "core-macos", "core-unit", "core-windows", "repo", "youtrack", "youtrack-windows"])' <<<"${NEEDS}" >/dev/null; then
-            echo "::error::needs context does not list exactly changes, core-macos, core-unit, core-windows, repo, youtrack, youtrack-windows"
+          if ! jq -e 'type == "object" and (keys == ["changes", "core-linux", "core-macos", "core-unit", "core-windows", "repo", "youtrack", "youtrack-windows"])' <<<"${NEEDS}" >/dev/null; then
+            echo "::error::needs context does not list exactly changes, core-linux, core-macos, core-unit, core-windows, repo, youtrack, youtrack-windows"
             exit 1
           fi
           # changes, repo and core-unit always run and must succeed. A selected
-          # job (a CLI's, core-macos or core-windows) must succeed when its flag or all is
+          # job (a CLI's, core-linux, core-macos or core-windows) must succeed when its flag or all is
           # set, and must have been skipped otherwise: a job that ran
           # unselected, or was skipped when selected, means the selection and
           # the workflow disagree.
@@ -692,7 +754,7 @@ jobs:
             | .key as $job
             | .value.result as $result
             | (if $job == "youtrack" or $job == "youtrack-windows" then $youtrack
-               elif $job == "core-macos" or $job == "core-windows" then $core
+               elif $job == "core-linux" or $job == "core-macos" or $job == "core-windows" then $core
                else "success" end) as $want
             | select($result != $want)
             | "\($job)=\($result) (want \($want))"
