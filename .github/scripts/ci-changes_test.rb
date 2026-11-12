@@ -7,8 +7,11 @@ require "tmpdir"
 
 class CiChangesTest < Minitest::Test
   SCRIPT = File.join(__dir__, "ci-changes.sh")
-  ALL = { "youtrack" => "false", "all" => "true" }.freeze
-  YOUTRACK_ONLY = { "youtrack" => "true", "all" => "false" }.freeze
+  CLIS = '["youtrack-agent-cli"]'.freeze
+  ALL = { "youtrack" => "false", "core" => "false", "clis" => CLIS, "all" => "true" }.freeze
+  YOUTRACK_ONLY = { "youtrack" => "true", "core" => "false", "clis" => CLIS, "all" => "false" }.freeze
+  CORE_ONLY = { "youtrack" => "false", "core" => "true", "clis" => CLIS, "all" => "false" }.freeze
+  CORE_AND_YOUTRACK = { "youtrack" => "true", "core" => "true", "clis" => CLIS, "all" => "false" }.freeze
 
   def git(repo, *args)
     stdout, stderr, status = Open3.capture3("git", "-C", repo, *args)
@@ -31,6 +34,7 @@ class CiChangesTest < Minitest::Test
       git(repo, "init", "-q", "-b", "main")
       git(repo, "config", "user.email", "test@example.invalid")
       git(repo, "config", "user.name", "test")
+      write(repo, "core/go.mod", "module example\n")
       write(repo, "youtrack-agent-cli/go.mod", "module example\n")
       write(repo, "top.txt")
       git(repo, "add", "-A")
@@ -58,6 +62,54 @@ class CiChangesTest < Minitest::Test
     success, pairs, stderr = select { |repo| write(repo, "youtrack-agent-cli/internal/a.go") }
     assert success, stderr
     assert_equal YOUTRACK_ONLY, pairs
+  end
+
+  def test_only_core_paths_select_only_core
+    success, pairs, stderr = select { |repo| write(repo, "core/secretstore/a.go") }
+    assert success, stderr
+    assert_equal CORE_ONLY, pairs
+  end
+
+  def test_core_and_cli_paths_select_both_without_everything
+    success, pairs, stderr = select do |repo|
+      write(repo, "core/secretstore/a.go")
+      write(repo, "youtrack-agent-cli/internal/a.go")
+    end
+    assert success, stderr
+    assert_equal CORE_AND_YOUTRACK, pairs
+  end
+
+  def test_a_core_path_with_a_shared_path_selects_everything
+    success, pairs, stderr = select do |repo|
+      write(repo, "core/secretstore/a.go")
+      write(repo, ".github/workflows/x.yaml")
+    end
+    assert success, stderr
+    assert_equal ALL, pairs
+  end
+
+  def test_a_rename_into_the_core_directory_selects_everything
+    success, pairs, stderr = select { |repo| git(repo, "mv", "top.txt", "core/top.txt") }
+    assert success, stderr
+    assert_equal ALL, pairs
+  end
+
+  def test_output_is_written_once_with_exactly_four_keys
+    Dir.mktmpdir("ci-changes-keys") do |dir|
+      repo = File.join(dir, "repo")
+      FileUtils.mkdir_p(repo)
+      git(repo, "init", "-q", "-b", "main")
+      git(repo, "config", "user.email", "test@example.invalid")
+      git(repo, "config", "user.name", "test")
+      write(repo, "core/go.mod", "module example\n")
+      write(repo, "youtrack-agent-cli/go.mod", "module example\n")
+      git(repo, "add", "-A")
+      git(repo, "commit", "-q", "-m", "base")
+      output = File.join(dir, "output")
+      _, status = Open3.capture2e({ "EVENT_NAME" => "push", "GITHUB_OUTPUT" => output }, SCRIPT, chdir: repo)
+      assert status.success?
+      assert_equal %w[youtrack core clis all], File.readlines(output, chomp: true).map { |line| line.split("=", 2).first }
+    end
   end
 
   def test_shared_paths_select_everything

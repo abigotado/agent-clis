@@ -24,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       youtrack: ${{ steps.select.outputs.youtrack }}
+      core: ${{ steps.select.outputs.core }}
+      clis: ${{ steps.select.outputs.clis }}
       all: ${{ steps.select.outputs.all }}
     steps:
       - name: Git Checkout
@@ -138,6 +140,105 @@ jobs:
             echo "::error::.agents/README.md."
             exit 1
           fi
+
+  # core/ is shared by every CLI, so its job is not selected by path: it runs
+  # on every change and is not skippable.
+  core-unit:
+    name: core (unit tests, static checks, dependency closure)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - name: Git Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: core/go.mod
+          cache: true
+          # core has no go.sum until it has a dependency, so the cache is
+          # keyed on go.mod instead.
+          cache-dependency-path: core/go.mod
+
+      # setup-go sets GOTOOLCHAIN=local, so a toolchain line it did not honour
+      # would silently test on another Go. Compare with the line itself.
+      - name: Go toolchain matches go.mod
+        run: |
+          set -euo pipefail
+          want="$(sed -n 's/^toolchain //p' go.mod)"
+          test -n "${want}"
+          go version
+          go version | grep -Fq " ${want} "
+
+      - name: gofmt
+        run: |
+          UNFORMATTED=$(git ls-files -z -- '*.go' | xargs -0 gofmt -l)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "::error::These files are not gofmt-clean:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
+      # Platform backends are build-tagged, so vet each target: a linux-only
+      # runner would never compile the darwin or windows files.
+      - name: go vet on every target OS
+        run: |
+          set -euo pipefail
+          for target_os in linux darwin windows; do
+            echo "go vet GOOS=${target_os}"
+            GOOS="${target_os}" go vet ./...
+          done
+
+      - name: Verify module checksums
+        run: go mod verify
+
+      - name: go test
+        run: go test -race ./...
+
+      - name: go test without cgo
+        run: CGO_ENABLED=0 go test ./...
+
+      - name: Vulnerability scan
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+          for target_os in linux darwin windows; do
+            echo "govulncheck GOOS=${target_os}"
+            GOOS="${target_os}" govulncheck ./...
+          done
+
+      # v0.8.2 (staticcheck 2026.2.2) declares go 1.26.0 and analyses Go 1.27.
+      - name: staticcheck on every target OS
+        run: |
+          set -euo pipefail
+          go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+          for target_os in linux darwin windows; do
+            echo "staticcheck GOOS=${target_os}"
+            GOOS="${target_os}" staticcheck ./...
+          done
+
+      # core must stay a leaf: no CLI module, and outside the standard library
+      # only the two packages the platform backends need.
+      - name: Dependency closure
+        run: |
+          set -euo pipefail
+          allowed="$(printf '%s\n' github.com/abigotado/agent-clis/core golang.org/x/sys github.com/godbus/dbus/v5 | LC_ALL=C sort)"
+          for target_os in linux darwin windows; do
+            modules="$(GOOS="${target_os}" go list -deps -test -f '{{if not .Standard}}{{with .Module}}{{.Path}}{{else}}no-module:{{.ImportPath}}{{end}}{{end}}' ./... | awk 'NF' | LC_ALL=C sort -u)"
+            test -n "${modules}"
+            unexpected="$(LC_ALL=C comm -23 <(printf '%s\n' "${modules}") <(printf '%s\n' "${allowed}"))"
+            if [ -n "${unexpected}" ]; then
+              echo "::error::core depends on modules outside the allowed set for GOOS=${target_os}:"
+              echo "${unexpected}"
+              exit 1
+            fi
+          done
 
   youtrack:
     name: youtrack-agent-cli (${{ matrix.os }})
@@ -381,32 +482,54 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, repo, youtrack, youtrack-windows]
+    needs: [changes, repo, core-unit, youtrack, youtrack-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Verify every job
         env:
           NEEDS: ${{ toJSON(needs) }}
           YOUTRACK_SELECTED: ${{ needs.changes.outputs.youtrack }}
+          CORE_SELECTED: ${{ needs.changes.outputs.core }}
+          CLIS: ${{ needs.changes.outputs.clis }}
           ALL_SELECTED: ${{ needs.changes.outputs.all }}
         run: |
           set -euo pipefail
-          case "${YOUTRACK_SELECTED}:${ALL_SELECTED}" in
-            true:true | true:false | false:true) ;;
-            *)
-              echo "::error::malformed or empty selection: youtrack=${YOUTRACK_SELECTED} all=${ALL_SELECTED}"
-              exit 1
-              ;;
-          esac
-          # The context must list exactly the jobs in needs above; a missing
-          # job would otherwise drop out of the check below. Every selection
-          # runs every CLI job, so each one must have succeeded.
-          if ! jq -e 'type == "object" and (keys == ["changes", "repo", "youtrack", "youtrack-windows"])' <<<"${NEEDS}" >/dev/null; then
-            echo "::error::needs context does not list exactly changes, repo, youtrack, youtrack-windows"
+          for selection in "${YOUTRACK_SELECTED}" "${CORE_SELECTED}" "${ALL_SELECTED}"; do
+            case "${selection}" in
+              true | false) ;;
+              *)
+                echo "::error::malformed or empty selection: youtrack=${YOUTRACK_SELECTED} core=${CORE_SELECTED} all=${ALL_SELECTED}"
+                exit 1
+                ;;
+            esac
+          done
+          if ! jq -e 'type == "array" and length > 0 and all(.[]; type == "string")' <<<"${CLIS}" >/dev/null; then
+            echo "::error::malformed or empty clis list: ${CLIS}"
             exit 1
           fi
-          failures="$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"' <<<"${NEEDS}")"
+          # The context must list exactly the jobs in needs above; a missing
+          # job would otherwise drop out of the check below.
+          if ! jq -e 'type == "object" and (keys == ["changes", "core-unit", "repo", "youtrack", "youtrack-windows"])' <<<"${NEEDS}" >/dev/null; then
+            echo "::error::needs context does not list exactly changes, core-unit, repo, youtrack, youtrack-windows"
+            exit 1
+          fi
+          # changes, repo and core-unit always run and must succeed. A CLI job
+          # must succeed when its flag or all is set, and must have been
+          # skipped otherwise: a job that ran unselected, or was skipped when
+          # selected, means the selection and the workflow disagree.
+          youtrack_expected=skipped
+          if [ "${YOUTRACK_SELECTED}" = true ] || [ "${ALL_SELECTED}" = true ]; then
+            youtrack_expected=success
+          fi
+          failures="$(jq -r --arg youtrack "${youtrack_expected}" '
+            to_entries[]
+            | .key as $job
+            | .value.result as $result
+            | (if $job == "youtrack" or $job == "youtrack-windows" then $youtrack else "success" end) as $want
+            | select($result != $want)
+            | "\($job)=\($result) (want \($want))"
+          ' <<<"${NEEDS}")"
           if [ -n "${failures}" ]; then
-            echo "::error::jobs did not succeed: ${failures//$'\n'/, }"
+            echo "::error::jobs did not end as selected: ${failures//$'\n'/, }"
             exit 1
           fi
