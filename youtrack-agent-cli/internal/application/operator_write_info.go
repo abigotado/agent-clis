@@ -27,6 +27,10 @@ type OperatorFieldSelection struct {
 // or an exact project entity ID or key for issue.create.
 type OperatorSnapshotInput struct {
 	Profile, Kind, IssueID, CommentID, ProjectID, OutputPath string
+	// TargetID, LinkType, LinkTypeID and Direction select an issue.link: the
+	// target issue, the link type by exact name or immutable ID, and the exact
+	// phrase read from the source issue's side.
+	TargetID, LinkType, LinkTypeID, Direction string
 	// FilePath and AttachmentName select the local file and its upload name
 	// for attachment.add; the name defaults to the file's base name.
 	FilePath, AttachmentName string
@@ -69,6 +73,12 @@ type OperatorWriteInfo struct {
 	CommentID        string                    `json:"comment_id,omitempty"`
 	ProjectID        string                    `json:"project_id"`
 	ProjectKey       string                    `json:"project_key"`
+	TargetIssueID    string                    `json:"target_issue_id,omitempty"`
+	TargetReadableID string                    `json:"target_readable_id,omitempty"`
+	TargetProjectKey string                    `json:"target_project_key,omitempty"`
+	LinkType         string                    `json:"link_type,omitempty"`
+	Direction        string                    `json:"direction,omitempty"`
+	LinkID           string                    `json:"link_id,omitempty"`
 	NonReplayable    bool                      `json:"non_replayable"`
 	RemoteID         string                    `json:"remote_id,omitempty"`
 	RemoteReadableID string                    `json:"remote_readable_id,omitempty"`
@@ -89,6 +99,10 @@ func operatorSnapshotInfo(snapshot operatorwrite.Snapshot) OperatorWriteInfo {
 		ProjectKey: projectKey, Snapshot: &snapshot}
 	if snapshot.Comment != nil {
 		result.CommentID = snapshot.Comment.ID
+	}
+	if link := snapshot.Link; link != nil {
+		result.TargetIssueID, result.TargetReadableID, result.TargetProjectKey = link.Target.ID, link.Target.ReadableID, link.Target.ProjectKey
+		result.LinkType, result.Direction, result.LinkID = link.Type.Name, link.Phrase, link.LinkID
 	}
 	result.Attachment = snapshot.Attachment
 	return result

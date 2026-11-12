@@ -200,9 +200,10 @@ Returned pages establish neither currentness, complete history, nor
 reconciliation evidence. Portable and macOS identity editions remain
 Remote-MCP-only.
 
-The standard CLI does not manage issue links or tags. The MCP connector's write
-tools are outside this CLI's guarded write path and may be used beside it, for
-example for links or tags.
+The standard CLI adds issue links through `operator-write` (`issue.link`, below)
+but does not remove links or manage tags. The MCP connector's write tools are
+outside this CLI's guarded write path and may be used beside it, for example to
+remove a link or manage tags; one operation never runs through both.
 
 ## Operator-confirmed writes
 
@@ -225,7 +226,7 @@ marker/hash confirmation. If the payload or target still needs a decision, ask
 once before sending. Plan schemas v2, v3 and v4 have no wall-clock expiry, so a delayed
 reply does not require a new marker. The 15-minute snapshot-to-prepare window
 and live stale-state checks remain; legacy v1 plans keep their original expiry.
-`issue.edit` replaces the summary and/or description of one exact issue under a separate `issue-edit` capability (existing profiles gain no authority), with a current-text hash precondition; its plans are v4. `attachment.add` uploads one local file (png/jpeg/gif/webp/pdf, up to 10 MiB) to one exact issue under a separate `attachment-add` capability (existing profiles gain no authority; re-login needed); its plans are v4 and its REST contract is verified against JetBrains docs only, not a live instance. New `issue.update` and `issue.create` plans are v4; comment addition still prepares v2
+`issue.link` adds one link between two existing issues (both projects allowlisted, link entry taken from the server, a Subtask child that already has a parent refused) under a separate `issue-link` capability (existing profiles gain no authority); its plans are v4. `issue.edit` replaces the summary and/or description of one exact issue under a separate `issue-edit` capability (existing profiles gain no authority), with a current-text hash precondition; its plans are v4. `attachment.add` uploads one local file (png/jpeg/gif/webp/pdf, up to 10 MiB) to one exact issue under a separate `attachment-add` capability (existing profiles gain no authority; re-login needed); its plans are v4 and its REST contract is verified against JetBrains docs only, not a live instance. New `issue.update` and `issue.create` plans are v4; comment addition still prepares v2
 plans, and deletion alone prepares v3. `issue.create` can also set or clear (`--clear-field`, `--clear-field-id`) a single-user field such as Assignee under a separate `issue-create-user-fields` capability (existing profiles gain no authority; State/Enum set and clear need only `issue-create`); YouTrack may refill a cleared field, which reconcile reports as `matching_issue_observed_fields_differ`. Existing v2 plans are still accepted. All
 historical formats retain their original bytes and hashes. A lost DELETE
 response requires GET-only reconciliation: a missing comment or `404` does not

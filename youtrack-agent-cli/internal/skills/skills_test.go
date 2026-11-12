@@ -98,7 +98,7 @@ func TestStandardSkillRoutesReadsToCLIAndPortableSkillPinsMCP(t *testing.T) {
 		"Do not call YouTrack through model-authored `curl` or a generic REST client.",
 		"A connector that also exposes write tools is no reason to refuse reads through it.",
 		"The standard CLI supports bounded discovery, exact issues/projects, comments, and project schema.",
-		"It does not manage issue tags or links; use the MCP connector's tools",
+		"it does not remove links or manage tags, so use the MCP connector's tools",
 		"never fabricate its receipt",
 		"Never retry an ambiguous mutation or run one operation through both the CLI and MCP.",
 	} {

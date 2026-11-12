@@ -28,7 +28,7 @@ func TestAttachmentAddCapabilityIsExplicitAndCanonical(t *testing.T) {
 			}
 		})
 	}
-	if capabilityRank(CapabilityAttachmentAdd) != 7 {
+	if capabilityRank(CapabilityAttachmentAdd) != 8 {
 		t.Fatalf("attachment-add rank = %d", capabilityRank(CapabilityAttachmentAdd))
 	}
 }

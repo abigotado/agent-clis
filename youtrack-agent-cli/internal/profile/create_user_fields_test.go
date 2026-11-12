@@ -14,6 +14,7 @@ func TestIssueCreateUserFieldsCapabilityIsExplicitAndCanonical(t *testing.T) {
 		{name: "after read", capabilities: []Capability{CapabilityRead, CapabilityIssueCreateUserFields}, wantValid: true},
 		{name: "after create", capabilities: []Capability{CapabilityRead, CapabilityIssueCreate, CapabilityIssueCreateUserFields}, wantValid: true},
 		{name: "after every other capability", capabilities: []Capability{CapabilityRead, CapabilityIssueCreate, CapabilityIssueUpdate, CapabilityCommentAdd, CapabilityCommentDelete, CapabilityIssueEdit, CapabilityIssueCreateUserFields}, wantValid: true},
+		{name: "before issue-link", capabilities: []Capability{CapabilityRead, CapabilityIssueCreateUserFields, CapabilityIssueLink}, wantValid: true},
 		{name: "before create is rejected", capabilities: []Capability{CapabilityRead, CapabilityIssueCreateUserFields, CapabilityIssueCreate}},
 		{name: "before edit is rejected", capabilities: []Capability{CapabilityRead, CapabilityIssueCreateUserFields, CapabilityIssueEdit}},
 		{name: "duplicate is rejected", capabilities: []Capability{CapabilityRead, CapabilityIssueCreateUserFields, CapabilityIssueCreateUserFields}},
@@ -62,7 +63,7 @@ func TestIssueCreateUserFieldsCapabilityRequiresExplicitProfileChange(t *testing
 // TestCapabilityRanksAreDistinctAndAgreeWithTheCanonicalOrder fails a merge that
 // gives two capabilities one rank or leaves the validator's order out of step.
 func TestCapabilityRanksAreDistinctAndAgreeWithTheCanonicalOrder(t *testing.T) {
-	known := []Capability{CapabilityRead, CapabilityIssueCreate, CapabilityIssueUpdate, CapabilityCommentAdd, CapabilityCommentDelete, CapabilityIssueEdit, CapabilityIssueCreateUserFields, CapabilityAttachmentAdd}
+	known := []Capability{CapabilityRead, CapabilityIssueCreate, CapabilityIssueUpdate, CapabilityCommentAdd, CapabilityCommentDelete, CapabilityIssueEdit, CapabilityIssueCreateUserFields, CapabilityIssueLink, CapabilityAttachmentAdd}
 	seen := map[int]Capability{}
 	for _, capability := range known {
 		rank := capabilityRank(capability)
@@ -83,6 +84,9 @@ func TestCapabilityRanksAreDistinctAndAgreeWithTheCanonicalOrder(t *testing.T) {
 	}
 	if err := ValidateCapabilities(known); err != nil {
 		t.Fatalf("canonical order rejected: %v", err)
+	}
+	if capabilityRank(Capability("unknown")) <= capabilityRank(known[len(known)-1]) {
+		t.Fatal("an unknown capability does not rank above every known one")
 	}
 	for index := 2; index < len(known); index++ {
 		swapped := append([]Capability(nil), known...)

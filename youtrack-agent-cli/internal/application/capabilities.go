@@ -33,7 +33,7 @@ type CapabilitiesInfo struct {
 // Capabilities reports build support and, optionally, one explicit profile's
 // non-secret local generation and current identity-bound policy.
 func (s *Service) Capabilities(ctx context.Context, name string) (CapabilitiesInfo, error) {
-	kinds := []operatorwrite.Kind{operatorwrite.KindIssueCreate, operatorwrite.KindIssueUpdate, operatorwrite.KindCommentAdd, operatorwrite.KindCommentDelete, operatorwrite.KindIssueEdit, operatorwrite.KindAttachmentAdd}
+	kinds := []operatorwrite.Kind{operatorwrite.KindIssueCreate, operatorwrite.KindIssueUpdate, operatorwrite.KindCommentAdd, operatorwrite.KindCommentDelete, operatorwrite.KindIssueEdit, operatorwrite.KindIssueLink, operatorwrite.KindAttachmentAdd}
 	versions, highest := make(map[string]int, len(kinds)), 0
 	for _, kind := range kinds {
 		versions[string(kind)] = operatorwrite.PlanVersionFor(kind)
@@ -68,6 +68,9 @@ func (s *Service) Capabilities(ctx context.Context, name string) (CapabilitiesIn
 		}
 		if selected.HasCapability(profile.CapabilityIssueEdit) {
 			result.Kinds = append(result.Kinds, "issue.edit")
+		}
+		if selected.HasCapability(profile.CapabilityIssueLink) {
+			result.Kinds = append(result.Kinds, "issue.link")
 		}
 		if selected.HasCapability(profile.CapabilityAttachmentAdd) {
 			result.Kinds = append(result.Kinds, "attachment.add")
