@@ -1,0 +1,71 @@
+name: core-tag
+
+# Verifies a core/v* tag after it is pushed. It only reads: it creates no
+# release and publishes nothing, so a bad tag is reported and left to a person.
+on:
+  push:
+    tags:
+      - "core/v*"
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+
+jobs:
+  verify:
+    name: Verify the core release tag
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Git Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Only v0.x.y tags are valid while core is pre-1.0, and the tagged commit
+      # must already be on main, so a tag cannot publish unmerged code.
+      - name: Tag name and ancestry
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "${TAG}" =~ ^core/v0\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag ${TAG} does not match core/v0.X.Y"
+            exit 1
+          fi
+          # fetch-depth: 0 already brought every branch, origin/main included.
+          git rev-parse --verify --quiet origin/main >/dev/null
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::tagged commit ${GITHUB_SHA} is not an ancestor of origin/main"
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: core/go.mod
+          cache: true
+          cache-dependency-path: core/go.sum
+
+      - name: gofmt
+        working-directory: core
+        run: |
+          UNFORMATTED=$(git ls-files -z -- '*.go' | xargs -0 gofmt -l)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "::error::These files are not gofmt-clean:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
+      - name: go vet
+        working-directory: core
+        run: go vet ./...
+
+      - name: go test
+        working-directory: core
+        run: go test -race ./...
