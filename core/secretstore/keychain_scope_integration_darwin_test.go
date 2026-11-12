@@ -100,25 +100,36 @@ func scopeRun(ctx context.Context, t *testing.T, action string) helperResult {
 }
 
 // t.Cleanup does not run on a test timeout panic or SIGINT, so a killed run can
-// leave the prompt switch off in whatever scope it has; see the note in
+// leave the prompt switch off in a helper; see the note in
 // keychain_integration_darwin_test.go for what to do then.
 //
 // TestInteractionFlagScope measures the scope of the switch InteractionNever
-// relies on, SecKeychainSetUserInteractionAllowed: whether turning it off in one
-// process turns it off in another.
+// relies on, SecKeychainSetUserInteractionAllowed, as far as its getter shows it:
+// whether turning it off in one process changes what another process reads back
+// from SecKeychainGetUserInteractionAllowed. It does not show that a dialog still
+// appears in the other process; it shows that the getter, which is all the test
+// can read, is not affected.
 //
 // The backend calls it in Open under InteractionNever and its comment calls the
 // setting process-wide and possibly session-wide. The package relies on the
 // narrow reading: a program that opens a Store under InteractionNever turns the
 // prompts off for itself, and an interactive program running next to it must not
-// lose its dialogs. This test decides which reading holds, and fails on the wide
-// one.
+// lose its dialogs. This test fails when another process's getter reads the
+// wide value.
 //
 // It uses only fresh helper processes, so the process running the test never
 // changes the switch. Process A turns it off, stays alive, and restores it.
 // The cleanup restores the switch and checks it, in a process of its own, even
 // when the test failed half-way, because a wider scope is exactly the case where
 // a killed A would leave the whole session with its prompts off.
+//
+// The baseline is read by a fresh process first, and a fresh process that reads
+// the switch as off is a failure: under the narrow reading nothing a finished
+// helper did can reach it, so an off switch there is the wide reading, or a
+// session that had it off before the test, and in either case the rest of the
+// test could not tell the two readings apart. Earlier tests' helpers turn the
+// switch off and exit without restoring it, which is harmless exactly when the
+// narrow reading holds, and which this baseline would show if it did not.
 //
 // This test runs in the session of whoever starts it. On CI that is a headless
 // session; whether the result is the same in a logged-in GUI session is a local
@@ -148,15 +159,9 @@ func TestInteractionFlagScope(t *testing.T) {
 		}
 	})
 
-	// P0: what a fresh process reads before anything here has changed it. If the
-	// switch is not on, a later "on" in process B shows nothing.
-	if got := scopeRun(t.Context(), t, scopeRead).get(t, "allowed"); got != "true" {
-		t.Skipf("the prompt switch reads %q in a fresh process, so this session has it off already and a change cannot be seen", got)
-	}
-
-	// Registered before A starts, so it runs whatever happens to A or to the
-	// assertions below: restore the switch in a process of its own, then read it
-	// in another.
+	// Registered before P0 and before A start, so it runs whatever happens to
+	// either or to the assertions below, a failed baseline included: restore the
+	// switch in a process of its own, then read it in another.
 	t.Cleanup(func() {
 		// The test's context is canceled before its cleanups run.
 		ctx := context.WithoutCancel(t.Context())
@@ -167,17 +172,26 @@ func TestInteractionFlagScope(t *testing.T) {
 		}
 	})
 
+	// P0: what a fresh process reads before anything here has changed it. A fresh
+	// process that reads it as off is the wide reading, or a session that had it
+	// off already; either way the baseline is not the one the test needs.
+	if got := scopeRun(t.Context(), t, scopeRead).get(t, "allowed"); got != "true" {
+		t.Fatalf("a fresh process reads the prompt switch as %q before this test changed it, want true: "+
+			"a process that never turned it off sees it off, so the switch is wider than one process (or the session had it off already)", got)
+	}
+
 	a := scopeProcess(t.Context(), t, scopeHold)
 	a.waitFor(t, "paused")
 	seen := helperResult{fields: a.fields}
 	seen.want(t, "before", "true")
 	seen.want(t, "held", "false")
 
-	// While A has the switch off, a second, independent process reads it.
+	// While A has the switch off, a second, independent process reads it. This is
+	// the getter in another process, not a dialog.
 	b := scopeRun(t.Context(), t, scopeRead)
 	if got := b.get(t, "allowed"); got != "true" {
 		t.Errorf("process B reads the prompt switch as %q while process A has it off, want true: "+
-			"the switch is wider than one process, so the backend's reading of it as process-local does not hold", got)
+			"the getter is affected across processes, so the backend's reading of the switch as process-local does not hold", got)
 	}
 
 	a.send(t, "go\n")

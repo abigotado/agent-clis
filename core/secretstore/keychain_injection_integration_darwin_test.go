@@ -118,9 +118,14 @@ func runInjected(t *testing.T, bin testBinary, dylib string) (loaded bool, r hel
 // TestHardenedRuntimeRefusesInjection shows that a helper signed with the
 // hardened runtime flag, the way a released binary is, does not load a library
 // named in DYLD_INSERT_LIBRARIES, and that the same library does load into a
-// helper without the flag. The control is what keeps the refusal from being a
+// helper without the flag. That control is what keeps the refusal from being a
 // result of a broken library, a wrong architecture or a loader that never
 // honoured the variable in this environment.
+//
+// The ad hoc control differs from A1 in more than the flag: the signature kind
+// and the designated requirement too. A second control pins the refusal on the
+// flag alone: a copy of the same ad hoc binary, signed ad hoc again with the
+// runtime flag and nothing else changed, must not load the library either.
 //
 // The helpers are the signed binaries of TestKeychainAcrossBinaries: A1 carries
 // the flag, the ad hoc one does not. Building and signing them takes as long as
@@ -172,6 +177,26 @@ func TestHardenedRuntimeRefusesInjection(t *testing.T) {
 	t.Logf("control, no runtime flag: library loaded %t, DYLD_INSERT_LIBRARIES in its environment: %s", loaded, r.fields["dyld_env"])
 	if !loaded {
 		t.Fatalf("the control helper without the runtime flag did not load the library, so a refusal by the hardened helper proves nothing\n%s", r.describe())
+	}
+
+	// The same ad hoc binary with the flag added: the flag is the only difference
+	// from the control that loads the library.
+	flagged := testBinary{name: "ad hoc with the runtime flag", path: filepath.Join(t.TempDir(), "adhoc-runtime", "secretstore.test")}
+	copyExecutable(t, control.path, flagged.path)
+	if err := codesign(t.Context(), "--force", "--sign", "-", "--options", "runtime", flagged.path); err != nil {
+		unusable(t, "signing the ad hoc copy with the runtime flag", err)
+	}
+	flaggedSig, err := kctest.CodeSignature(flagged.path)
+	if err != nil {
+		t.Fatalf("read the signature of the ad hoc copy with the runtime flag: %v", err)
+	}
+	if !flaggedSig.AdHoc() || !flaggedSig.Runtime() {
+		t.Fatalf("the ad hoc copy is not signed ad hoc with the runtime flag (flags 0x%x), so it cannot pin the refusal on the flag", flaggedSig.Flags)
+	}
+	loaded, r = runInjected(t, flagged, dylib)
+	t.Logf("ad hoc with the runtime flag: library loaded %t, DYLD_INSERT_LIBRARIES in its environment: %s", loaded, r.fields["dyld_env"])
+	if loaded {
+		t.Errorf("the ad hoc helper with only the runtime flag added loaded a library from DYLD_INSERT_LIBRARIES\n%s", r.describe())
 	}
 
 	loaded, r = runInjected(t, hardened, dylib)

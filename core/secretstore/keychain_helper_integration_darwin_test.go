@@ -136,6 +136,10 @@ func (h *helperSession) requireUnlocked(when string) {
 
 // newHelperSession does the work every action starts with, in the order that
 // keeps a dialog from ever showing: prompts off and checked, then the keychain.
+//
+// The helper never turns them on again before it exits. That is harmless only
+// while the switch is per process, which TestInteractionFlagScope measures and
+// fails on when it is not.
 func newHelperSession(t *testing.T) *helperSession {
 	t.Helper()
 	if err := kctest.SetInteractionAllowed(false); err != nil {

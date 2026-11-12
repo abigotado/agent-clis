@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/abigotado/agent-clis/core/secretstore"
 	"github.com/abigotado/agent-clis/core/secretstore/internal/kctest"
@@ -41,26 +43,59 @@ func sandboxPrefix(t *testing.T, profile, scratchDir string) []string {
 	return []string{sandboxExecPath, "-D", "SCRATCH=" + real, "-p", profile}
 }
 
-// requireSandboxExec skips the row when this environment cannot run a program
+// sandboxProbeTimeout bounds the probe that runs /usr/bin/true under
+// sandbox-exec. It is a hang guard, far above what the probe takes.
+const sandboxProbeTimeout = 30 * time.Second
+
+// requireKeychain reports whether the run demands a usable keychain environment,
+// as CI does: where it is set, a missing prerequisite fails and never skips.
+func requireKeychain() bool {
+	return os.Getenv("SECRETSTORE_REQUIRE_KEYCHAIN") == "1"
+}
+
+// requireSandboxExec stops the row when this environment cannot run a program
 // under sandbox-exec, which is the case inside another sandbox and on a machine
-// without the tool. It is a documented environmental limit: CI prints a notice
-// and does not fail.
+// without the tool. Under SECRETSTORE_REQUIRE_KEYCHAIN=1 that fails the row, so a
+// runner that lost sandbox-exec cannot pass by testing nothing; without it the
+// row skips and, on GitHub Actions, prints a notice.
 func requireSandboxExec(t *testing.T) {
 	t.Helper()
 	reason := ""
 	if _, err := os.Stat(sandboxExecPath); err != nil {
 		reason = "sandbox-exec is not installed: " + err.Error()
-	} else if out, err := exec.CommandContext(t.Context(), sandboxExecPath, "-p", sandboxAllowAll, "/usr/bin/true").CombinedOutput(); err != nil {
-		reason = "sandbox-exec cannot run a program here: " + err.Error() + ": " + tail(out, 512)
+	} else {
+		ctx, cancel := context.WithTimeout(t.Context(), sandboxProbeTimeout)
+		defer cancel()
+		if out, err := exec.CommandContext(ctx, sandboxExecPath, "-p", sandboxAllowAll, "/usr/bin/true").CombinedOutput(); err != nil {
+			reason = "sandbox-exec cannot run a program here: " + err.Error() + ": " + tail(out, 512)
+		}
 	}
 	if reason == "" {
 		return
+	}
+	if requireKeychain() {
+		t.Fatalf("the sandbox-exec row is required but cannot run: %s", reason)
 	}
 	if os.Getenv("GITHUB_ACTIONS") == "true" {
 		// A workflow command, so the skip is visible in the run summary.
 		fmt.Printf("::notice title=keychain integration::the sandbox-exec row did not run: %s\n", reason)
 	}
 	t.Skip(reason)
+}
+
+// stoppedAtKeychainOpen reports whether a helper that did not reach Save stopped
+// where a read-only keychain directory is expected to stop it: it printed its
+// start fields, which come before the keychain is opened, and it names the failed
+// open. The helper's testing package writes a fatal message to standard output,
+// so both streams are searched.
+func (r helperResult) stoppedAtKeychainOpen() bool {
+	_, binary := r.fields["binary"]
+	_, marker := r.fields["marker"]
+	if !binary || !marker {
+		return false
+	}
+	return strings.Contains(r.stderr, "open the scratch keychain") ||
+		strings.Contains(strings.Join(r.other, "\n"), "open the scratch keychain")
 }
 
 // TestKeychainSaveInReadOnlySandbox approximates the macOS sandbox that allows
@@ -96,7 +131,8 @@ func TestKeychainSaveInReadOnlySandbox(t *testing.T) {
 	f := &fixture{scratch: s}
 	scratchDir := filepath.Dir(s.kc.Path())
 
-	call := func(profile string, key secretstore.Key, secret []byte) *helperProcess {
+	call := func(t *testing.T, profile string, key secretstore.Key, secret []byte) *helperProcess {
+		t.Helper()
 		return f.start(t, helperCall{
 			bin:     self,
 			action:  actionSaveStatus,
@@ -108,7 +144,7 @@ func TestKeychainSaveInReadOnlySandbox(t *testing.T) {
 
 	t.Run("control: a profile that denies nothing lets Save succeed", func(t *testing.T) {
 		key, secret := scratchKey(t), randomSecret(t)
-		r := call(sandboxAllowAll, key, secret).finish(t)
+		r := call(t, sandboxAllowAll, key, secret).finish(t)
 		r.wantExit(t, 0)
 		r.verifyBinary(t, self)
 		r.want(t, "error", "none")
@@ -117,21 +153,36 @@ func TestKeychainSaveInReadOnlySandbox(t *testing.T) {
 
 	t.Run("Save under a profile that denies writes to the keychain is read-only", func(t *testing.T) {
 		key, secret := scratchKey(t), randomSecret(t)
-		r := call(sandboxDenyScratch, key, secret).finish(t)
+		r := call(t, sandboxDenyScratch, key, secret).finish(t)
 		if _, reached := r.fields["error"]; !reached {
-			// The helper could not get as far as Save: opening a keychain whose
-			// directory is read-only failed first. That says the profile is too
-			// strict for this row, not what Save maps to.
-			t.Skipf("the helper did not reach Save under the deny profile (exit %d); the denial stops the keychain from even opening\n%s", r.exit, r.describe())
+			// The helper did not get as far as Save. Only one reason is an
+			// environmental limit: opening a keychain whose directory is read-only
+			// failed first, which says the profile is too strict for this row, not
+			// what Save maps to. Anything else, a crash or a helper that never
+			// started included, is a failure, and so is that reason under
+			// SECRETSTORE_REQUIRE_KEYCHAIN=1.
+			if !requireKeychain() && r.stoppedAtKeychainOpen() {
+				t.Skipf("the helper did not reach Save under the deny profile (exit %d); the denial stops the keychain from even opening\n%s", r.exit, r.describe())
+			}
+			t.Fatalf("the helper did not reach Save under the deny profile (exit %d)\n%s", r.exit, r.describe())
 		}
 		r.wantExit(t, 0)
 		r.verifyBinary(t, self)
 		t.Logf("Save under a denied write: kind %s, OSStatus %s", r.get(t, "error"), r.get(t, "status"))
 		r.want(t, "error", "read-only")
-		// A refused write changed nothing: outside the sandbox the key is absent.
-		_, err := s.store(t, helperMaxSecret, secretstore.InteractionNever).Load(context.WithoutCancel(t.Context()), key)
-		if !errors.Is(err, secretstore.ErrNotFound) {
+		// A refused write changed nothing: outside the sandbox the key is absent
+		// and so is its stage item.
+		ctx := context.WithoutCancel(t.Context())
+		store := s.store(t, helperMaxSecret, secretstore.InteractionNever)
+		if _, err := store.Load(ctx, key); !errors.Is(err, secretstore.ErrNotFound) {
 			t.Errorf("Load after the refused Save: %v, want not-found", err)
+		}
+		staged, err := secretstore.StageExistsForTest(ctx, store, key)
+		if err != nil {
+			t.Fatalf("look up the stage after the refused Save: %v", err)
+		}
+		if staged {
+			t.Error("the refused Save left a stage item behind")
 		}
 	})
 }

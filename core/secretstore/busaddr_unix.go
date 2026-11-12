@@ -19,7 +19,9 @@ import (
 // $XDG_RUNTIME_DIR/bus, under libdbus's own checks: the directory is an
 // absolute path, and the socket is a socket itself and not a symlink to one,
 // owned by the effective user euid. Any check that fails gives "", and nothing
-// says which one, because the path is environment text.
+// says which one, because the path is environment text. The window between the
+// Lstat and the dial is accepted, as in libdbus: the owner check bounds the
+// threat to the same user.
 func sessionBusAddress(getenv func(string) string, euid int) string {
 	if addr := getenv("DBUS_SESSION_BUS_ADDRESS"); addr != "" {
 		return addr
