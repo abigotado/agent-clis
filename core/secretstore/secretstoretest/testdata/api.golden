@@ -1,0 +1,77 @@
+package secretstoretest // import "github.com/abigotado/agent-clis/core/secretstore/secretstoretest"
+
+Package secretstoretest provides an in-memory secretstore.Store for tests and
+Contract, a behaviour suite every secretstore.Store implementation must pass.
+
+FUNCTIONS
+
+func Contract(t *testing.T, s secretstore.Store, maxSecretBytes int)
+    Contract runs the behaviour suite against s, which must have been opened
+    with MaxSecretBytes equal to maxSecretBytes (at least 256). It stores
+    only under a random service named secretstore-test-<random> and deletes
+    everything it created when t finishes, so it is safe against a real store,
+    though the real-backend tests of a later change run it in disposable
+    environments.
+
+    The rows are: missing keys, round trip and copy isolation, overwrite,
+    idempotent delete, isolation between keys, the size bound (a value of
+    exactly the bound, and one byte more leaving the previous value intact),
+    empty secrets, all 256 byte values, non-ASCII accounts, accounts that differ
+    only by case, accounts with wildcard characters, invalid keys on every
+    operation, pre-canceled contexts, and a redaction check: a random marker
+    secret, account and service never appear in provoked errors formatted with
+    %v, %+v, %#v and %s, nor in slog text and JSON output.
+
+
+TYPES
+
+type Memory struct {
+	// Has unexported fields.
+}
+    Memory is a goroutine-safe in-memory store. It validates keys and sizes
+    the way the real stores do, copies secrets on the way in and out, compares
+    keys case-sensitively, and can be made to fail per operation with SetErr.
+    It implements secretstore.Store and secretstore.ACLRepairer.
+
+func NewMemory(opts secretstore.Options) *Memory
+    NewMemory returns an empty store. Options are checked like secretstore.Open
+    checks them; with invalid options every operation fails with
+    secretstore.ErrInvalidArgument instead of NewMemory panicking.
+
+func (m *Memory) Delete(ctx context.Context, key secretstore.Key) error
+    Delete implements secretstore.Store. Deleting a missing item succeeds.
+
+func (m *Memory) Exists(ctx context.Context, key secretstore.Key) (bool, error)
+    Exists implements secretstore.Store.
+
+func (m *Memory) Load(ctx context.Context, key secretstore.Key) ([]byte, error)
+    Load implements secretstore.Store. The returned slice is a copy.
+
+func (m *Memory) RepairAccess(ctx context.Context, key secretstore.Key) error
+    RepairAccess implements secretstore.ACLRepairer. Like the macOS store
+    it refuses with ErrInteractionRequired unless the store was opened with
+    InteractionAllowed, and it reports ErrNotFound for a missing item. Access
+    control does not exist in memory, so a successful repair changes nothing.
+
+func (m *Memory) Save(ctx context.Context, key secretstore.Key, secret []byte) error
+    Save implements secretstore.Store. The store keeps a copy of secret.
+
+func (m *Memory) SetErr(op Op, err error)
+    SetErr makes op return err, after the checks that run before a real store is
+    touched (context, key, size). A nil err clears it. An unknown op is ignored.
+
+type Op int
+    Op names a Memory operation for SetErr.
+
+const (
+	OpExists Op = iota
+	OpLoad
+	OpSave
+	OpDelete
+	OpRepair
+)
+    The operations an error can be injected into.
+
+func (o Op) String() string
+    String returns the operation name used in secretstore.Error.Op.
+
