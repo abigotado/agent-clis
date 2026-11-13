@@ -130,6 +130,9 @@ class CoreHygieneTest < Minitest::Test
       refute_includes out, "clean"
       out, status = Open3.capture2e({ "GITHUB_BASE_REF" => "nonexistent" }, SCRIPT, chdir: repo)
       refute status.success?, out
+      out, status = Open3.capture2e({ "GITHUB_BASE_REF" => nil }, SCRIPT, "--all", chdir: repo)
+      refute status.success?, out
+      assert_includes out, "must not start with '-'"
     end
   end
 

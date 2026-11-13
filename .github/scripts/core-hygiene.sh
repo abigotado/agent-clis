@@ -111,6 +111,12 @@ fi
 
 # An unresolvable range must fail: a bad revision would otherwise scan nothing
 # and report a clean result.
+case "${range}" in
+  -*)
+    echo "::error::core hygiene: the revision range must not start with '-'"
+    exit 1
+    ;;
+esac
 if ! git rev-list "${range}" >/dev/null 2>&1; then
   echo "::error::core hygiene: cannot resolve revision range '${range}'; fetch the base branch or pass a valid range"
   exit 1
