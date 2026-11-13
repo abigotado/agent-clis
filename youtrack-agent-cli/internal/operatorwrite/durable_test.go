@@ -16,9 +16,9 @@ func TestDurablePlansOutliveLegacyWindowForEveryWriteKind(t *testing.T) {
 		request  Request
 		version  int
 	}{
-		{"issue create", testCreateSnapshot, Request{Kind: KindIssueCreate, Summary: "Durable plan", Description: "Body"}, PlanVersion4},
+		{"issue create", testCreateSnapshot, Request{Kind: KindIssueCreate, Summary: "Durable plan", Description: "Body"}, PlanVersion5},
 		{"issue update", func(t *testing.T) Snapshot { return testSnapshot(t, KindIssueUpdate) }, Request{Kind: KindIssueUpdate}, PlanVersion4},
-		{"comment add", func(t *testing.T) Snapshot { return testSnapshot(t, KindCommentAdd) }, Request{Kind: KindCommentAdd, CommentText: "Durable comment"}, PlanVersion2},
+		{"comment add", func(t *testing.T) Snapshot { return testSnapshot(t, KindCommentAdd) }, Request{Kind: KindCommentAdd, CommentText: "Durable comment"}, PlanVersion5},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

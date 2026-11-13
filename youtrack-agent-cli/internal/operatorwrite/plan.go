@@ -238,7 +238,7 @@ func validUpdateValues(f Field) bool {
 
 // needsPlanVersion4 reports whether the snapshot carries a User field or a
 // null target, in the update field or in any create field, or an attachment,
-// which only a version 4 plan may hold.
+// which only a version 4 or later plan may hold.
 func needsPlanVersion4(s Snapshot) bool {
 	if s.Attachment != nil {
 		return true
@@ -281,7 +281,8 @@ func validGeneration(value string) bool {
 	return err == nil && len(raw) == 32 && base64.RawURLEncoding.EncodeToString(raw) == value
 }
 
-// Marker is public evidence for bounded reconciliation, not an approval.
+// Marker is the visible footer that plans older than version 5 carry as
+// reconciliation evidence. It is kept to validate and reconcile those plans.
 func Marker(id string) string { return "[youtrack operator-write " + id + "]" }
 
 // validSummary accepts one canonical line, so an exact response comparison
@@ -302,6 +303,27 @@ func validSummary(s string) bool {
 // surrounding whitespace, so the marker suffix stays exact after storage.
 func validDescriptionBody(s string) bool {
 	return s == "" || validText(s, MaxDescriptionBytes, true) && strings.TrimSpace(s) == s && !strings.ContainsRune(s, '\r')
+}
+
+// validCommentBody accepts canonical comment text for a version 5 plan: no
+// surrounding whitespace and no CR, so the text YouTrack stores and returns
+// compares byte for byte. Text outside that is refused, never normalised.
+func validCommentBody(s string) bool {
+	return validText(s, MaxCommentBytes, true) && strings.TrimSpace(s) == s && !strings.ContainsRune(s, '\r')
+}
+
+// CarriesMarker reports whether the plan's request text ends in the visible
+// operator marker. Only the plan versions that were prepared that way do; a
+// version 5 plan never does. It is the single switch for marker handling.
+func (p Plan) CarriesMarker() bool {
+	switch p.Request.Kind {
+	case KindIssueCreate:
+		return p.Version == LegacyPlanVersion1 || p.Version == PlanVersion2 || p.Version == PlanVersion4
+	case KindCommentAdd:
+		return p.Version == LegacyPlanVersion1 || p.Version == PlanVersion2
+	default:
+		return false
+	}
 }
 
 func finalDescription(body, id string) string {
@@ -353,13 +375,8 @@ func Prepare(snapshot Snapshot, request Request, now time.Time) (Plan, error) {
 		if !validDescriptionBody(request.Description) {
 			return Plan{}, invalid()
 		}
-		request.Description = finalDescription(request.Description, id)
-		if len(request.Description) > MaxDescriptionBytes {
-			return Plan{}, invalid()
-		}
 	case KindCommentAdd:
-		request.CommentText += "\n\n" + Marker(id)
-		if len(request.CommentText) > MaxCommentBytes {
+		if !validCommentBody(request.CommentText) {
 			return Plan{}, invalid()
 		}
 	case KindIssueUpdate:
@@ -428,15 +445,46 @@ func ValidatePlan(p Plan) error {
 		if p.Snapshot.Kind != KindIssueUpdate && p.Snapshot.Kind != KindIssueEdit && p.Snapshot.Kind != KindIssueCreate && p.Snapshot.Kind != KindIssueLink && p.Snapshot.Kind != KindAttachmentAdd || !p.ExpiresAt.IsZero() {
 			return invalid()
 		}
+	case PlanVersion5:
+		if p.Snapshot.Kind != KindIssueCreate && p.Snapshot.Kind != KindCommentAdd || !p.ExpiresAt.IsZero() {
+			return invalid()
+		}
 	default:
 		return invalid()
 	}
-	if p.Version != PlanVersion4 && needsPlanVersion4(p.Snapshot) {
+	if p.Version != PlanVersion4 && p.Version != PlanVersion5 && needsPlanVersion4(p.Snapshot) {
 		return invalid()
 	}
 	if !validRequest(p.Request) {
 		return invalid()
 	}
+	if p.Version == PlanVersion5 {
+		// The text is sent verbatim, so the marker is never part of it.
+		switch p.Request.Kind {
+		case KindIssueCreate:
+			if !validDescriptionBody(p.Request.Description) {
+				return invalid()
+			}
+		case KindCommentAdd:
+			if !validCommentBody(p.Request.CommentText) {
+				return invalid()
+			}
+		}
+	}
+	if p.Version != PlanVersion5 {
+		if err := validateMarkerText(p); err != nil {
+			return err
+		}
+	}
+	sha, err := digest(p)
+	if err != nil || sha != p.SHA256 {
+		return invalid()
+	}
+	return nil
+}
+
+// validateMarkerText checks the marker suffix of a plan older than version 5.
+func validateMarkerText(p Plan) error {
 	switch p.Request.Kind {
 	case KindIssueCreate:
 		d := p.Request.Description
@@ -460,10 +508,6 @@ func ValidatePlan(p Plan) error {
 	case KindAttachmentAdd:
 		// validRequest already rejects all mutable payload fields.
 	default:
-		return invalid()
-	}
-	sha, err := digest(p)
-	if err != nil || sha != p.SHA256 {
 		return invalid()
 	}
 	return nil

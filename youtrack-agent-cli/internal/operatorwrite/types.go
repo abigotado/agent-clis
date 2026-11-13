@@ -24,7 +24,11 @@ const (
 	// explicit null (clear) target, the issue.edit and issue.link plans, and the
 	// issue.create plan, whose fields may likewise be a User field or a clear.
 	// Earlier plans refuse all of these.
-	PlanVersion4     = 4
+	PlanVersion4 = 4
+	// PlanVersion5 is the issue.create and comment.add plan whose request text
+	// is sent verbatim: no visible marker is appended, and reconciliation
+	// compares content instead.
+	PlanVersion5     = 5
 	Lane             = "operator-write-v1"
 	ConfirmationMode = "operator_confirmed"
 	Notifications    = "youtrack-default"
@@ -37,8 +41,8 @@ const (
 	MaxRequestBytes               = 256 * 1024
 	MaxPlanBytes                  = 256 * 1024
 	MaxRecordBytes                = 512 * 1024
-	// MaxCommentBytes and MaxDescriptionBytes include the visible operator
-	// marker added by Prepare.
+	// MaxCommentBytes and MaxDescriptionBytes bound the request text; plans
+	// older than version 5 count the visible operator marker they carry.
 	MaxCommentBytes     = 32 * 1024
 	MaxDescriptionBytes = 32 * 1024
 	MaxSummaryBytes     = 1024
@@ -57,7 +61,7 @@ func PlanLifetime(version int) string {
 	switch version {
 	case LegacyPlanVersion1:
 		return LegacyPlanLifetime
-	case PlanVersion2, PlanVersion3, PlanVersion4:
+	case PlanVersion2, PlanVersion3, PlanVersion4, PlanVersion5:
 		return CurrentPlanLifetime
 	default:
 		return ""
@@ -68,7 +72,9 @@ func PlanLifetime(version int) string {
 // It is the single place that maps a kind to its plan version.
 func PlanVersionFor(kind Kind) int {
 	switch kind {
-	case KindIssueUpdate, KindIssueEdit, KindIssueCreate, KindIssueLink, KindAttachmentAdd:
+	case KindIssueCreate, KindCommentAdd:
+		return PlanVersion5
+	case KindIssueUpdate, KindIssueEdit, KindIssueLink, KindAttachmentAdd:
 		return PlanVersion4
 	case KindCommentDelete:
 		return PlanVersion3
@@ -81,7 +87,7 @@ func PlanVersionFor(kind Kind) int {
 // has no local expiry, so a claimed plan stays finalizable.
 func durablePlanVersion(version int) bool {
 	switch version {
-	case PlanVersion2, PlanVersion3, PlanVersion4:
+	case PlanVersion2, PlanVersion3, PlanVersion4, PlanVersion5:
 		return true
 	default:
 		return false
