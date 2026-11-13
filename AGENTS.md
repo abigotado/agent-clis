@@ -7,7 +7,9 @@ contract, and most rules here follow from that.
 
 **Before editing under `youtrack-agent-cli/`, read
 [`youtrack-agent-cli/AGENTS.md`](youtrack-agent-cli/AGENTS.md).** It routes that
-CLI's own rules and gates.
+CLI's own rules and gates. The same goes for
+[`core/AGENTS.md`](core/AGENTS.md) before editing under `core/`, the shared
+module the CLIs import.
 
 ## Rule router
 
@@ -20,7 +22,7 @@ Read the smallest matching rule set before changing code:
 | Any behavior change | [testing](.agents/rules/testing.md) |
 | Credentials, auth, request construction, logging, or error formatting | [secrets](.agents/rules/secrets.md) |
 | Pushing, validating, CI, or anything under `.agents/` | [quality gates](.agents/rules/quality-gates.md) |
-| Anything inside a CLI directory | that directory's `AGENTS.md` |
+| Anything inside a CLI directory or `core/` | that directory's `AGENTS.md` |
 
 When multiple rows match, read all listed files. Nearby implementation and tests
 take precedence over generic examples in a rule. Do not apply a scoped rule to

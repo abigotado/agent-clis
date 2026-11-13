@@ -6,8 +6,11 @@ tool is its own Go module in its own directory. There is no root module.
 | Directory | Module path | Tags |
 | --- | --- | --- |
 | [`youtrack-agent-cli/`](https://github.com/abigotado/agent-clis/tree/main/youtrack-agent-cli) | `github.com/abigotado/agent-clis/youtrack-agent-cli` | `youtrack-agent-cli/vX.Y.Z` |
+| [`core/`](https://github.com/abigotado/agent-clis/tree/main/core) | `github.com/abigotado/agent-clis/core` | `core/vX.Y.Z` |
 
-Installation and usage are in each tool's own README.
+Installation and usage are in each tool's own README. `core/` is a library, not
+a tool: the shared native secret store (macOS Keychain, Windows Credential
+Manager, Linux Secret Service) that the tools import.
 
 ## Conventions
 
