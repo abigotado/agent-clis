@@ -1618,10 +1618,6 @@ func operatorCommentObserved(comment youtrack.Comment, plan operatorwrite.Plan, 
 		comment.Author.ID == plan.Snapshot.Binding.AccountID && comment.Created >= notBefore
 }
 
-// operatorDescriptionMatches is the description rule for a created issue: an
-// empty plan description matches an absent or empty one, and any other
-// description must be equal. It backs every create identity check, because
-// youtrack.CreatedIssueMatches skips the description when the input omits it.
 // operatorCreateSearchQuery narrows the candidates for a plan with no marker
 // to the frozen project, the authenticated reporter and the days around the
 // claim; the exact comparison runs on the client. Marker plans keep searching
@@ -1637,9 +1633,14 @@ func operatorCreateSearchQuery(plan operatorwrite.Plan, attempt operatorwrite.At
 	return "project: " + key + " reporter: me created: " + claimed.AddDate(0, 0, -1).Format("2006-01-02") + " .. " + claimed.AddDate(0, 0, 1).Format("2006-01-02")
 }
 
+// operatorDescriptionMatches is the description rule for a created issue: an
+// empty plan description matches an explicit null or empty one, never an
+// omitted member, and any other description must be equal. It backs every
+// create identity check, because youtrack.CreatedIssueMatches skips the
+// description when the input omits it.
 func operatorDescriptionMatches(issue youtrack.Issue, plan operatorwrite.Plan) bool {
 	if plan.Request.Description == "" {
-		return issue.Description == nil || *issue.Description == ""
+		return issue.DescriptionPresent() && (issue.Description == nil || *issue.Description == "")
 	}
 	return issue.Description != nil && *issue.Description == plan.Request.Description
 }

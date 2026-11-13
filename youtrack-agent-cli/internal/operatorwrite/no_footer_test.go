@@ -62,7 +62,6 @@ func TestVersion5CommentTextMustBeCanonical(t *testing.T) {
 
 func TestHistoricalMarkerPlansStillValidate(t *testing.T) {
 	create, comment := testCreateSnapshot(t), testSnapshot(t, KindCommentAdd)
-	plans := map[string]Plan{}
 	for _, test := range []struct {
 		name     string
 		snapshot Snapshot
@@ -82,12 +81,10 @@ func TestHistoricalMarkerPlansStillValidate(t *testing.T) {
 		}
 		for _, version := range test.versions {
 			old := withMarker(t, plan, version)
-			plans[test.name+string(rune('0'+version))] = old
 			if err := ValidatePlan(old); err != nil || !old.CarriesMarker() {
 				t.Fatalf("%s v%d: err=%v carries=%v", test.name, version, err, old.CarriesMarker())
 			}
-			// A footer-less plan of an old version, or a v5 plan with a footer,
-			// is refused.
+			// A footer-less plan of an old version is refused.
 			stripped := old
 			stripped.Request = plan.Request
 			stripped.SHA256, _ = digest(stripped)
@@ -138,5 +135,43 @@ func TestValidatePlanVersion5Kinds(t *testing.T) {
 	timed.SHA256, _ = digest(timed)
 	if ValidatePlan(timed) == nil {
 		t.Fatal("v5 plan with expiry accepted")
+	}
+}
+
+func TestValidatePlanVersion5RefusesOtherKindsAndItsOwnMarker(t *testing.T) {
+	for _, test := range []struct {
+		snapshot Snapshot
+		request  Request
+	}{
+		{testCommentDeleteSnapshot(t), Request{Kind: KindCommentDelete}},
+		{editSnapshot(t), Request{Kind: KindIssueEdit, Summary: "New title"}},
+		{linkSnapshot(t), Request{Kind: KindIssueLink}},
+		{attachmentSnapshot(t), Request{Kind: KindAttachmentAdd}},
+		{testSnapshot(t, KindIssueUpdate), Request{Kind: KindIssueUpdate}},
+	} {
+		plan, err := Prepare(test.snapshot, test.request, test.snapshot.CapturedAt.Add(1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan.Version = PlanVersion5
+		plan.SHA256, _ = digest(plan)
+		if ValidatePlan(plan) == nil {
+			t.Fatalf("v5 plan accepted for kind %s", test.request.Kind)
+		}
+	}
+	create, err := prepareSnapshot(testCreateSnapshot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	comment := testPlan(t, KindCommentAdd)
+	for _, plan := range []Plan{create, comment} {
+		plan.Request.Description = map[bool]string{true: plan.Request.Description + "\n\n" + Marker(plan.ID), false: ""}[plan.Request.Kind == KindIssueCreate]
+		if plan.Request.Kind == KindCommentAdd {
+			plan.Request.CommentText += "\n\n" + Marker(plan.ID)
+		}
+		plan.SHA256, _ = digest(plan)
+		if ValidatePlan(plan) == nil {
+			t.Fatalf("v5 %s plan carrying its own marker accepted", plan.Request.Kind)
+		}
 	}
 }

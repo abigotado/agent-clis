@@ -261,3 +261,52 @@ func TestOperatorReconcileCommentV5RefusesAnOffsetBeforeAnyRequest(t *testing.T)
 		t.Fatalf("err=%v credentials=%d network=%d", err, creds.calls, network.calls)
 	}
 }
+
+func TestOperatorCreateOmittedDescriptionMemberIsNotAnEmptyDescription(t *testing.T) {
+	omit := func(raw string) string { return strings.Replace(raw, `"description":"",`, ``, 1) }
+	t.Run("apply response", func(t *testing.T) {
+		f := newCreateFixture(t)
+		f.set(func() {
+			f.postResponse = func([]byte) string {
+				issue := matchingIssue("")
+				issue.Description, issue.ValueID = "", "101-2"
+				return omit(issue.json(t))
+			}
+		})
+		p := f.prepare(createStageFields, emptyCreateRequestJSON)
+		_, err := f.apply(p)
+		requireFailure(t, err, "WRITE_OUTCOME_UNKNOWN", errx.CodeConflict)
+	})
+	t.Run("reconcile search and exact read", func(t *testing.T) {
+		f := newCreateFixture(t)
+		p := f.prepare(createStageFields, emptyCreateRequestJSON)
+		f.set(func() { f.postStatus, f.postBody = 500, "boom" })
+		_, err := f.apply(p)
+		requireFailure(t, err, "WRITE_OUTCOME_UNKNOWN", errx.CodeConflict)
+		issue := matchingIssue(p.PlanID)
+		issue.Description = ""
+		raw := omit(issue.json(t))
+		f.set(func() { f.search, f.issues["2-99"] = "["+raw+"]", raw })
+		result, err := f.service.ReconcileOperatorWrite(t.Context(), OperatorReconcileInput{Profile: "work", PlanID: p.PlanID, Limit: 5})
+		if err != nil || result.Evidence != "inconclusive" {
+			t.Fatalf("result=%#v err=%v", result, err)
+		}
+	})
+}
+
+func TestOperatorReconcileCommentV5KeptIDIsCausal(t *testing.T) {
+	f := newOperatorFixture(t)
+	p := f.prepare(t, "comment.add")
+	attempt, err := f.service.OperatorWrites.Claim(t.Context(), p.PlanID, p.IntentSHA256, f.service.currentTime())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.commentText = p.Plan.Request.CommentText
+	if _, err := f.service.OperatorWrites.Finalize(t.Context(), p.PlanID, attempt, operatorwrite.Result{State: operatorwrite.StateUnknown, Code: "WRITE_OUTCOME_UNKNOWN", RemoteID: "4-1"}, f.service.currentTime()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.service.ReconcileOperatorWrite(t.Context(), OperatorReconcileInput{Profile: "work", PlanID: p.PlanID, Limit: 2, Offset: 7})
+	if err != nil || result.State != string(operatorwrite.StateReconciled) || result.Evidence != "matching_comment_observed" || result.RemoteID != "4-1" || f.pages.Load() != 0 || f.exactComments.Load() != 1 {
+		t.Fatalf("result=%#v err=%v pages=%d exact=%d", result, err, f.pages.Load(), f.exactComments.Load())
+	}
+}

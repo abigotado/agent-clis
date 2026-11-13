@@ -377,7 +377,9 @@ func Prepare(snapshot Snapshot, request Request, now time.Time) (Plan, error) {
 		}
 	case KindCommentAdd:
 		if !validCommentBody(request.CommentText) {
-			return Plan{}, invalid()
+			e := errx.Usage("comment text must be nonblank, without leading or trailing whitespace and without carriage returns")
+			e.Reason = "OPERATOR_WRITE_INVALID"
+			return Plan{}, e.WithHint("trim the comment text and use LF line breaks, then prepare again")
 		}
 	case KindIssueUpdate:
 		// The frozen snapshot is the complete update payload.
@@ -459,7 +461,12 @@ func ValidatePlan(p Plan) error {
 		return invalid()
 	}
 	if p.Version == PlanVersion5 {
-		// The text is sent verbatim, so the marker is never part of it.
+		// The text is sent verbatim, so this plan's own marker is never part of
+		// it: a relabelled marker plan would post a footer that content
+		// reconciliation does not expect.
+		if strings.Contains(p.Request.Description, Marker(p.ID)) || strings.Contains(p.Request.CommentText, Marker(p.ID)) {
+			return invalid()
+		}
 		switch p.Request.Kind {
 		case KindIssueCreate:
 			if !validDescriptionBody(p.Request.Description) {
