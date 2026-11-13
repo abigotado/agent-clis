@@ -112,6 +112,9 @@ jobs:
           ruby .github/scripts/ci-changes_test.rb
           bash .github/scripts/pre-push_test.sh
 
+      - name: Core hygiene check tests
+        run: ruby .github/scripts/core-hygiene_test.rb
+
       - name: Generated mirrors must stay untracked
         run: |
           TRACKED=$(git ls-files .claude .codex)
@@ -153,7 +156,13 @@ jobs:
       - name: Git Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      # Needs the full history: the commit messages of the pull request range
+      # are scanned together with the tracked files under core/.
+      - name: Hygiene
+        run: ../.github/scripts/core-hygiene.sh
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
