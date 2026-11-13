@@ -2,6 +2,8 @@ name: core-tag
 
 # Verifies a core/v* tag after it is pushed. It only reads: it creates no
 # release and publishes nothing, so a bad tag is reported and left to a person.
+# The Go steps repeat the core-unit job of ci.yaml so the tagged commit is
+# checked again with the vulnerability database of tag time; keep them in step.
 on:
   push:
     tags:
@@ -17,9 +19,11 @@ jobs:
   verify:
     name: Verify the core release tag
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
+        working-directory: core
     steps:
       - name: Git Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -39,7 +43,8 @@ jobs:
             exit 1
           fi
           # fetch-depth: 0 already brought every branch, origin/main included.
-          git rev-parse --verify --quiet origin/main >/dev/null
+          git rev-parse --verify --quiet origin/main >/dev/null \
+            || { echo "::error::origin/main is missing after checkout"; exit 1; }
           if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
             echo "::error::tagged commit ${GITHUB_SHA} is not an ancestor of origin/main"
             exit 1
@@ -52,8 +57,15 @@ jobs:
           cache: true
           cache-dependency-path: core/go.sum
 
+      - name: Go toolchain matches go.mod
+        run: |
+          set -euo pipefail
+          want="$(sed -n 's/^toolchain //p' go.mod)"
+          test -n "${want}"
+          go version
+          go version | grep -Fq " ${want} "
+
       - name: gofmt
-        working-directory: core
         run: |
           UNFORMATTED=$(git ls-files -z -- '*.go' | xargs -0 gofmt -l)
           if [ -n "$UNFORMATTED" ]; then
@@ -62,10 +74,54 @@ jobs:
             exit 1
           fi
 
-      - name: go vet
-        working-directory: core
-        run: go vet ./...
+      - name: go vet on every target OS
+        run: |
+          set -euo pipefail
+          for target_os in linux darwin windows; do
+            echo "go vet GOOS=${target_os}"
+            GOOS="${target_os}" go vet ./...
+          done
+
+      - name: Verify module checksums
+        run: go mod verify
 
       - name: go test
-        working-directory: core
         run: go test -race ./...
+
+      - name: go test without cgo
+        run: CGO_ENABLED=0 go test ./...
+
+      - name: Vulnerability scan
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+          for target_os in linux darwin windows; do
+            echo "govulncheck GOOS=${target_os}"
+            GOOS="${target_os}" govulncheck ./...
+          done
+
+      - name: staticcheck on every target OS
+        run: |
+          set -euo pipefail
+          go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+          for target_os in linux darwin windows; do
+            echo "staticcheck GOOS=${target_os}"
+            GOOS="${target_os}" staticcheck ./...
+          done
+
+      - name: Dependency closure
+        run: |
+          set -euo pipefail
+          allowed="$(printf '%s\n' github.com/abigotado/agent-clis/core golang.org/x/sys github.com/godbus/dbus/v5 | LC_ALL=C sort)"
+          for target_os in linux darwin windows; do
+            modules="$(GOOS="${target_os}" go list -deps -test -f '{{if not .Standard}}{{with .Module}}{{.Path}}{{else}}no-module:{{.ImportPath}}{{end}}{{end}}' ./... | awk 'NF' | LC_ALL=C sort -u)"
+            test -n "${modules}"
+            unexpected="$(LC_ALL=C comm -23 <(printf '%s\n' "${modules}") <(printf '%s\n' "${allowed}"))"
+            if [ -n "${unexpected}" ]; then
+              echo "::error::core depends on modules outside the allowed set for GOOS=${target_os}:"
+              echo "${unexpected}"
+              exit 1
+            fi
+          done
