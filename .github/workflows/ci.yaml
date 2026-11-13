@@ -322,8 +322,9 @@ jobs:
           set -euo pipefail
           log="$(mktemp)"
           go test -race -count=1 -timeout 20m -v -tags keychainintegration ./secretstore/... 2>&1 | tee "${log}"
-          # TestKeychainHelper is left out on purpose: it is the child process
-          # of TestKeychainAcrossBinaries and skips when run directly.
+          # TestKeychainHelper, TestInteractionScopeHelper and TestInjectionHelper
+          # are left out on purpose: each is the helper child process of another
+          # test and skips when run directly.
           for name in TestKeychainScratch TestKeychainAcrossBinaries TestInteractionFlagScope TestHardenedRuntimeRefusesInjection TestKeychainSaveInReadOnlySandbox TestKeychainSaveInReadOnlySandbox/Save_under_a_profile_that_denies_writes_to_the_keychain_is_read-only TestKeychainSaveInReadOnlySandbox/control:_the_open-only_helper_saves_without_a_sandbox; do
             grep -Fq -- "--- PASS: ${name} " "${log}" || { echo "::error::${name} did not pass"; exit 1; }
           done

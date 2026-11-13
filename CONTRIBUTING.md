@@ -78,7 +78,9 @@ was measured in a logged-in GUI (Aqua) session on macOS 26.6.2, 2026-11-13.
 
 Before a pull request, run the hygiene check from the repository root. It scans
 the tracked files under `core/` and the commit messages that touch it for local
-paths, private hosts, token shapes, private keys and assistant attribution:
+paths, YouTrack Cloud hosts (`*.youtrack.cloud` and `*.myjetbrains.com` only),
+token shapes, private keys and assistant attribution (an unresolvable range
+fails the check):
 
 ```bash
 .github/scripts/core-hygiene.sh origin/main..HEAD
