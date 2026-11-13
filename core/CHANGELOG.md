@@ -24,16 +24,17 @@ All notable changes to the `core` module are listed here. Tags are
 ### Measured facts
 
 - macOS: the flag that forbids keychain prompts
-  (`SecKeychainSetUserInteractionAllowed`) is process-scoped, measured from a
-  terminal session: one process turning it off does not change what another
-  process of the same user reads.
+  (`SecKeychainSetUserInteractionAllowed`) is process-scoped, measured in a
+  logged-in GUI (Aqua) session on macOS 26.6.2: one process turning it off
+  does not change what another process of the same user reads.
 - macOS: a `sandbox-exec` profile that denies file writes makes a keychain
   write fail with OSStatus 100001 while reads still work. Codex's read-only
-  sandbox (codex-cli 0.167.1, macOS 26.6.2) differs: it refuses every
-  legacy-keychain call with OSStatus -50, reads, unlock and status included.
-  Save reports `KindReadOnly` in both cases, through a temporary rule for an
-  unclassified status on a write; Load under the Codex sandbox reports
-  `KindOther` with -50.
+  sandbox (codex-cli 0.167.1, `:read-only` profile, macOS 26.6.2) differs:
+  the add, the unlock and the status read return OSStatus -50, and searches
+  find nothing. Save reports `KindReadOnly` in both cases, through a temporary
+  rule for an unclassified status on a write. Load of a stored secret under
+  the Codex sandbox reports `KindNotFound` (-25300), so a stored credential
+  looks absent there; how to report that is left to the spec before M6.
 
 ### Notes for the first consumer (M6)
 

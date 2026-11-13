@@ -60,22 +60,21 @@ The keychain run needs `-timeout 20m`: it builds and signs helper binaries.
 (`core-macos`, `core-windows`, `core-linux`) runs these with the variables set.
 Without the variable a test skips when its environment is missing.
 
-One macOS row is opt-in and local only; CI never runs it. Setting
-`SECRETSTORE_CODEX_SANDBOX=/path/to/codex` runs
-`TestKeychainSaveInReadOnlySandbox/Save_under_codex_sandbox_read-only_is_read-only`,
-which saves under Codex's read-only sandbox. The read-only policy is set on the
-command line and no Codex configuration is changed:
+Two macOS rows are opt-in and local only; CI never runs them. Setting
+`SECRETSTORE_CODEX_SANDBOX=/path/to/codex` runs the `codex` subtests of
+`TestKeychainSaveInReadOnlySandbox`, which save and load under Codex's
+built-in `:read-only` profile. Codex runs with an empty temporary `CODEX_HOME`
+and a scratch working directory, so no Codex configuration is read or changed:
 
 ```bash
 cd core
 SECRETSTORE_REQUIRE_KEYCHAIN=1 SECRETSTORE_CODEX_SANDBOX=/path/to/codex \
   go test -race -count=1 -v -tags keychainintegration \
-  -run 'TestKeychainSaveInReadOnlySandbox/Save_under_codex_sandbox_read-only_is_read-only' ./secretstore
+  -run 'TestKeychainSaveInReadOnlySandbox' ./secretstore
 ```
 
 Recorded measurement: the macOS keychain interaction flag is process-scoped. It
-was measured in an Aqua GUI session (macOS 26.6.2, 2026-11-13) as well as from a
-terminal session.
+was measured in a logged-in GUI (Aqua) session on macOS 26.6.2, 2026-11-13.
 
 Before a pull request, run the hygiene check from the repository root. It scans
 the tracked files under `core/` and the commit messages that touch it for local
