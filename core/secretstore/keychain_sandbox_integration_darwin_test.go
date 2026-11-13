@@ -107,10 +107,11 @@ func (r helperResult) stoppedAtKeychainOpen() bool {
 // unclassified status on a write is KindReadOnly. The row records the status the
 // refusal carried, which is what the exact classification will be written from.
 //
-// This is an approximation of the real sandbox, not the real one: the status
-// that Codex's sandbox returns (100001 in the notes) can differ from what
-// sandbox-exec's file-write denial gives. The real classification is a local run
-// of the same save under `codex sandbox macos`, recorded with the versions.
+// This is an approximation of the real sandbox, not the real one. The real one
+// is the opt-in row below, run locally under `codex sandbox`: measured with
+// codex-cli 0.167.1 on macOS 26.6.2, it refuses every keychain call with -50,
+// where this profile's file-write denial gives 100001. Both reach read-only
+// through the temporary rule.
 //
 // The control runs the same helper under a profile that denies nothing and
 // expects the save to succeed, so a refusal that comes from sandbox-exec or the
@@ -166,23 +167,62 @@ func TestKeychainSaveInReadOnlySandbox(t *testing.T) {
 			}
 			t.Fatalf("the helper did not reach Save under the deny profile (exit %d)\n%s", r.exit, r.describe())
 		}
-		r.wantExit(t, 0)
-		r.verifyBinary(t, self)
-		t.Logf("Save under a denied write: kind %s, OSStatus %s", r.get(t, "error"), r.get(t, "status"))
-		r.want(t, "error", "read-only")
-		// A refused write changed nothing: outside the sandbox the key is absent
-		// and so is its stage item.
-		ctx := context.WithoutCancel(t.Context())
-		store := s.store(t, helperMaxSecret, secretstore.InteractionNever)
-		if _, err := store.Load(ctx, key); !errors.Is(err, secretstore.ErrNotFound) {
-			t.Errorf("Load after the refused Save: %v, want not-found", err)
-		}
-		staged, err := secretstore.StageExistsForTest(ctx, store, key)
-		if err != nil {
-			t.Fatalf("look up the stage after the refused Save: %v", err)
-		}
-		if staged {
-			t.Error("the refused Save left a stage item behind")
-		}
+		wantReadOnlySave(t, s, self, r, key)
 	})
+
+	// The real sandbox, run only where a developer points SECRETSTORE_CODEX_SANDBOX
+	// at a codex binary. It is opt-in and local: a CI runner has no codex, so the
+	// row skips there even under SECRETSTORE_REQUIRE_KEYCHAIN=1, and CI does not
+	// require it to pass. The command-line override selects the read-only policy
+	// for this run without reading or changing the developer's codex config.
+	t.Run("Save under codex sandbox read-only is read-only", func(t *testing.T) {
+		codex := os.Getenv(codexSandboxEnv)
+		if codex == "" {
+			t.Skipf("set %s to a codex binary to run this local row", codexSandboxEnv)
+		}
+		// Codex's sandbox refuses every keychain call with -50, the unlock and
+		// the status read included, so the helper only opens the keychain and
+		// this process, outside the sandbox, shows it is unlocked: a refusal
+		// is then the sandbox's and not a lock.
+		f.requireUnlocked(t)
+		key, secret := scratchKey(t), randomSecret(t)
+		r := f.start(t, helperCall{
+			bin:      self,
+			action:   actionSaveStatus,
+			key:      key,
+			secrets:  [][]byte{secret},
+			sandbox:  []string{codex, "sandbox", "-c", `sandbox_mode="read-only"`, "--"},
+			openOnly: true,
+		}).finish(t)
+		if _, reached := r.fields["error"]; !reached {
+			t.Fatalf("the helper did not reach Save under codex sandbox (exit %d)\n%s", r.exit, r.describe())
+		}
+		wantReadOnlySave(t, s, self, r, key)
+	})
+}
+
+// codexSandboxEnv names the codex binary for the opt-in codex sandbox row.
+const codexSandboxEnv = "SECRETSTORE_CODEX_SANDBOX"
+
+// wantReadOnlySave checks a helper's Save that a sandbox refused: the helper
+// exited cleanly, reported read-only, and outside the sandbox neither the key
+// nor its stage item exists.
+func wantReadOnlySave(t *testing.T, s *scratch, self testBinary, r helperResult, key secretstore.Key) {
+	t.Helper()
+	r.wantExit(t, 0)
+	r.verifyBinary(t, self)
+	t.Logf("Save under a denied write: kind %s, OSStatus %s", r.get(t, "error"), r.get(t, "status"))
+	r.want(t, "error", "read-only")
+	ctx := context.WithoutCancel(t.Context())
+	store := s.store(t, helperMaxSecret, secretstore.InteractionNever)
+	if _, err := store.Load(ctx, key); !errors.Is(err, secretstore.ErrNotFound) {
+		t.Errorf("Load after the refused Save: %v, want not-found", err)
+	}
+	staged, err := secretstore.StageExistsForTest(ctx, store, key)
+	if err != nil {
+		t.Fatalf("look up the stage after the refused Save: %v", err)
+	}
+	if staged {
+		t.Error("the refused Save left a stage item behind")
+	}
 }

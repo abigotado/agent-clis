@@ -274,6 +274,9 @@ type helperCall struct {
 	// sandbox, when set, is a command prefix the helper runs under, such as
 	// /usr/bin/sandbox-exec with its profile arguments.
 	sandbox []string
+	// openOnly has the helper open the keychain without unlocking it; see
+	// helperOpenOnlyEnv.
+	openOnly bool
 }
 
 // save has bin save secret under key and requires it to succeed.
@@ -334,6 +337,9 @@ func (f *fixture) start(t *testing.T, call helperCall) *helperProcess {
 		helperAccountEnv+"="+call.key.Account,
 		helperStepEnv+"="+strconv.Itoa(call.step),
 	)
+	if call.openOnly {
+		cmd.Env = append(cmd.Env, helperOpenOnlyEnv+"=1")
+	}
 	p := launchHelper(t, call, cmd, cancel)
 	if _, err := p.stdin.Write(append(input, '\n')); err != nil {
 		p.abort()

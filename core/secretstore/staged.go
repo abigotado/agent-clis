@@ -160,10 +160,12 @@ func (s *stagedStore) failure(op string, err error, write bool) *Error {
 	}
 	if write {
 		// Temporary rule: a write refused with a status not listed above is
-		// reported as read-only. The one known case is a sandbox that allows
-		// reads and denies keychain writes (status 100001 in the macOS Codex
-		// sandbox). Replace this with an exact classification once the
-		// status has been recorded on a real sandbox.
+		// reported as read-only. Two sandboxes are measured: a sandbox-exec
+		// profile that denies file writes to the keychain returns 100001, and
+		// Codex's read-only sandbox (codex-cli 0.167.1, macOS 26.6.2, 2026-11-13)
+		// refuses every keychain call, reads included, with -50 (errSecParam),
+		// which is also what a malformed call returns. Neither status names the
+		// sandbox, so an exact classification needs more than the status.
 		return s.fail(op, KindReadOnly, se.status)
 	}
 	return s.fail(op, KindOther, se.status)

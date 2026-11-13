@@ -267,6 +267,20 @@ static OSStatus kt_open(const char *path, const char *password, SecKeychainRef *
 	return errSecSuccess;
 }
 
+// kt_open_only opens a keychain file without unlocking it.
+static OSStatus kt_open_only(const char *path, SecKeychainRef *keychain) {
+	SecKeychainRef opened = NULL;
+	OSStatus status = SecKeychainOpen(path, &opened);
+	if (status != errSecSuccess) {
+		return status;
+	}
+	if (opened == NULL) {
+		return errSecInternalComponent;
+	}
+	*keychain = opened;
+	return errSecSuccess;
+}
+
 // The code signing SPI. The Security framework exports these without a public
 // header; a self-signed identity cannot be used through /usr/bin/codesign, which
 // refuses an untrusted one, but the signer API accepts it.
@@ -649,6 +663,28 @@ func Open(path, password string) (*Keychain, error) {
 		return nil, err
 	}
 	return &Keychain{ref: ref, path: path, password: password}, nil
+}
+
+// OpenWithoutUnlock opens a keychain Create made, in another process, and
+// neither unlocks it nor reads its status. It is for a process in a sandbox
+// that refuses every keychain call, Codex's read-only one included, where
+// Open fails before the call under test is reached; the process that made the
+// keychain keeps it unlocked and checks that itself. SecKeychainOpen does not
+// look at the file, so a wrong path only fails at the first real call.
+func OpenWithoutUnlock(path string) (*Keychain, error) {
+	if !filepath.IsAbs(path) {
+		return nil, errors.New("kctest: the keychain path must be absolute")
+	}
+	if name := filepath.Base(path); !strings.HasPrefix(name, namePrefix) || !strings.HasSuffix(name, ".keychain-db") {
+		return nil, errors.New("kctest: refusing to open a keychain that Create did not make")
+	}
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+	var ref C.SecKeychainRef
+	if err := check("open the keychain", C.kt_open_only(cPath, &ref)); err != nil {
+		return nil, err
+	}
+	return &Keychain{ref: ref, path: path}, nil
 }
 
 // Close releases the reference without deleting the keychain file. A second

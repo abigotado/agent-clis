@@ -50,6 +50,9 @@ const (
 	helperServiceEnv  = "SECRETSTORE_KEYCHAIN_HELPER_SERVICE"
 	helperAccountEnv  = "SECRETSTORE_KEYCHAIN_HELPER_ACCOUNT"
 	helperStepEnv     = "SECRETSTORE_KEYCHAIN_HELPER_STEP"
+	// helperOpenOnlyEnv set to 1 opens the keychain without unlocking it or
+	// checking its status, for a helper in a sandbox that refuses both.
+	helperOpenOnlyEnv = "SECRETSTORE_KEYCHAIN_HELPER_OPEN_ONLY"
 
 	helperResultPrefix = "RESULT "
 	// helperCrashExit is the exit status of a helper that stopped itself in the
@@ -106,6 +109,9 @@ type helperSession struct {
 	kc      *kctest.Keychain
 	key     secretstore.Key
 	secrets [][]byte
+	// openOnly says the keychain was opened without an unlock or a status
+	// check; the parent process checks its lock state instead.
+	openOnly bool
 }
 
 func (h *helperSession) emit(name, value string) {
@@ -181,12 +187,19 @@ func newHelperSession(t *testing.T) *helperSession {
 	if !filepath.IsAbs(path) {
 		t.Fatal("the keychain path is not in the environment")
 	}
-	h.kc, err = kctest.Open(path, input.Password)
+	if os.Getenv(helperOpenOnlyEnv) == "1" {
+		h.openOnly = true
+		h.kc, err = kctest.OpenWithoutUnlock(path)
+	} else {
+		h.kc, err = kctest.Open(path, input.Password)
+	}
 	if err != nil {
 		t.Fatalf("open the scratch keychain: %v", err)
 	}
 	t.Cleanup(h.kc.Close)
-	h.requireUnlocked("before the action")
+	if !h.openOnly {
+		h.requireUnlocked("before the action")
+	}
 	return h
 }
 
@@ -227,6 +240,10 @@ func (h *helperSession) emitLoad(store secretstore.Store, errName string) {
 
 func (h *helperSession) finish() {
 	h.t.Helper()
+	if h.openOnly {
+		h.emit("unlocked", "unchecked")
+		return
+	}
 	h.requireUnlocked("after the action")
 	h.emit("unlocked", "true")
 }
