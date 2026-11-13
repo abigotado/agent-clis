@@ -235,6 +235,16 @@ func (h *helperSession) emitLoad(store secretstore.Store, errName string) {
 	if err == nil {
 		h.emit("value", digestOf(value))
 	}
+	if h.openOnly {
+		// The rows that open without an unlock measure a sandbox, so the
+		// status a failure carries is what they record. It is not secret.
+		status := int64(0)
+		var se *secretstore.Error
+		if errors.As(err, &se) {
+			status = se.Status
+		}
+		h.emit("load-status", strconv.FormatInt(status, 10))
+	}
 	clear(value)
 }
 

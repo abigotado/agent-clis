@@ -57,6 +57,17 @@ func TestInteractionScopeHelper(t *testing.T) {
 		if err := kctest.SetInteractionAllowed(false); err != nil {
 			t.Fatalf("turn the prompts off: %v", err)
 		}
+		restored := false
+		defer func() {
+			// A failure between here and the restore below must not leave
+			// this process's prompts off on its way out.
+			if restored {
+				return
+			}
+			if err := kctest.SetInteractionAllowed(true); err != nil {
+				t.Errorf("turn the prompts on again after a failure: %v", err)
+			}
+		}()
 		read("held")
 		report("paused", "1")
 		if line, err := bufio.NewReader(os.Stdin).ReadString('\n'); err != nil || strings.TrimSpace(line) != helperGoLine {
@@ -65,6 +76,7 @@ func TestInteractionScopeHelper(t *testing.T) {
 		if err := kctest.SetInteractionAllowed(true); err != nil {
 			t.Fatalf("turn the prompts on again: %v", err)
 		}
+		restored = true
 		read("restored")
 	case scopeRestore:
 		if err := kctest.SetInteractionAllowed(true); err != nil {

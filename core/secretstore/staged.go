@@ -160,12 +160,13 @@ func (s *stagedStore) failure(op string, err error, write bool) *Error {
 	}
 	if write {
 		// Temporary rule: a write refused with a status not listed above is
-		// reported as read-only. Two sandboxes are measured: a sandbox-exec
-		// profile that denies file writes to the keychain returns 100001, and
-		// Codex's read-only sandbox (codex-cli 0.167.1, macOS 26.6.2, 2026-11-13)
-		// refuses every keychain call, reads included, with -50 (errSecParam),
-		// which is also what a malformed call returns. Neither status names the
-		// sandbox, so an exact classification needs more than the status.
+		// reported as read-only. Two sandboxes are measured. A sandbox-exec
+		// profile that denies file writes to the keychain returns 100001.
+		// Codex's read-only sandbox (codex-cli 0.167.1, macOS 26.6.2,
+		// 2026-11-13) returns -50 (errSecParam) for the add, the unlock and the
+		// status read, and its searches find nothing, so a stored item reads as
+		// not-found there. -50 is also what a malformed call returns, so the
+		// status alone cannot name the sandbox.
 		return s.fail(op, KindReadOnly, se.status)
 	}
 	return s.fail(op, KindOther, se.status)

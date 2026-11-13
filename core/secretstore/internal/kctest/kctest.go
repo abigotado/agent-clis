@@ -667,9 +667,9 @@ func Open(path, password string) (*Keychain, error) {
 
 // OpenWithoutUnlock opens a keychain Create made, in another process, and
 // neither unlocks it nor reads its status. It is for a process in a sandbox
-// that refuses every keychain call, Codex's read-only one included, where
-// Open fails before the call under test is reached; the process that made the
-// keychain keeps it unlocked and checks that itself. SecKeychainOpen does not
+// that refuses the unlock and the status read, as Codex's read-only one does
+// with -50, where Open fails before the call under test is reached; the
+// process that made the keychain keeps it unlocked and checks that itself. SecKeychainOpen does not
 // look at the file, so a wrong path only fails at the first real call.
 func OpenWithoutUnlock(path string) (*Keychain, error) {
 	if !filepath.IsAbs(path) {

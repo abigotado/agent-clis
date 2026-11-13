@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -108,9 +109,8 @@ func (r helperResult) stoppedAtKeychainOpen() bool {
 // refusal carried, which is what the exact classification will be written from.
 //
 // This is an approximation of the real sandbox, not the real one. The real one
-// is the opt-in row below, run locally under `codex sandbox`: measured with
-// codex-cli 0.167.1 on macOS 26.6.2, it refuses every keychain call with -50,
-// where this profile's file-write denial gives 100001. Both reach read-only
+// is the opt-in codex rows below, run locally: there the add returns -50 where
+// this profile's file-write denial gives 100001, and both reach read-only
 // through the temporary rule.
 //
 // The control runs the same helper under a profile that denies nothing and
@@ -170,20 +170,11 @@ func TestKeychainSaveInReadOnlySandbox(t *testing.T) {
 		wantReadOnlySave(t, s, self, r, key)
 	})
 
-	// The real sandbox, run only where a developer points SECRETSTORE_CODEX_SANDBOX
-	// at a codex binary. It is opt-in and local: a CI runner has no codex, so the
-	// row skips there even under SECRETSTORE_REQUIRE_KEYCHAIN=1, and CI does not
-	// require it to pass. The command-line override selects the read-only policy
-	// for this run without reading or changing the developer's codex config.
-	t.Run("Save under codex sandbox read-only is read-only", func(t *testing.T) {
-		codex := os.Getenv(codexSandboxEnv)
-		if codex == "" {
-			t.Skipf("set %s to a codex binary to run this local row", codexSandboxEnv)
-		}
-		// Codex's sandbox refuses every keychain call with -50, the unlock and
-		// the status read included, so the helper only opens the keychain and
-		// this process, outside the sandbox, shows it is unlocked: a refusal
-		// is then the sandbox's and not a lock.
+	// The open-only mode the codex rows need, without a sandbox: Save must
+	// succeed through a keychain the helper opened without an unlock, so a
+	// refusal in the codex rows comes from the sandbox and not from the mode.
+	// It needs no codex and runs on CI.
+	t.Run("control: the open-only helper saves without a sandbox", func(t *testing.T) {
 		f.requireUnlocked(t)
 		key, secret := scratchKey(t), randomSecret(t)
 		r := f.start(t, helperCall{
@@ -191,7 +182,44 @@ func TestKeychainSaveInReadOnlySandbox(t *testing.T) {
 			action:   actionSaveStatus,
 			key:      key,
 			secrets:  [][]byte{secret},
-			sandbox:  []string{codex, "sandbox", "-c", `sandbox_mode="read-only"`, "--"},
+			openOnly: true,
+		}).finish(t)
+		r.wantExit(t, 0)
+		r.verifyBinary(t, self)
+		r.want(t, "error", "none")
+		f.expectLoad(t, self, key, secret)
+
+		// And it reads the item back, so a not-found in the codex Load row is
+		// the sandbox's and not the mode's.
+		l := f.start(t, helperCall{bin: self, action: actionLoad, key: key, openOnly: true}).finish(t)
+		l.wantExit(t, 0)
+		l.verifyBinary(t, self)
+		l.want(t, "error", "none")
+		l.want(t, "value", digestOf(secret))
+	})
+
+	// The real sandbox, run only where a developer points SECRETSTORE_CODEX_SANDBOX
+	// at a codex binary. It is opt-in and local: a CI runner has no codex, so the
+	// rows skip there even under SECRETSTORE_REQUIRE_KEYCHAIN=1, and CI does not
+	// require them to pass. Codex runs with an empty CODEX_HOME and a scratch
+	// working directory, so no user or project config can select another
+	// policy, and a probe first shows the policy refuses a file write.
+	//
+	// Measured with codex-cli 0.167.1 on macOS 26.6.2 (2026-11-13): inside the
+	// sandbox, unlocking the keychain and reading its status return -50, so the
+	// helper only opens it and this process, outside, shows it is unlocked.
+	// Save's first read of the stage finds nothing and its add returns -50,
+	// which the temporary rule reports as read-only.
+	t.Run("Save under codex sandbox read-only is read-only", func(t *testing.T) {
+		prefix := codexSandbox(t)
+		f.requireUnlocked(t)
+		key, secret := scratchKey(t), randomSecret(t)
+		r := f.start(t, helperCall{
+			bin:      self,
+			action:   actionSaveStatus,
+			key:      key,
+			secrets:  [][]byte{secret},
+			sandbox:  prefix,
 			openOnly: true,
 		}).finish(t)
 		if _, reached := r.fields["error"]; !reached {
@@ -199,6 +227,65 @@ func TestKeychainSaveInReadOnlySandbox(t *testing.T) {
 		}
 		wantReadOnlySave(t, s, self, r, key)
 	})
+
+	// What a stored secret looks like from inside the sandbox. Measured: the
+	// search finds nothing and Load reports not-found with -25300, so under
+	// Codex a stored credential looks absent. The open-only control above reads
+	// the same kind of item back outside the sandbox, so this is the sandbox's
+	// doing. The row pins the measured result: a codex or macOS change that
+	// makes the item visible, or a backend change that classifies this case,
+	// fails it and is the moment to revisit the classification.
+	t.Run("Load under codex sandbox read-only reports a stored secret as not-found", func(t *testing.T) {
+		prefix := codexSandbox(t)
+		f.requireUnlocked(t)
+		key, secret := scratchKey(t), randomSecret(t)
+		f.save(t, self, key, secret)
+		r := f.start(t, helperCall{
+			bin:      self,
+			action:   actionLoad,
+			key:      key,
+			sandbox:  prefix,
+			openOnly: true,
+		}).finish(t)
+		r.wantExit(t, 0)
+		r.verifyBinary(t, self)
+		t.Logf("Load of a stored secret under codex sandbox: kind %s, OSStatus %s", r.get(t, "error"), r.get(t, "load-status"))
+		r.want(t, "error", "not-found")
+		r.want(t, "load-status", "-25300")
+	})
+}
+
+// codexSandbox returns the command prefix that runs a helper under codex
+// sandbox with its built-in :read-only permission profile, or skips when SECRETSTORE_CODEX_SANDBOX is
+// not set. Before returning it runs a probe under the same prefix and fails
+// unless the probe's file write is refused, so the rows cannot pass under a
+// policy that allows writes.
+func codexSandbox(t *testing.T) []string {
+	t.Helper()
+	codex := os.Getenv(codexSandboxEnv)
+	if codex == "" {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			fmt.Printf("::notice title=keychain integration::the codex sandbox rows are local only; %s is not set\n", codexSandboxEnv)
+		}
+		t.Skipf("set %s to a codex binary to run this local row", codexSandboxEnv)
+	}
+	prefix := []string{"/usr/bin/env", "CODEX_HOME=" + t.TempDir(), codex, "sandbox", "-P", ":read-only", "-C", t.TempDir(), "--"}
+
+	target := filepath.Join(t.TempDir(), "write-probe")
+	ctx, cancel := context.WithTimeout(t.Context(), sandboxProbeTimeout)
+	defer cancel()
+	probe := append(slices.Clone(prefix), "/usr/bin/touch", target)
+	out, err := exec.CommandContext(ctx, probe[0], probe[1:]...).CombinedOutput()
+	if err == nil {
+		t.Fatalf("a file write under codex sandbox succeeded, so the policy is not read-only:\n%s", tail(out, 512))
+	}
+	if _, statErr := os.Stat(target); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("the write probe's file exists after a refused write: %v", statErr)
+	}
+	if !strings.Contains(string(out), "Operation not permitted") {
+		t.Fatalf("the write probe failed for another reason than the sandbox: %v\n%s", err, tail(out, 512))
+	}
+	return prefix
 }
 
 // codexSandboxEnv names the codex binary for the opt-in codex sandbox row.
