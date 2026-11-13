@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestStoreClaimsAndFinalizesVersion4CreatePlans(t *testing.T) {
+func TestStoreClaimsAndFinalizesVersion5CreatePlans(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		snapshot func(*testing.T) Snapshot
@@ -24,7 +24,7 @@ func TestStoreClaimsAndFinalizesVersion4CreatePlans(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.Version != PlanVersion4 {
+			if plan.Version != PlanVersion5 {
 				t.Fatalf("plan version = %d", plan.Version)
 			}
 			if _, err := store.Create(ctx, plan); err != nil {

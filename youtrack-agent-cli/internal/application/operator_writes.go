@@ -1153,6 +1153,11 @@ func dispatchOperatorWrite(ctx context.Context, client *youtrack.Client, plan op
 	switch snapshot.Kind {
 	case operatorwrite.KindIssueCreate:
 		issue, err := client.CreateIssue(ctx, operatorCreateInput(plan))
+		if err == nil && !operatorDescriptionMatches(issue, plan) {
+			// The client skips the description check for an omitted member, so
+			// an empty-description create verifies it here.
+			return issue.ID, issue.IDReadable, operatorUnknownError()
+		}
 		return issue.ID, issue.IDReadable, err
 	case operatorwrite.KindIssueUpdate, operatorwrite.KindIssueEdit:
 		issue, err := client.UpdateIssue(ctx, update)
@@ -1202,6 +1207,11 @@ func operatorCreateInput(plan operatorwrite.Plan) youtrack.CreateIssueInput {
 	snapshot, description := plan.Snapshot, plan.Request.Description
 	input := youtrack.CreateIssueInput{ProjectID: snapshot.Project.ID, ProjectKey: snapshot.Project.Key, Summary: plan.Request.Summary, Description: &description,
 		ExpectedReporterID: snapshot.Binding.AccountID, ExpectedReporterLogin: snapshot.Binding.AccountLogin}
+	if description == "" {
+		// An empty description is omitted, so YouTrack may answer null or "";
+		// operatorDescriptionMatches accepts both.
+		input.Description = nil
+	}
 	for _, field := range snapshot.Fields {
 		// A nil target is a validated clear; otherwise the target ID is sent.
 		create := youtrack.CreateCustomField{ProjectFieldID: field.ProjectFieldID, Name: field.Name, Type: field.Type}
@@ -1312,6 +1322,9 @@ func (s *Service) ReconcileOperatorWrite(ctx context.Context, input OperatorReco
 	if record.Plan.Snapshot.Kind == operatorwrite.KindIssueCreate && input.Offset != 0 {
 		return OperatorWriteInfo{}, errx.Usage("issue.create reconcile reads only the first search page; pass --offset 0")
 	}
+	if record.Plan.Snapshot.Kind == operatorwrite.KindCommentAdd && !record.Plan.CarriesMarker() && input.Offset != 0 && (record.Result == nil || record.Result.RemoteID == "") {
+		return OperatorWriteInfo{}, errx.Usage("comment.add reconcile without a marker reads only the first comments page; pass --offset 0")
+	}
 	if err := s.checkOperatorBinding(ctx, record.Plan.Snapshot, input.Profile); err != nil {
 		return OperatorWriteInfo{}, err
 	}
@@ -1330,14 +1343,16 @@ func (s *Service) ReconcileOperatorWrite(ctx context.Context, input OperatorReco
 	evidence := "inconclusive"
 	switch snapshot.Kind {
 	case operatorwrite.KindIssueCreate:
-		observed, observedEvidence, err := observeCreatedIssue(ctx, client, record.Plan, *record.Attempt, outcome.RemoteID, input.Limit)
+		observed, observedEvidence, causal, err := observeCreatedIssue(ctx, client, record.Plan, *record.Attempt, outcome.RemoteID, input.Limit)
 		if err != nil {
 			return OperatorWriteInfo{}, err
 		}
 		if observed.ID != "" {
-			outcome.State, outcome.Code = operatorwrite.StateReconciled, "ISSUE_OBSERVED"
-			outcome.RemoteID, outcome.RemoteReadableID = observed.ID, observed.IDReadable
 			evidence = observedEvidence
+			if causal {
+				outcome.State, outcome.Code = operatorwrite.StateReconciled, "ISSUE_OBSERVED"
+				outcome.RemoteID, outcome.RemoteReadableID = observed.ID, observed.IDReadable
+			}
 		}
 	case operatorwrite.KindIssueUpdate, operatorwrite.KindIssueEdit, operatorwrite.KindCommentAdd:
 		issue, err := client.GetIssue(ctx, snapshot.Issue.ID)
@@ -1382,10 +1397,14 @@ func (s *Service) ReconcileOperatorWrite(ctx context.Context, input OperatorReco
 					comments = comments[:input.Limit]
 				}
 			}
+			// A plan without a marker is matched by content, which proves only
+			// that an identical comment exists, not that this attempt made it.
+			contentOnly := !exactFetched && !record.Plan.CarriesMarker()
+			notBefore := claimNotBefore(*record.Attempt)
 			matches := 0
 			var matchedComment youtrack.Comment
 			for _, comment := range comments {
-				if operatorCommentMatches(comment, record.Plan) {
+				if contentOnly && operatorCommentObserved(comment, record.Plan, notBefore) || !contentOnly && operatorCommentMatches(comment, record.Plan) {
 					matches++
 					matchedComment = comment
 				}
@@ -1401,7 +1420,11 @@ func (s *Service) ReconcileOperatorWrite(ctx context.Context, input OperatorReco
 						return OperatorWriteInfo{}, getErr
 					}
 				}
-				if operatorCommentMatches(verified, record.Plan) {
+				switch {
+				case !operatorCommentMatches(verified, record.Plan):
+				case contentOnly && operatorCommentObserved(verified, record.Plan, notBefore):
+					evidence = "matching_comment_observed_without_causal_proof"
+				case !contentOnly:
 					outcome.State, outcome.Code = operatorwrite.StateReconciled, "COMMENT_OBSERVED"
 					outcome.RemoteID = verified.ID
 					evidence = "matching_comment_observed"
@@ -1501,76 +1524,137 @@ func (s *Service) ReconcileOperatorWrite(ctx context.Context, input OperatorReco
 // observeCreatedIssue collects one bounded GET-only observation of the issue
 // a create plan may have made. A zero Issue means absent, duplicate, or
 // truncated evidence, which never proves non-application.
-func observeCreatedIssue(ctx context.Context, client *youtrack.Client, plan operatorwrite.Plan, attempt operatorwrite.Attempt, remoteID string, limit int) (youtrack.Issue, string, error) {
+//
+// causal is true when the observation is exact evidence that this attempt made
+// the issue: the issue's own ID from the write response, or a marker the plan
+// carried. A content-only match (a version 5 plan without a remote ID) is
+// never causal: another identical write by the same account would look the
+// same, so the caller must not record the issue as the write's result.
+func observeCreatedIssue(ctx context.Context, client *youtrack.Client, plan operatorwrite.Plan, attempt operatorwrite.Attempt, remoteID string, limit int) (issue youtrack.Issue, evidence string, causal bool, err error) {
 	snapshot := plan.Snapshot
 	project, err := client.GetProject(ctx, snapshot.Project.ID)
 	if err != nil {
-		return youtrack.Issue{}, "", err
+		return youtrack.Issue{}, "", false, err
 	}
 	if project.ID != snapshot.Project.ID || project.ShortName != snapshot.Project.Key {
-		return youtrack.Issue{}, "", errx.Conflict("OPERATOR_PROJECT_CHANGED", "target project key changed from the frozen project")
+		return youtrack.Issue{}, "", false, errx.Conflict("OPERATOR_PROJECT_CHANGED", "target project key changed from the frozen project")
 	}
 	expected := operatorCreateInput(plan)
 	// Workflows and people may change fields after creation, so identity
-	// evidence is the marker-bearing text, project, and reporter only.
+	// evidence is the text, project, and reporter only.
 	identity := expected
 	identity.CustomFields = nil
-	// A search hit is only text evidence: an older issue edited to carry the
-	// marker was not created by this attempt. No clock-skew allowance: a
+	// A search hit is only text evidence: an older issue with the same text
+	// was not created by this attempt. No clock-skew allowance: a
 	// server clock trailing the claim leaves the outcome for the operator.
 	// YouTrack reports milliseconds, so the cutoff rounds the claim up.
-	notBefore := attempt.ClaimedAt.UnixMilli()
-	if attempt.ClaimedAt.After(time.UnixMilli(notBefore)) {
-		notBefore++
-	}
+	notBefore := claimNotBefore(attempt)
+	causal = remoteID != "" || plan.CarriesMarker()
 	var candidates []youtrack.Issue
 	if remoteID != "" {
 		issue, err := client.GetIssue(ctx, remoteID)
 		if err != nil {
-			return youtrack.Issue{}, "", err
+			return youtrack.Issue{}, "", false, err
 		}
 		candidates = []youtrack.Issue{issue}
 	} else {
-		issues, err := client.SearchIssues(ctx, "project: "+snapshot.Project.Key+` "`+plan.ID+`"`, youtrack.PageOptions{Top: limit + 1})
+		issues, err := client.SearchIssues(ctx, operatorCreateSearchQuery(plan, attempt), youtrack.PageOptions{Top: limit + 1})
 		if err != nil {
-			return youtrack.Issue{}, "", err
+			return youtrack.Issue{}, "", false, err
 		}
 		if len(issues) > limit {
-			return youtrack.Issue{}, "", nil
+			return youtrack.Issue{}, "", false, nil
 		}
 		candidates = issues
 	}
 	matches := 0
 	var match youtrack.Issue
 	for _, issue := range candidates {
-		if youtrack.CreatedIssueMatches(issue, identity) && (remoteID != "" || issue.Created >= notBefore) {
+		if operatorCreatedMatches(issue, identity, plan) && (remoteID != "" || issue.Created >= notBefore) {
 			matches++
 			match = issue
 		}
 	}
 	if matches != 1 {
-		return youtrack.Issue{}, "", nil
+		return youtrack.Issue{}, "", false, nil
 	}
 	if remoteID == "" {
 		verified, err := client.GetIssue(ctx, match.ID)
 		if err != nil {
-			return youtrack.Issue{}, "", err
+			return youtrack.Issue{}, "", false, err
 		}
-		if verified.ID != match.ID || verified.Created < notBefore || !youtrack.CreatedIssueMatches(verified, identity) {
-			return youtrack.Issue{}, "", nil
+		if verified.ID != match.ID || verified.Created < notBefore || !operatorCreatedMatches(verified, identity, plan) {
+			return youtrack.Issue{}, "", false, nil
 		}
 		match = verified
 	}
-	if youtrack.CreatedIssueMatches(match, expected) {
-		return match, "matching_issue_observed", nil
+	evidence = "matching_issue_observed"
+	if !operatorCreatedMatches(match, expected, plan) {
+		evidence = "matching_issue_observed_fields_differ"
 	}
-	return match, "matching_issue_observed_fields_differ", nil
+	if !causal {
+		evidence += "_without_causal_proof"
+	}
+	return match, evidence, causal, nil
+}
+
+// claimNotBefore is the earliest creation time, in milliseconds, an entity made
+// by the attempt can carry. YouTrack reports milliseconds, so the claim time is
+// rounded up.
+func claimNotBefore(attempt operatorwrite.Attempt) int64 {
+	notBefore := attempt.ClaimedAt.UnixMilli()
+	if attempt.ClaimedAt.After(time.UnixMilli(notBefore)) {
+		notBefore++
+	}
+	return notBefore
+}
+
+// operatorCommentObserved is the content-only candidate test for a plan with no
+// marker: exact text, the bound author and a creation time not before the
+// claim. Deleted and restricted twins still count, so they make the result
+// ambiguous instead of being skipped.
+func operatorCommentObserved(comment youtrack.Comment, plan operatorwrite.Plan, notBefore int64) bool {
+	return comment.Text != nil && *comment.Text == plan.Request.CommentText && comment.Author != nil &&
+		comment.Author.ID == plan.Snapshot.Binding.AccountID && comment.Created >= notBefore
+}
+
+// operatorCreateSearchQuery narrows the candidates for a plan with no marker
+// to the frozen project, the authenticated reporter and the days around the
+// claim; the exact comparison runs on the client. Marker plans keep searching
+// for their plan ID. The day margin absorbs the profile time zone YouTrack
+// applies to dates, and the upper bound keeps the page from growing without
+// limit. No operator text, plan ID or login goes into the query.
+func operatorCreateSearchQuery(plan operatorwrite.Plan, attempt operatorwrite.Attempt) string {
+	key := plan.Snapshot.Project.Key
+	if plan.CarriesMarker() {
+		return "project: " + key + ` "` + plan.ID + `"`
+	}
+	claimed := attempt.ClaimedAt.UTC()
+	return "project: " + key + " reporter: me created: " + claimed.AddDate(0, 0, -1).Format("2006-01-02") + " .. " + claimed.AddDate(0, 0, 1).Format("2006-01-02")
+}
+
+// operatorDescriptionMatches is the description rule for a created issue: an
+// empty plan description matches an explicit null or empty one, never an
+// omitted member, and any other description must be equal. It backs every
+// create identity check, because youtrack.CreatedIssueMatches skips the
+// description when the input omits it.
+func operatorDescriptionMatches(issue youtrack.Issue, plan operatorwrite.Plan) bool {
+	if plan.Request.Description == "" {
+		return issue.DescriptionPresent() && (issue.Description == nil || *issue.Description == "")
+	}
+	return issue.Description != nil && *issue.Description == plan.Request.Description
+}
+
+// operatorCreatedMatches combines the client's identity check with the
+// description rule.
+func operatorCreatedMatches(issue youtrack.Issue, input youtrack.CreateIssueInput, plan operatorwrite.Plan) bool {
+	return youtrack.CreatedIssueMatches(issue, input) && operatorDescriptionMatches(issue, plan)
 }
 
 func operatorCommentMatches(comment youtrack.Comment, plan operatorwrite.Plan) bool {
 	binding := plan.Snapshot.Binding
 	return comment.ID != "" && !comment.Deleted && comment.Text != nil && *comment.Text == plan.Request.CommentText &&
-		strings.Contains(*comment.Text, operatorwrite.Marker(plan.ID)) && comment.Author != nil && comment.Author.ID == binding.AccountID &&
+		(!plan.CarriesMarker() || strings.Contains(*comment.Text, operatorwrite.Marker(plan.ID))) && comment.Author != nil && comment.Author.ID == binding.AccountID &&
 		comment.Author.Login == binding.AccountLogin && comment.Visibility != nil && comment.Visibility.Type == "UnlimitedVisibility" &&
 		len(comment.Visibility.PermittedGroups) == 0 && len(comment.Visibility.PermittedUsers) == 0
 }

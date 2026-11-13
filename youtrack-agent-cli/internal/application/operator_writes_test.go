@@ -38,6 +38,7 @@ type operatorFixture struct {
 	commentText                 string
 	exactCommentBody            string
 	comments                    []map[string]any
+	commentSkip                 string
 	posts, pages, exactComments atomic.Int32
 }
 
@@ -119,7 +120,11 @@ func newOperatorFixture(t *testing.T) *operatorFixture {
 			_, _ = io.WriteString(w, "["+f.schema+"]")
 		case "/api/issues/2-12/comments":
 			f.pages.Add(1)
-			if r.URL.Query().Get("$top") != "3" || r.URL.Query().Get("$skip") != "7" {
+			wantSkip := "7"
+			if f.commentSkip != "" {
+				wantSkip = f.commentSkip
+			}
+			if r.URL.Query().Get("$top") != "3" || r.URL.Query().Get("$skip") != wantSkip {
 				t.Errorf("unbounded reconciliation request=%s", r.URL)
 			}
 			if err := json.NewEncoder(w).Encode(f.comments); err != nil {
@@ -199,6 +204,17 @@ func (f *operatorFixture) prepare(t *testing.T, kind string) OperatorWriteInfo {
 		t.Fatal(err)
 	}
 	return prepared
+}
+
+// prepareMarkerComment stores a comment.add plan in the version 2 shape older
+// releases prepared, with the visible marker in its text.
+func (f *operatorFixture) prepareMarkerComment(t *testing.T) OperatorWriteInfo {
+	t.Helper()
+	snapshot, err := f.service.SnapshotOperatorWrite(t.Context(), OperatorSnapshotInput{Profile: "work", Kind: "comment.add", IssueID: "APP-12"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return storeMarkerPlan(t, f.service, *snapshot.Snapshot, operatorwrite.Request{Kind: operatorwrite.KindCommentAdd, CommentText: "Full body\n\nUNTRUSTED content"}, operatorwrite.PlanVersion2)
 }
 
 func operatorReason(t *testing.T, err error) string {
@@ -337,8 +353,8 @@ func TestOperatorPrepareAndStatusAreOfflineAndDryRunWritesNothing(t *testing.T) 
 	if creds.calls != 0 || network.calls != 0 {
 		t.Fatalf("offline credentials=%d network=%d", creds.calls, network.calls)
 	}
-	if !strings.HasSuffix(prepared.Plan.Request.CommentText, "\n\n"+operatorwrite.Marker(prepared.PlanID)) {
-		t.Fatalf("missing frozen public marker: %q", prepared.Plan.Request.CommentText)
+	if prepared.Plan.Request.CommentText != "hello" || prepared.Plan.Version != operatorwrite.PlanVersion5 {
+		t.Fatalf("comment is not frozen verbatim as version 5: %q v%d", prepared.Plan.Request.CommentText, prepared.Plan.Version)
 	}
 }
 
@@ -453,7 +469,7 @@ func TestOperatorReconcileCommentEvidenceIsBoundedAndNeverRestoresClaim(t *testi
 	for _, mode := range []string{"none", "one", "duplicate", "truncated", "wrong author", "wrong full text", "known id", "known id inconclusive"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newOperatorFixture(t)
-			p := f.prepare(t, "comment.add")
+			p := f.prepareMarkerComment(t)
 			attempt, err := f.service.OperatorWrites.Claim(t.Context(), p.PlanID, p.IntentSHA256, f.service.currentTime())
 			if err != nil {
 				t.Fatal(err)
@@ -618,7 +634,7 @@ func TestOperatorCapabilitiesReadOnlyLocalConfiguration(t *testing.T) {
 
 func TestOperatorReconcileMissingDeletedCannotBecomePositiveProof(t *testing.T) {
 	f := newOperatorFixture(t)
-	p := f.prepare(t, "comment.add")
+	p := f.prepareMarkerComment(t)
 	if _, err := f.service.OperatorWrites.Claim(t.Context(), p.PlanID, p.IntentSHA256, f.service.currentTime()); err != nil {
 		t.Fatal(err)
 	}

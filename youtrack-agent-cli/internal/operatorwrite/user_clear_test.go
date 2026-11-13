@@ -41,10 +41,10 @@ func TestPlanVersionFor(t *testing.T) {
 		kind Kind
 		want int
 	}{
-		{KindIssueCreate, PlanVersion4},
+		{KindIssueCreate, PlanVersion5},
 		{KindIssueEdit, PlanVersion4},
 		{KindIssueUpdate, PlanVersion4},
-		{KindCommentAdd, PlanVersion2},
+		{KindCommentAdd, PlanVersion5},
 		{KindCommentDelete, PlanVersion3},
 	} {
 		t.Run(string(test.kind), func(t *testing.T) {
@@ -53,12 +53,12 @@ func TestPlanVersionFor(t *testing.T) {
 			}
 		})
 	}
-	for _, version := range []int{PlanVersion2, PlanVersion3, PlanVersion4} {
+	for _, version := range []int{PlanVersion2, PlanVersion3, PlanVersion4, PlanVersion5} {
 		if PlanLifetime(version) != CurrentPlanLifetime || !durablePlanVersion(version) {
 			t.Fatalf("version %d is not durable", version)
 		}
 	}
-	if durablePlanVersion(LegacyPlanVersion1) || durablePlanVersion(5) || PlanLifetime(5) != "" {
+	if durablePlanVersion(LegacyPlanVersion1) || durablePlanVersion(6) || PlanLifetime(6) != "" {
 		t.Fatal("legacy or unknown version treated as durable")
 	}
 }

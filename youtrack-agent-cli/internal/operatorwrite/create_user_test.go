@@ -37,7 +37,7 @@ func createUserClearSnapshot(t *testing.T) Snapshot {
 	return s
 }
 
-func TestCreatePlanCarriesUserFieldsAndClearsAsVersion4(t *testing.T) {
+func TestCreatePlanCarriesUserFieldsAndClearsAsVersion5(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		snapshot func(*testing.T) Snapshot
@@ -50,7 +50,7 @@ func TestCreatePlanCarriesUserFieldsAndClearsAsVersion4(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			plan, err := prepareSnapshot(test.snapshot(t))
-			if err != nil || plan.Version != PlanVersion4 || !plan.ExpiresAt.IsZero() {
+			if err != nil || plan.Version != PlanVersion5 || !plan.ExpiresAt.IsZero() {
 				t.Fatalf("version=%d err=%v", plan.Version, err)
 			}
 			raw, err := json.Marshal(plan)
@@ -127,22 +127,23 @@ func TestOlderPlanVersionsRefuseCreateUserAndClearFields(t *testing.T) {
 		{"enum clear", createClearSnapshot, false},
 		{"user clear", createUserClearSnapshot, false},
 	} {
-		for _, version := range []int{LegacyPlanVersion1, PlanVersion2, PlanVersion3, PlanVersion4} {
+		for _, version := range []int{LegacyPlanVersion1, PlanVersion2, PlanVersion3, PlanVersion4, PlanVersion5} {
 			t.Run(test.name+"/v"+string(rune('0'+version)), func(t *testing.T) {
 				plan, err := prepareSnapshot(test.snapshot(t))
 				if err != nil {
 					t.Fatal(err)
 				}
-				plan.Version = version
-				if version == LegacyPlanVersion1 {
-					plan.ExpiresAt = plan.CreatedAt.Add(LegacyPlanTTL)
-				}
-				plan.SHA256, err = digest(plan)
-				if err != nil {
-					t.Fatal(err)
+				if version == PlanVersion3 || version == PlanVersion5 {
+					plan.Version = version
+					plan.SHA256, err = digest(plan)
+					if err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					plan = withMarker(t, plan, version)
 				}
 				// v3 is the comment.delete version and never fits a create.
-				want := test.allowed && version != PlanVersion3 || version == PlanVersion4
+				want := test.allowed && version != PlanVersion3 || version == PlanVersion4 || version == PlanVersion5
 				if got := ValidatePlan(plan) == nil; got != want {
 					t.Fatalf("ValidatePlan accepted=%v, want %v", got, want)
 				}
