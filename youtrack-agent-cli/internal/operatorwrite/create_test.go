@@ -49,13 +49,13 @@ func TestGoldenV1PlansKeepBytesAndDigest(t *testing.T) {
 	}
 }
 
-func TestPrepareCreateAddsMarkerAndOmitsIssue(t *testing.T) {
+func TestPrepareCreateSendsBodyVerbatimAndOmitsIssue(t *testing.T) {
 	tests := []struct {
 		name, body string
 		want       func(id string) string
 	}{
-		{"body", "Started: harness MR.\nRepo: tackroom", func(id string) string { return "Started: harness MR.\nRepo: tackroom\n\n" + Marker(id) }},
-		{"empty body", "", Marker},
+		{"body", "Started: harness MR.\nRepo: tackroom", func(string) string { return "Started: harness MR.\nRepo: tackroom" }},
+		{"empty body", "", func(string) string { return "" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -101,7 +101,7 @@ func TestPrepareCreateRejectsNonCanonicalText(t *testing.T) {
 		{"trailing newline", Request{Kind: KindIssueCreate, Summary: "Title", Description: "one\n"}},
 		{"blank description", Request{Kind: KindIssueCreate, Summary: "Title", Description: " \n "}},
 		{"nul description", Request{Kind: KindIssueCreate, Summary: "Title", Description: "a\x00b"}},
-		{"oversized with marker", Request{Kind: KindIssueCreate, Summary: "Title", Description: long}},
+		{"oversized", Request{Kind: KindIssueCreate, Summary: "Title", Description: long + "a"}},
 		{"comment text", Request{Kind: KindIssueCreate, Summary: "Title", CommentText: "x"}},
 		{"kind mismatch", Request{Kind: KindCommentAdd, CommentText: "x"}},
 	}
@@ -184,6 +184,7 @@ func TestCreatePlanTextTamperingBreaksValidation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			p = withMarker(t, p, PlanVersion4)
 			test.change(&p)
 			// Re-digest so only the text rules, not the hash, can reject.
 			if p.SHA256, err = digest(p); err != nil {

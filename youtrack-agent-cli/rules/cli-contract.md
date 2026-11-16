@@ -139,10 +139,31 @@ Two hazards that are easy to reintroduce:
   Deletion alone uses plan v3; historical kinds retain v1/v2 bytes and hashes.
   Show the full frozen comment as untrusted data. Consume before one DELETE;
   reconciliation is GET-only and absence/404 never proves hard deletion.
-- `operator-write` `issue.create` plans are v4 and may set or clear (`--clear-field`,
+- `operator-write` `issue.create` plans may set or clear (`--clear-field`,
   `--clear-field-id`) a single-user field under the separate
   `issue-create-user-fields` capability (`OPERATOR_CAPABILITY_REQUIRED`, exit 8,
   at prepare and apply); v2 create plans stay accepted but refuse user or null fields.
+- `operator-write` `issue.create` and `comment.add` plans are `plan_version` 5
+  (read `kind`, not `plan_version`): the operator's text is sent verbatim, with no
+  visible footer or marker. A prepared v5 comment text must have no surrounding
+  whitespace and no carriage return (`OPERATOR_WRITE_INVALID`, exit 2, never
+  normalised). An empty create description is omitted from the request and
+  `null` or `""` from YouTrack both match. Plans prepared before v5 (v1/v2/v4
+  `issue.create`, v1/v2 `comment.add`) keep their footer, bytes, hashes and the
+  marker reconciliation path; an older binary refuses v5 plans and records.
+  Reconciliation of a v5 write whose own response did not keep a remote ID
+  matches by content and is never `reconciled`: a single match leaves
+  `operator_resolution_required` with evidence
+  `matching_issue_observed[_fields_differ]_without_causal_proof` or
+  `matching_comment_observed_without_causal_proof`, records no `remote_id`, and
+  never replays. `issue.create` searches one bounded page
+  `project: KEY reporter: me created: DAY-1 .. DAY+1` and compares the frozen
+  project, bound reporter, exact summary and description and `created` at or
+  after the claim on the client; `comment.add` reads only the first comments
+  page (`--offset` other than 0 is exit 2) and compares exact text, bound author,
+  unlimited visibility and `created`. More than `--limit`, none, or two or more
+  candidates (a deleted or restricted identical comment counts) is
+  `inconclusive`.
 - `operator-write snapshot --clear-value` (additive) empties one field of an
   `issue.update`; it takes exactly one field selector and never `--value` or
   `--value-id`. Single-user fields are set by exact login (`--value`) or ID

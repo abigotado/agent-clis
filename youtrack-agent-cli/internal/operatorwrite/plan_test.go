@@ -57,7 +57,7 @@ func TestPrepareFrozenBoundedPlan(t *testing.T) {
 			if err := ValidatePlan(p); err != nil {
 				t.Fatal(err)
 			}
-			if p.Version != PlanVersionFor(kind) || p.Version != map[Kind]int{KindIssueUpdate: PlanVersion4, KindCommentAdd: PlanVersion2}[kind] || !p.ExpiresAt.IsZero() || p.ConfirmationMode != ConfirmationMode || p.Notifications != Notifications {
+			if p.Version != PlanVersionFor(kind) || p.Version != map[Kind]int{KindIssueUpdate: PlanVersion4, KindCommentAdd: PlanVersion5}[kind] || !p.ExpiresAt.IsZero() || p.ConfirmationMode != ConfirmationMode || p.Notifications != Notifications {
 				t.Fatalf("incorrect plan metadata: %+v", p)
 			}
 			if kind == KindIssueUpdate {
@@ -65,8 +65,8 @@ func TestPrepareFrozenBoundedPlan(t *testing.T) {
 				if p.Snapshot.Field.TargetValue.Name == "MUTATED" {
 					t.Fatal("snapshot pointer not frozen")
 				}
-			} else if !strings.HasSuffix(p.Request.CommentText, Marker(p.ID)) {
-				t.Fatal("final comment omitted marker")
+			} else if p.Request.CommentText != q.CommentText {
+				t.Fatal("comment text was not sent verbatim")
 			}
 			p.Request.CommentText = "TAMPER_SENTINEL"
 			if ValidatePlan(p) == nil {
@@ -183,7 +183,7 @@ func TestPlanLifetimeAndInputBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := testSnapshot(t, KindCommentAdd)
-	for _, text := range []string{"", " \n\t", strings.Repeat("x", MaxCommentBytes), "sentinel\x00"} {
+	for _, text := range []string{"", " \n\t", strings.Repeat("x", MaxCommentBytes+1), "sentinel\x00", " padded", "padded\n"} {
 		if _, err := Prepare(s, Request{Kind: KindCommentAdd, CommentText: text}, s.CapturedAt.Add(time.Minute)); err == nil {
 			t.Fatal("invalid final comment accepted")
 		}
@@ -197,7 +197,7 @@ func TestPlanLifetimeAndInputBounds(t *testing.T) {
 }
 
 func TestDecodeRejectsUnknownDuplicateOversizedAndRedacts(t *testing.T) {
-	p := testPlan(t, KindCommentAdd)
+	p := withMarker(t, testPlan(t, KindCommentAdd), PlanVersion2)
 	raw, err := json.Marshal(p)
 	if err != nil {
 		t.Fatal(err)

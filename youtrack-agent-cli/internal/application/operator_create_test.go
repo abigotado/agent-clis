@@ -48,9 +48,10 @@ type createdIssue struct {
 	Created                                                   int64
 }
 
-// matchingIssue is exactly the issue a successful create of planID produces.
-func matchingIssue(planID string) createdIssue {
-	return createdIssue{ID: "2-99", Readable: "APP-99", Summary: "New ticket", Description: "Line one\n\n" + operatorwrite.Marker(planID),
+// matchingIssue is exactly the issue a successful create of a version 5 plan
+// produces: the operator's description, verbatim.
+func matchingIssue(string) createdIssue {
+	return createdIssue{ID: "2-99", Readable: "APP-99", Summary: "New ticket", Description: "Line one",
 		ReporterID: "1-2", ReporterLogin: "alice", ProjectID: "0-3", ProjectKey: "APP", ValueID: "101-2", FieldType: "StateIssueCustomField",
 		Created: time.Now().UnixMilli()}
 }
@@ -283,6 +284,13 @@ func (f *createFixture) prepare(fields []OperatorFieldSelection, request string)
 	return prepared
 }
 
+// createSearchQuery is the exact content search a plan without a marker sends:
+// project, the authenticated reporter and the days around the claim.
+func createSearchQuery(record operatorwrite.Record) string {
+	claimed := record.Attempt.ClaimedAt.UTC()
+	return "project: APP reporter: me created: " + claimed.AddDate(0, 0, -1).Format("2006-01-02") + " .. " + claimed.AddDate(0, 0, 1).Format("2006-01-02")
+}
+
 func (f *createFixture) apply(p OperatorWriteInfo) (OperatorWriteInfo, error) {
 	return f.service.ApplyOperatorWrite(f.t.Context(), OperatorApplyInput{Profile: "work", PlanID: p.PlanID, ConfirmIntent: p.IntentSHA256, Yes: true})
 }
@@ -327,7 +335,7 @@ func TestOperatorCreateApplyDispatchesOneFrozenPostAndIsNonReplayable(t *testing
 	}{
 		{"state field selected by name", createStageFields, nil, createRequestJSON, "Line one", stageEntry, "StateIssueCustomField"},
 		{"state field selected by immutable ids", []OperatorFieldSelection{{FieldID: "92-1", ValueID: "101-2"}}, nil, createRequestJSON, "Line one", stageEntry, "StateIssueCustomField"},
-		{"empty description is exactly the marker", createStageFields, nil, `{"kind":"issue.create","summary":"New ticket"}`, "", stageEntry, "StateIssueCustomField"},
+		{"empty description is sent as no description", createStageFields, nil, `{"kind":"issue.create","summary":"New ticket"}`, "", stageEntry, "StateIssueCustomField"},
 		{"multi-line description is preserved", createStageFields, nil, `{"kind":"issue.create","summary":"New ticket","description":"a\n\nb\nc"}`, "a\n\nb\nc", stageEntry, "StateIssueCustomField"},
 		{"no fields sends no customFields key", nil, nil, createRequestJSON, "Line one", nil, ""},
 		{"enum field uses single-enum type", createStageFields, func(schema string) string {
@@ -356,11 +364,7 @@ func TestOperatorCreateApplyDispatchesOneFrozenPostAndIsNonReplayable(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantDescription := operatorwrite.Marker(p.PlanID)
-			if test.wantBody != "" {
-				wantDescription = test.wantBody + "\n\n" + operatorwrite.Marker(p.PlanID)
-			}
-			if p.Plan.Request.Description != wantDescription || f.posts() != 0 {
+			if p.Plan.Request.Description != test.wantBody || p.Plan.Version != operatorwrite.PlanVersion5 || f.posts() != 0 {
 				t.Fatalf("frozen description=%q posts=%d", p.Plan.Request.Description, f.posts())
 			}
 			result, err := f.apply(p)
@@ -379,8 +383,12 @@ func TestOperatorCreateApplyDispatchesOneFrozenPostAndIsNonReplayable(t *testing
 				t.Fatal(err)
 			}
 			wantKeys := []string{"description", "project", "summary"}
+			if test.wantBody == "" {
+				// An empty description is omitted, never sent as "".
+				wantKeys = []string{"project", "summary"}
+			}
 			if test.wantCustom != nil {
-				wantKeys = []string{"customFields", "description", "project", "summary"}
+				wantKeys = append([]string{"customFields"}, wantKeys...)
 			}
 			keys := make([]string, 0, len(payload))
 			for key := range payload {
@@ -394,10 +402,12 @@ func TestOperatorCreateApplyDispatchesOneFrozenPostAndIsNonReplayable(t *testing
 			if err := json.Unmarshal(payload["summary"], &summary); err != nil {
 				t.Fatal(err)
 			}
-			if err := json.Unmarshal(payload["description"], &description); err != nil {
-				t.Fatal(err)
+			if raw, ok := payload["description"]; ok {
+				if err := json.Unmarshal(raw, &description); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if string(payload["project"]) != `{"id":"0-3"}` || summary != "New ticket" || description != wantDescription {
+			if string(payload["project"]) != `{"id":"0-3"}` || summary != "New ticket" || description != test.wantBody {
 				t.Fatalf("payload project=%s summary=%q description=%q", payload["project"], summary, description)
 			}
 			if test.wantCustom != nil {
@@ -566,7 +576,7 @@ func TestOperatorCreateSnapshotRejectsFieldsThatCannotBeFrozen(t *testing.T) {
 }
 
 func TestOperatorCreatePrepareRejectsNonCanonicalTextWithoutStoringAPlan(t *testing.T) {
-	longBody := strings.Repeat("a", operatorwrite.MaxDescriptionBytes)
+	longBody := strings.Repeat("a", operatorwrite.MaxDescriptionBytes+1)
 	for _, test := range []struct {
 		name, request string
 		valid         bool
@@ -585,7 +595,7 @@ func TestOperatorCreatePrepareRejectsNonCanonicalTextWithoutStoringAPlan(t *test
 		{"description with trailing newline", `{"kind":"issue.create","summary":"s","description":"body\n"}`, false},
 		{"description with leading whitespace", `{"kind":"issue.create","summary":"s","description":" body"}`, false},
 		{"whitespace-only description", `{"kind":"issue.create","summary":"s","description":"  "}`, false},
-		{"description pushed over the cap by the marker", `{"kind":"issue.create","summary":"s","description":"` + longBody + `"}`, false},
+		{"description over the cap", `{"kind":"issue.create","summary":"s","description":"` + longBody + `"}`, false},
 		{"comment text for a create", `{"kind":"issue.create","summary":"s","comment_text":"c"}`, false},
 		{"kind mismatch comment.add", `{"kind":"comment.add","comment_text":"c"}`, false},
 		{"kind mismatch issue.update", `{"kind":"issue.update"}`, false},
@@ -762,7 +772,7 @@ func TestOperatorCreateReconcileWithPersistedIssueIDReadsOnlyThatIssue(t *testin
 		{"observed with a different Stage", func(i *createdIssue) { i.ValueID = "101-1" }, operatorwrite.StateReconciled, "ISSUE_OBSERVED", "matching_issue_observed_fields_differ"},
 		{"observed with the Stage cleared by a workflow", func(i *createdIssue) { i.ValueID = "" }, operatorwrite.StateReconciled, "ISSUE_OBSERVED", "matching_issue_observed_fields_differ"},
 		{"different description", func(i *createdIssue) { i.Description = "tampered" }, operatorwrite.StateOperatorRequired, "OPERATOR_RESOLUTION_REQUIRED", "inconclusive"},
-		{"description without the marker", func(i *createdIssue) { i.Description = "Line one" }, operatorwrite.StateOperatorRequired, "OPERATOR_RESOLUTION_REQUIRED", "inconclusive"},
+		{"description with a footer appended", func(i *createdIssue) { i.Description = "Line one\n\n[youtrack operator-write YTOW-X]" }, operatorwrite.StateOperatorRequired, "OPERATOR_RESOLUTION_REQUIRED", "inconclusive"},
 		{"different summary", func(i *createdIssue) { i.Summary = "Other" }, operatorwrite.StateOperatorRequired, "OPERATOR_RESOLUTION_REQUIRED", "inconclusive"},
 		{"another reporter", func(i *createdIssue) { i.ReporterID, i.ReporterLogin = "1-9", "bob" }, operatorwrite.StateOperatorRequired, "OPERATOR_RESOLUTION_REQUIRED", "inconclusive"},
 		{"another project", func(i *createdIssue) { i.ProjectID, i.ProjectKey = "0-9", "OTHER" }, operatorwrite.StateOperatorRequired, "OPERATOR_RESOLUTION_REQUIRED", "inconclusive"},
@@ -793,7 +803,7 @@ func TestOperatorCreateReconcileWithPersistedIssueIDReadsOnlyThatIssue(t *testin
 	}
 }
 
-func TestOperatorCreateReconcileSearchesOnePageByMarkerAndVerifiesWithExactRead(t *testing.T) {
+func TestOperatorCreateReconcileSearchesOnePageByContentWithoutCausalProof(t *testing.T) {
 	for _, test := range []struct {
 		name         string
 		limit        int
@@ -803,19 +813,19 @@ func TestOperatorCreateReconcileSearchesOnePageByMarkerAndVerifiesWithExactRead(
 		wantEvidence string
 		wantExact    int
 	}{
-		{"unique match", 5, func(m createdIssue) []createdIssue { return []createdIssue{m} }, nil, operatorwrite.StateReconciled, "matching_issue_observed", 1},
+		{"unique match", 5, func(m createdIssue) []createdIssue { return []createdIssue{m} }, nil, operatorwrite.StateOperatorRequired, "matching_issue_observed_without_causal_proof", 1},
 		{"unique match among unrelated issues", 3, func(m createdIssue) []createdIssue {
 			other := m
 			other.ID, other.Readable, other.Summary = "2-100", "APP-100", "Unrelated"
 			return []createdIssue{other, m}
-		}, nil, operatorwrite.StateReconciled, "matching_issue_observed", 1},
+		}, nil, operatorwrite.StateOperatorRequired, "matching_issue_observed_without_causal_proof", 1},
 		{"page exactly at the limit still reconciles", 2, func(m createdIssue) []createdIssue {
 			other := m
 			other.ID, other.Readable, other.Summary = "2-100", "APP-100", "Unrelated"
 			return []createdIssue{m, other}
-		}, nil, operatorwrite.StateReconciled, "matching_issue_observed", 1},
+		}, nil, operatorwrite.StateOperatorRequired, "matching_issue_observed_without_causal_proof", 1},
 		{"unique match with a different Stage", 5, func(m createdIssue) []createdIssue { m.ValueID = "101-1"; return []createdIssue{m} },
-			func(i *createdIssue) { i.ValueID = "101-1" }, operatorwrite.StateReconciled, "matching_issue_observed_fields_differ", 1},
+			func(i *createdIssue) { i.ValueID = "101-1" }, operatorwrite.StateOperatorRequired, "matching_issue_observed_fields_differ_without_causal_proof", 1},
 		{"no matches", 5, func(createdIssue) []createdIssue { return nil }, nil, operatorwrite.StateOperatorRequired, "inconclusive", 0},
 		{"two matches", 5, func(m createdIssue) []createdIssue {
 			twin := m
@@ -835,7 +845,7 @@ func TestOperatorCreateReconcileSearchesOnePageByMarkerAndVerifiesWithExactRead(
 		}, nil, operatorwrite.StateOperatorRequired, "inconclusive", 0},
 		{"search match contradicted by the exact read", 5, func(m createdIssue) []createdIssue { return []createdIssue{m} },
 			func(i *createdIssue) { i.Description = "tampered" }, operatorwrite.StateOperatorRequired, "inconclusive", 1},
-		{"older issue carrying a copied marker", 5, func(m createdIssue) []createdIssue {
+		{"older identical issue before the claim", 5, func(m createdIssue) []createdIssue {
 			m.Created = time.Now().Add(-time.Hour).UnixMilli()
 			return []createdIssue{m}
 		}, nil, operatorwrite.StateOperatorRequired, "inconclusive", 0},
@@ -864,15 +874,16 @@ func TestOperatorCreateReconcileSearchesOnePageByMarkerAndVerifiesWithExactRead(
 			if result.State != string(test.wantState) || result.Evidence != test.wantEvidence || !result.NonReplayable {
 				t.Fatalf("result=%#v", result)
 			}
-			wantID, wantReadable := "", ""
-			if test.wantState == operatorwrite.StateReconciled {
-				wantID, wantReadable = "2-99", "APP-99"
+			// A content match is an observation: it never becomes the write's
+			// recorded identity, in the result or in the stored record.
+			if result.RemoteID != "" || result.RemoteReadableID != "" {
+				t.Fatalf("content match was recorded as the write's identity: %q/%q", result.RemoteID, result.RemoteReadableID)
 			}
-			if result.RemoteID != wantID || result.RemoteReadableID != wantReadable {
-				t.Fatalf("remote identity=%q/%q want %q/%q", result.RemoteID, result.RemoteReadableID, wantID, wantReadable)
+			if record := f.record(p.PlanID); record.Result != nil && (record.Result.RemoteID != "" || record.State != operatorwrite.StateOperatorRequired) {
+				t.Fatalf("stored record=%#v", record)
 			}
 			search, ok := f.last(http.MethodGet, "/api/issues")
-			if !ok || f.searches() != 1 || search.query.Get("query") != `project: APP "`+p.PlanID+`"` || search.query.Get("$top") != strconv.Itoa(test.limit+1) {
+			if !ok || f.searches() != 1 || search.query.Get("query") != createSearchQuery(f.record(p.PlanID)) || strings.Contains(search.query.Get("query"), p.PlanID) || search.query.Get("$top") != strconv.Itoa(test.limit+1) {
 				t.Fatalf("search count=%d request=%#v", f.searches(), search)
 			}
 			if got := f.count(http.MethodGet, "/api/issues/2-99"); got != test.wantExact || f.posts() != 1 {
@@ -1012,12 +1023,12 @@ func mustJSON(t *testing.T, value any) string {
 func TestOperatorCreateReconcileRoundsTheClaimCutoffUp(t *testing.T) {
 	claim := time.Now().UTC().Truncate(time.Millisecond).Add(900 * time.Microsecond)
 	for _, test := range []struct {
-		name      string
-		created   int64
-		wantState operatorwrite.State
+		name         string
+		created      int64
+		wantEvidence string
 	}{
-		{"created in the claim millisecond", claim.UnixMilli(), operatorwrite.StateOperatorRequired},
-		{"created in the next millisecond", claim.UnixMilli() + 1, operatorwrite.StateReconciled},
+		{"created in the claim millisecond", claim.UnixMilli(), "inconclusive"},
+		{"created in the next millisecond", claim.UnixMilli() + 1, "matching_issue_observed_without_causal_proof"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newCreateFixture(t)
@@ -1027,7 +1038,7 @@ func TestOperatorCreateReconcileRoundsTheClaimCutoffUp(t *testing.T) {
 			match.Created = test.created
 			f.set(func() { f.search, f.issues["2-99"] = issueList(t, match), match.json(t) })
 			result, err := f.service.ReconcileOperatorWrite(t.Context(), OperatorReconcileInput{Profile: "work", PlanID: p.PlanID, Limit: 5})
-			if err != nil || result.State != string(test.wantState) {
+			if err != nil || result.Evidence != test.wantEvidence {
 				t.Fatalf("result=%#v err=%v", result, err)
 			}
 		})

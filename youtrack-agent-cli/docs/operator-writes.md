@@ -10,10 +10,9 @@ state/enum or single-user field update (set or clear), one public comment additi
 comment deletion, one local-file attachment to one issue, or one new issue in an allowlisted project. An operator authorizes the exact change; the agent binds that consent
 to the stored plan with `--confirm-intent SHA256 --yes`. An explicit request
 with a complete target and payload is already authorization for that operation,
-including the disclosed fixed reconciliation marker for additions/creation and
-default notifications. Deletion discloses the entire frozen target instead.
-It does not require another affirmative reply just to approve the generated
-marker or digest. If a material choice or agent-drafted text is unresolved,
+including the disclosed final text and default notifications. New issues and
+comments carry no added footer or marker. Deletion discloses the entire frozen target instead.
+It does not require another affirmative reply just to approve the digest. If a material choice or agent-drafted text is unresolved,
 show the final operation and ask once. A generic instruction to continue or to
 develop/release the CLI does not authorize live writes. This follows
 the operator-assertion model of the existing Slack/Jira CLIs, not independently
@@ -98,12 +97,14 @@ Preparation receives one bounded structured request on stdin and cannot change
 the snapshotted kind, field or target: `{"kind":"issue.update"}` or
 `{"kind":"comment.add","comment_text":"EXACT TEXT"}`. For comments, snapshot `--kind comment.add`
 without field/schema selection, then provide nonblank text. Disclose complete final
-text including its unique visible marker, target, project/account and notification
-caveat before applying the authoritative stored plan's hash. An exact external
+text, target, project/account and notification caveat before applying the
+authoritative stored plan's hash. The text is sent exactly as supplied: new
+(version 5) plans append no footer or marker. An exact external
 user request supplies consent; ask for confirmation only when a material choice
-is unresolved or changed. Do not treat mechanical marker/hash generation as a
-new operation. A user who forbids markers cannot use comment addition or issue
-creation; deletion adds no marker.
+is unresolved or changed. Do not treat mechanical hash generation as a new
+operation. Comment text for a version 5 plan must have no leading or trailing
+whitespace and no carriage return (`OPERATOR_WRITE_INVALID`, exit 2); it is
+refused, never normalised, so the stored text equals what you sent.
 Edited exports are not apply authority. A dry-run creates no plan, ledger or export and cannot
 be applied as a stored plan.
 
@@ -154,38 +155,44 @@ field pass through unchanged. The `inspect schema` request now also asks for
 
 Snapshots bind account/profile, immutable issue/project identity, current state
 and selected field/target. Plans additionally bind credential generation, current
-policy revision/hash, final payload/marker and notification policy. Offline
+policy revision/hash, final payload and notification policy. Offline
 prepare requires a snapshot less than 15 minutes old: perform snapshot and
 prepare consecutively before waiting for any necessary human review. Newly
-prepared **plan schemas v2, v3 and v4 have no wall-clock expiry**, so the same plan ID,
-marker and digest survive a delayed response. Offline prepare never accesses
+prepared **plan schemas v2, v3, v4 and v5 have no wall-clock expiry**, so the same plan ID
+and digest survive a delayed response. Offline prepare never accesses
 credentials, OAuth, browser, DNS or sockets. Apply validates consent, hash and local bindings before credentials,
 then verifies fresh account/remote preconditions. It consumes the local attempt
 before dispatch and never restores it.
 
 ### Lifetime, compatibility and consent boundaries
 
-`capabilities` advertises the highest supported `plan_version: 4` and
-`plan_lifetime: until_consumed_or_stale`; its `plan_versions` map reports v4 for
-`issue.update`, `issue.edit`, `issue.create`, `issue.link` and `attachment.add` (previously prepared v2 `issue.update` and `issue.create` plans are still accepted but cannot carry
-user fields or a null target), v2 for comment addition, and v3 for deletion. Plan/status/apply results report
-their actual plan version/lifetime. V2/v3/v4 default JSON/raw results and serialized plans
+`capabilities` advertises the highest supported `plan_version: 5` and
+`plan_lifetime: until_consumed_or_stale`; its `plan_versions` map reports v5 for
+`issue.create` and `comment.add`, v4 for `issue.update`, `issue.edit`, `issue.link`
+and `attachment.add`, and v3 for deletion (previously prepared v2/v4 `issue.create`
+and v2 `comment.add` plans are still accepted; v2 plans cannot carry user fields or a null target). Plan/status/apply results report
+their actual plan version/lifetime. V2/v3/v4/v5 default JSON/raw results and serialized plans
 omit `expires_at`. An explicit `--fields expires_at` projection retains the
-existing selectable field vocabulary and returns an empty string for v2/v3/v4; use
+existing selectable field vocabulary and returns an empty string for v2/v3/v4/v5; use
 `plan_version` and `plan_lifetime`, not that empty string, to select the policy.
 The unchanged `source`/lane name `operator-write-v1` identifies the operator
 storage namespace, not the nested plan schema or JSON envelope version.
 
-New `issue.update`, `issue.edit`, `issue.create`, `issue.link` and `attachment.add` plans are v4; comment addition continues to
-prepare v2 plans. V1/v2 bytes and hashes are preserved, v2 plans remain
-accepted and appliable, and both versions reject deletion; v3 accepts only
-`comment.delete` and v4 only `issue.update`, `issue.edit`, `issue.create`, `issue.link` and `attachment.add`. Only v4 can encode a User field or
-an explicit `null` target (clear), in an update field or in any create field; v1-v3 plans refuse both.
-A v4 create plan adds no member beyond the v2 shape.
+New `issue.create` and `comment.add` plans are v5: their request text is sent
+verbatim, with no visible footer. New `issue.update`, `issue.edit`, `issue.link`
+and `attachment.add` plans are v4. V1/v2 bytes and hashes are preserved, and
+previously prepared v1/v2/v4 `issue.create` and v1/v2 `comment.add` plans still
+validate, apply and reconcile exactly as before, including the footer they were
+frozen with (the footer is part of the plan digest, so it cannot be removed from
+a prepared plan). V3 accepts only `comment.delete`, v4 only `issue.update`,
+`issue.edit`, `issue.create`, `issue.link` and `attachment.add`, and v5 only
+`issue.create` and `comment.add`. Only v4 and v5 can encode a User field or an
+explicit `null` target (clear), in an update field or in any create field; v1-v3
+plans refuse both. An older binary refuses v5 plans and records.
 Legacy plan schema v1 retains its exact bytes, digest, 15-minute expiry and
 claim validation; its results report `legacy_time_limited` and the original
 `expires_at`. Upgrading never migrates, extends or revives those plans. An old
-binary refuses v2 plans rather than granting them authority. Do not edit a
+binary refuses v2 and later plans rather than granting them authority. Do not edit a
 plan's version, timestamps or hash to work around either contract.
 
 Durability does not waive live preconditions. Both comment additions and field
@@ -197,13 +204,13 @@ replacement plan. Deliberately creating equivalent new plans is still not
 deduplicated across plan IDs. Unknown or consumed attempts never authorize a
 fresh equivalent plan or retry.
 
-Prepared v2/v3/v4 plans remain in private local storage until consumed or made stale;
+Prepared v2/v3/v4/v5 plans remain in private local storage until consumed or made stale;
 there is no new cancel command or automatic cleanup. A user cancellation must
 be honored by the cooperating agent; it does not cryptographically revoke a
 plan for another process. Changing the bound credential generation or project
 policy invalidates applicability through existing checks. This lane still
 does not resist a malicious same-user process or disk rollback. A clock before
-`created_at` is refused, even for v2/v3/v4. Native receipt TTLs and the unavailable
+`created_at` is refused, even for v2/v3/v4/v5. Native receipt TTLs and the unavailable
 native `mutation` authority path are unchanged.
 
 ## Issue creation
@@ -258,10 +265,11 @@ issue identity matches but a named field differs, the result stays
 `WRITE_OUTCOME_UNKNOWN`; `operator-write reconcile` then reads the issue and
 reports `matching_issue_observed_fields_differ`. Never apply the plan again. The summary is one line without
 surrounding whitespace or control characters, at most 1024 bytes. The
-description is optional, LF-only and without surrounding whitespace; the final
-description, including the visible `[youtrack operator-write PLAN_ID]` marker on
-its own last paragraph, is at most 32 KiB. These rules make the exact response
-comparison safe against server-side trimming.
+description is optional, LF-only and without surrounding whitespace, and at most
+32 KiB; it is sent exactly as supplied, with no footer. An empty description is
+omitted from the request, and YouTrack answering `null` or an empty string for it
+both count as a match. These rules make the exact response comparison safe
+against server-side trimming.
 
 Apply rechecks the project ID, key and archive state and each touched field
 schema and target (a cleared field must still allow empty values), then sends one `POST /api/issues`. Fields are addressed by
@@ -273,17 +281,31 @@ envelope carries no data, but the local record keeps the issue IDs for
 `operator-write status` and reconciliation. Success reports `remote_id` and
 `remote_readable_id`.
 
-Create reconciliation reads the kept issue exactly, or runs one search page
-`project: KEY "PLAN_ID"` (`--offset 0` only) and re-reads a unique match. A
-search match must have been created at or after the apply claim, so an older
-issue that copied the marker text is not evidence. There is no clock-skew
-allowance: if the YouTrack clock trails the local one, a genuine match stays
-`operator_resolution_required`.
-Evidence is the marker-bearing description, summary, project and reporter;
-`matching_issue_observed_fields_differ` reports a match whose fields changed
-after creation, for example by a workflow. Absent, duplicate or truncated
-results stay `operator_resolution_required`: search indexing can lag, so they
-never prove that no issue was created.
+Create reconciliation reads the kept issue exactly (the issue ID from the write's
+own response), or, without one, runs one bounded search page (`--offset 0` only)
+and re-reads a unique match. For a v5 plan the query is
+`project: KEY reporter: me created: DAY-1 .. DAY+1`, where DAY is the apply
+claim's UTC date; no operator text, plan ID or login goes into it, and the exact
+comparison runs on the client. A candidate must have the frozen project, the
+bound reporter, exactly the planned summary and description, and have been created
+at or after the apply claim (rounded up to the millisecond), so an older identical
+issue is not evidence. More results than `--limit`, zero, or two or more candidates
+stay `operator_resolution_required` with evidence `inconclusive`. There is no
+clock-skew allowance: if the YouTrack clock trails the local one, a genuine match
+stays `operator_resolution_required`.
+
+A single content match for a v5 plan without a kept issue ID is only an
+observation: the result stays `operator_resolution_required` with evidence
+`matching_issue_observed_without_causal_proof` (or
+`matching_issue_observed_fields_differ_without_causal_proof`), never records
+`remote_id`, and a later reconcile searches again. An identical issue made by
+someone else with the same account would look the same, so only you can resolve it.
+Plans prepared before v5 keep the footer, search `project: KEY "PLAN_ID"`, and can
+still end `reconciled` with `matching_issue_observed` as before. When the kept issue
+ID is read exactly, a match is causal evidence for any plan version, and
+`matching_issue_observed_fields_differ` reports a match whose fields changed after
+creation, for example by a workflow. Search indexing can lag, so absent or
+truncated results never prove that no issue was created.
 
 Public comments use `UnlimitedVisibility` for the issue's readers, not exposure
 outside issue access controls, and the fixed
@@ -600,8 +622,11 @@ equivalent plan to work around uncertainty. The readonly editions and native
 
 Use `operator-write status` or bounded GET-only `operator-write reconcile` for
 the same plan. For comment addition or issue creation, an exact known comment
-or issue ID, or a unique matching
-marker/text/author, provides evidence. Missing, duplicate or truncated evidence cannot prove
+or issue ID is causal evidence. Without one, a v5 plan is matched by content (exact text, bound
+author, unlimited visibility, created at or after the claim, exactly one on the first
+`--limit` comments; `--offset` must be 0, else exit 2), which is an observation
+without causal proof and never ends `reconciled`; plans prepared before v5 are matched
+by their marker as before. Missing, duplicate or truncated evidence cannot prove
 non-application. Stage reconciliation reports observed desired state, not proof
 this attempt caused it. Reconciliation never restores apply eligibility.
 Previously verified applied, rejected or reconciled results are returned

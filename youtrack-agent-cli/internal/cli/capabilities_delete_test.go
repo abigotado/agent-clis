@@ -21,12 +21,12 @@ func TestCapabilitiesReportsPlanVersionByKind(t *testing.T) {
 				t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout, stderr)
 			}
 			data := decode(t, stdout)["data"].(map[string]any)
-			if data["plan_version"] != float64(operatorwrite.PlanVersion4) || data["plan_lifetime"] != operatorwrite.CurrentPlanLifetime {
+			if data["plan_version"] != float64(operatorwrite.PlanVersion5) || data["plan_lifetime"] != operatorwrite.CurrentPlanLifetime {
 				t.Fatalf("metadata=%#v", data)
 			}
 			versions, ok := data["plan_versions"].(map[string]any)
-			if !ok || versions["issue.create"] != float64(operatorwrite.PlanVersion4) || versions["issue.update"] != float64(operatorwrite.PlanVersion4) ||
-				versions["comment.add"] != float64(operatorwrite.PlanVersion2) || versions["comment.delete"] != float64(operatorwrite.PlanVersion3) || versions["issue.edit"] != float64(operatorwrite.PlanVersion4) || versions["issue.link"] != float64(operatorwrite.PlanVersion4) || versions["attachment.add"] != float64(operatorwrite.PlanVersion4) || len(versions) != 7 {
+			if !ok || versions["issue.create"] != float64(operatorwrite.PlanVersion5) || versions["issue.update"] != float64(operatorwrite.PlanVersion4) ||
+				versions["comment.add"] != float64(operatorwrite.PlanVersion5) || versions["comment.delete"] != float64(operatorwrite.PlanVersion3) || versions["issue.edit"] != float64(operatorwrite.PlanVersion4) || versions["issue.link"] != float64(operatorwrite.PlanVersion4) || versions["attachment.add"] != float64(operatorwrite.PlanVersion4) || len(versions) != 7 {
 				t.Fatalf("plan_versions=%#v", data["plan_versions"])
 			}
 		})

@@ -261,7 +261,7 @@ func TestOperatorCLIOfflinePrepareDryRunHasFullFrozenCommentAndNoArtifacts(t *te
 		t.Fatalf("code=%d loads=%d posts=%d stdout=%s stderr=%s", code, creds.loads, posts.Load(), stdout, stderr)
 	}
 	data := decode(t, stdout)["data"].(map[string]any)
-	if data["state"] != "validated_not_applied" || data["confirmation_mode"] != "operator_confirmed" || !strings.HasPrefix(data["comment_text"].(string), "Full public body\nUNTRUSTED text\n\n[youtrack operator-write ") || data["intent_sha256"] == "" {
+	if data["state"] != "validated_not_applied" || data["confirmation_mode"] != "operator_confirmed" || data["comment_text"] != "Full public body\nUNTRUSTED text" || data["intent_sha256"] == "" {
 		t.Fatalf("projection=%#v", data)
 	}
 	for _, path := range []string{export, s.OperatorWrites.Root()} {

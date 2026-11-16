@@ -107,14 +107,14 @@ func TestOperatorCreateSetsUserAndClearsFieldsWithOneExactPost(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if snapshot.PlanVersion != operatorwrite.PlanVersion4 || len(snapshot.Snapshot.Fields) != len(test.fields) {
+			if snapshot.PlanVersion != operatorwrite.PlanVersion5 || len(snapshot.Snapshot.Fields) != len(test.fields) {
 				t.Fatalf("snapshot version=%d fields=%#v", snapshot.PlanVersion, snapshot.Snapshot.Fields)
 			}
 			// Prepare is network- and secret-store-free.
 			credentials, transport := f.service.Credentials, f.service.HTTP
 			creds, network := f.trap()
 			p, err := f.prepareFrom(snapshot, createRequestJSON)
-			if err != nil || creds.calls != 0 || network.calls != 0 || p.PlanVersion != operatorwrite.PlanVersion4 || p.Plan.Version != operatorwrite.PlanVersion4 {
+			if err != nil || creds.calls != 0 || network.calls != 0 || p.PlanVersion != operatorwrite.PlanVersion5 || p.Plan.Version != operatorwrite.PlanVersion5 {
 				t.Fatalf("prepare error=%v credentials=%d network=%d version=%d", err, creds.calls, network.calls, p.PlanVersion)
 			}
 			f.service.Credentials, f.service.HTTP = credentials, transport

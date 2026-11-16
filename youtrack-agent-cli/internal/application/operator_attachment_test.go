@@ -729,7 +729,7 @@ func TestCapabilitiesListAttachmentAddWithPlanVersion(t *testing.T) {
 	for _, kind := range info.Kinds {
 		found = found || kind == "attachment.add"
 	}
-	if !found || info.PlanVersions["attachment.add"] != 4 || info.PlanVersion != 4 {
+	if !found || info.PlanVersions["attachment.add"] != 4 || info.PlanVersion != 5 {
 		t.Fatalf("capabilities=%#v", info)
 	}
 	plain := newOperatorFixture(t)

@@ -303,9 +303,13 @@ func (client *Client) CreateIssue(ctx context.Context, input CreateIssueInput) (
 		}
 		payload.CustomFields = append(payload.CustomFields, entry)
 	}
-	var result Issue
-	if err := client.sendMutation(ctx, "/issues", "issue.create", payload, &result); err != nil {
+	var response issueReadResponse
+	if err := client.sendMutation(ctx, "/issues", "issue.create", payload, &response); err != nil {
 		return Issue{}, err
+	}
+	result, err := response.issue()
+	if err != nil {
+		return Issue{}, errx.WriteOutcomeUnknown("issue.create")
 	}
 	if !CreatedIssueMatches(result, input) {
 		// The immutable ID alone allows an exact reconciliation read.

@@ -26,7 +26,7 @@ func TestOperatorCLIDurableApplyUsesSavedDefaultAndOmitsExpiryFromJSONAndRaw(t *
 		t.Fatalf("code=%d loads=%d posts=%d stdout=%s stderr=%s", code, credentials.loads, posts.Load(), stdout, stderr)
 	}
 	data := decode(t, stdout)["data"].(map[string]any)
-	if data["plan_version"] != float64(operatorwrite.PlanVersion2) || data["plan_lifetime"] != operatorwrite.CurrentPlanLifetime {
+	if data["plan_version"] != float64(operatorwrite.PlanVersion5) || data["plan_lifetime"] != operatorwrite.CurrentPlanLifetime {
 		t.Fatalf("durable json metadata=%#v", data)
 	}
 	if _, exists := data["expires_at"]; exists {
@@ -43,7 +43,7 @@ func TestOperatorCLIDurableApplyUsesSavedDefaultAndOmitsExpiryFromJSONAndRaw(t *
 	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
 		t.Fatal(err)
 	}
-	if raw["plan_version"] != float64(operatorwrite.PlanVersion2) || raw["plan_lifetime"] != operatorwrite.CurrentPlanLifetime {
+	if raw["plan_version"] != float64(operatorwrite.PlanVersion5) || raw["plan_lifetime"] != operatorwrite.CurrentPlanLifetime {
 		t.Fatalf("durable raw metadata=%#v", raw)
 	}
 	if _, exists := raw["expires_at"]; exists {

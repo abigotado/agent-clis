@@ -43,15 +43,15 @@ func TestCapabilitiesAdvertiseDurablePlanMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantVersions := map[string]int{
-		"issue.create":   operatorwrite.PlanVersion4,
+		"issue.create":   operatorwrite.PlanVersion5,
 		"issue.update":   operatorwrite.PlanVersion4,
-		"comment.add":    operatorwrite.PlanVersion2,
+		"comment.add":    operatorwrite.PlanVersion5,
 		"comment.delete": operatorwrite.PlanVersion3,
 		"issue.edit":     operatorwrite.PlanVersion4,
 		"issue.link":     operatorwrite.PlanVersion4,
 		"attachment.add": operatorwrite.PlanVersion4,
 	}
-	if capabilities.PlanVersion != operatorwrite.PlanVersion4 || capabilities.PlanLifetime != operatorwrite.CurrentPlanLifetime ||
+	if capabilities.PlanVersion != operatorwrite.PlanVersion5 || capabilities.PlanLifetime != operatorwrite.CurrentPlanLifetime ||
 		!reflect.DeepEqual(capabilities.PlanVersions, wantVersions) {
 		t.Fatalf("capabilities=%#v", capabilities)
 	}

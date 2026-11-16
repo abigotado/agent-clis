@@ -165,6 +165,19 @@ func (client *Client) GetIssue(ctx context.Context, issueID string) (Issue, erro
 	if err != nil {
 		return Issue{}, err
 	}
+	issue, err := response.issue()
+	if err != nil {
+		return Issue{}, err
+	}
+	if err := validateIssueResponse(issue, issueID); err != nil {
+		return Issue{}, err
+	}
+	return issue, nil
+}
+
+// issue converts the decoded response, keeping whether the description member
+// was present (a null description is present; an omitted one is not).
+func (response issueReadResponse) issue() (Issue, error) {
 	issue := response.Issue
 	if response.Description != nil {
 		issue.descriptionPresent = true
@@ -176,11 +189,12 @@ func (client *Client) GetIssue(ctx context.Context, issueID string) (Issue, erro
 			issue.Description = &description
 		}
 	}
-	if err := validateIssueResponse(issue, issueID); err != nil {
-		return Issue{}, err
-	}
 	return issue, nil
 }
+
+// DescriptionPresent reports whether the response carried a description
+// member, null included. An omitted member is not evidence of an empty one.
+func (issue Issue) DescriptionPresent() bool { return issue.descriptionPresent }
 
 // issueReadResponse decodes an issue while keeping the presence of the
 // description member, which a plain *string cannot distinguish from null.
@@ -386,17 +400,23 @@ func (client *Client) SearchIssues(ctx context.Context, queryText string, option
 		return nil, err
 	}
 	query.Set("query", queryText)
-	var issues []Issue
-	if err := client.readJSON(ctx, request{path: "/issues", query: query, operation: "issues.search", pageReducible: options.CanReduce}, &issues); err != nil {
+	var responses []issueReadResponse
+	if err := client.readJSON(ctx, request{path: "/issues", query: query, operation: "issues.search", pageReducible: options.CanReduce}, &responses); err != nil {
 		return nil, err
 	}
-	if issues == nil {
+	if responses == nil {
 		return nil, invalidReadResponse()
 	}
-	for _, issue := range issues {
+	issues := make([]Issue, 0, len(responses))
+	for _, response := range responses {
+		issue, err := response.issue()
+		if err != nil {
+			return nil, err
+		}
 		if err := validateIssueResponse(issue, ""); err != nil {
 			return nil, err
 		}
+		issues = append(issues, issue)
 	}
 	return issues, nil
 }

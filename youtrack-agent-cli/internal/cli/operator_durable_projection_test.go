@@ -19,7 +19,7 @@ func TestDurableStatusExplicitExpiryProjectionKeepsSelectableField(t *testing.T)
 		t.Fatalf("status code=%d loads=%d posts=%d stdout=%s stderr=%s", code, credentials.loads, posts.Load(), stdout, stderr)
 	}
 	data := decode(t, stdout)["data"].(map[string]any)
-	if data["plan_version"] != float64(operatorwrite.PlanVersion2) ||
+	if data["plan_version"] != float64(operatorwrite.PlanVersion5) ||
 		data["plan_lifetime"] != operatorwrite.CurrentPlanLifetime {
 		t.Fatalf("durable lifetime metadata=%#v", data)
 	}
