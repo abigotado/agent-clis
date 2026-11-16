@@ -126,12 +126,25 @@ generated read-only profile, and `max_depth = 1` and
 `default_permissions = "agent-harness"` match the home file. `sandbox_mode =
 "workspace-write"` is only the compiler's migration assertion, not the switch.
 The global-only keys (`emit_skills`, `home_seals`, `worktree_parents`,
-`skills_root_manifest`) are deliberately not copied. This is what makes the
-macOS keychain usable by Codex agents here: under the workspace or read-only
-sandbox every legacy keychain call fails with -50, and read-only agents still
-cannot use it. A Codex session can also write
-`<git common dir>/agent-review` and the CLI's own state directory, so a Codex
-review can be recorded from the session that runs it.
+`skills_root_manifest`) are deliberately not copied.
+
+Consequences of `sandbox = "off"`:
+
+- The `Read(...)`/`Edit(...)` credential denies reach Codex only as filesystem
+  entries of the generated workspace profile, which nothing selects now. They
+  bind Claude and the Codex read-only agents; for the Codex main thread and
+  writable agents only the Bash prefix rules and the hooks still apply.
+- The macOS keychain becomes usable by Codex agents here (under the workspace or
+  read-only sandbox every legacy keychain call fails with -50, as measured in
+  the `core/` secret-store work); read-only agents still cannot use it.
+- Only the Codex main thread or a writable agent can write
+  `<git common dir>/agent-review` and the CLI's own state directory. Read-only
+  `reviewer` and `adversarial-review` jobs, and a `codex exec` job started
+  read-only from another session, still cannot, so the session that started a
+  review records it.
+- `max_depth = 1` follows the home file, and the Codex `orchestrator` runs as a
+  depth-1 subagent, so it cannot start agents of its own. Orchestrate from the
+  main thread, or raise `max_depth` here as a project deviation.
 
 ## Adding a rule
 
