@@ -106,3 +106,61 @@ func ReadAccountItemForTest(ctx context.Context, s Store, key Key) ([]byte, erro
 	}
 	return value, nil
 }
+
+// KeychainProbe is what one lock probe of the store's keychain reported.
+type KeychainProbe struct {
+	// Step is the probe call that failed: lookup, copy-keychain, copy-default
+	// or get-status, unknown for a status without a step, none when the probe
+	// succeeded.
+	Step string
+	// Status is the OSStatus of the failed call, or 0.
+	Status int64
+	// Unusable says whether the store's gate reads this probe as
+	// keychain-unusable, including the add-target fallback of the item probe.
+	Unusable bool
+}
+
+func probeStepName(step probeStep) string {
+	switch step {
+	case probeStepLookup:
+		return "lookup"
+	case probeStepCopyKeychain:
+		return "copy-keychain"
+	case probeStepCopyDefault:
+		return "copy-default"
+	case probeStepGetStatus:
+		return "get-status"
+	default:
+		return "unknown"
+	}
+}
+
+func reportProbe(unlocked func() (bool, error), gate *Error) KeychainProbe {
+	probe := KeychainProbe{Step: "none", Unusable: gate != nil}
+	if _, err := unlocked(); err != nil {
+		probe.Step = "unknown"
+		var se *statusError
+		if errors.As(err, &se) {
+			probe.Step = probeStepName(se.step)
+			probe.Status = se.status
+		}
+	}
+	return probe
+}
+
+// ProbeKeychainForTest runs the store's two lock probes for key's account item
+// and reports each one's failing step and status, and whether the store's gate
+// reads it as unusable: item is the probe taken before a lookup, read or
+// delete, add the one taken before an add. It touches no item.
+func ProbeKeychainForTest(ctx context.Context, s Store, key Key) (item, add KeychainProbe, err error) {
+	ks, items, err := keychainStoreOf(s)
+	if err != nil {
+		return KeychainProbe{}, KeychainProbe{}, err
+	}
+	name := itemName{service: key.Service, account: key.Account}
+	_, itemGate := ks.beforeProbe(ctx, "load", name, false)
+	_, addGate := ks.beforeProbe(ctx, "save", name, true)
+	item = reportProbe(func() (bool, error) { return items.keychainUnlocked(ctx, name) }, itemGate)
+	add = reportProbe(func() (bool, error) { return items.addKeychainUnlocked(ctx, name) }, addGate)
+	return item, add, nil
+}

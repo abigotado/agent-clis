@@ -277,6 +277,8 @@ type helperCall struct {
 	// openOnly has the helper open the keychain without unlocking it; see
 	// helperOpenOnlyEnv.
 	openOnly bool
+	// dir, when set, is the helper's working directory.
+	dir string
 }
 
 // save has bin save secret under key and requires it to succeed.
@@ -340,6 +342,7 @@ func (f *fixture) start(t *testing.T, call helperCall) *helperProcess {
 	if call.openOnly {
 		cmd.Env = append(cmd.Env, helperOpenOnlyEnv+"=1")
 	}
+	cmd.Dir = call.dir
 	p := launchHelper(t, call, cmd, cancel)
 	if _, err := p.stdin.Write(append(input, '\n')); err != nil {
 		p.abort()

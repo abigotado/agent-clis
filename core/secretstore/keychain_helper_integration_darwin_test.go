@@ -77,6 +77,8 @@ const (
 	actionRepair      = "repair"
 	actionReadAccount = "read-account"
 	actionSaveStatus  = "save-status"
+	actionExists      = "exists"
+	actionDelete      = "delete"
 )
 
 // helperInput is the first line of the helper's standard input.
@@ -212,6 +214,50 @@ func (h *helperSession) store(interaction secretstore.Interaction) secretstore.S
 	return store
 }
 
+// errorFields splits an error into the Kind name, the OSStatus and the Reason
+// of an *Error. None of them is secret.
+func errorFields(err error) (kind string, status int64, reason string) {
+	kind = kindName(err)
+	var se *secretstore.Error
+	if errors.As(err, &se) {
+		status = se.Status
+		reason = string(se.Reason)
+	}
+	if reason == "" {
+		reason = "none"
+	}
+	return kind, status, reason
+}
+
+// emitProbe reports, for a helper that opened the keychain without an unlock,
+// what the store's two lock probes said and what a read that bypasses the
+// store's gate does with the account item. The caller stored the item first, so
+// a raw read that succeeds while a probe says unusable is the evidence that the
+// rule is too wide.
+func (h *helperSession) emitProbe(store secretstore.Store) {
+	h.t.Helper()
+	item, add, err := secretstore.ProbeKeychainForTest(h.t.Context(), store, h.key)
+	if err != nil {
+		h.t.Fatalf("probe the keychain: %v", err)
+	}
+	for _, p := range []struct {
+		prefix string
+		probe  secretstore.KeychainProbe
+	}{{"probe", item}, {"add", add}} {
+		h.emit(p.prefix+"_step", p.probe.Step)
+		h.emit(p.prefix+"_status", strconv.FormatInt(p.probe.Status, 10))
+		h.emit(p.prefix+"_unusable", strconv.FormatBool(p.probe.Unusable))
+	}
+	value, err := secretstore.ReadAccountItemForTest(h.t.Context(), store, h.key)
+	kind, status, _ := errorFields(err)
+	h.emit("raw_error", kind)
+	h.emit("raw_status", strconv.FormatInt(status, 10))
+	if err == nil {
+		h.emit("raw_value", digestOf(value))
+	}
+	clear(value)
+}
+
 // emitStage reports whether the key's stage item exists, found by reference, so
 // a stage this identity cannot read still shows.
 func (h *helperSession) emitStage(store secretstore.Store) {
@@ -238,12 +284,9 @@ func (h *helperSession) emitLoad(store secretstore.Store, errName string) {
 	if h.openOnly {
 		// The rows that open without an unlock measure a sandbox, so the
 		// status a failure carries is what they record. It is not secret.
-		status := int64(0)
-		var se *secretstore.Error
-		if errors.As(err, &se) {
-			status = se.Status
-		}
+		_, status, reason := errorFields(err)
 		h.emit("load-status", strconv.FormatInt(status, 10))
+		h.emit("load-reason", reason)
 	}
 	clear(value)
 }
@@ -277,19 +320,44 @@ func TestKeychainHelper(t *testing.T) {
 		// error carries, so a refusal the backend classified some other way than
 		// the row expects shows what it was. Neither is secret.
 		store := h.store(secretstore.InteractionNever)
-		err := store.Save(ctx, h.key, h.secret(0))
-		h.emit("error", kindName(err))
-		status := int64(0)
-		var se *secretstore.Error
-		if errors.As(err, &se) {
-			status = se.Status
+		if h.openOnly {
+			h.emitProbe(store)
 		}
+		err := store.Save(ctx, h.key, h.secret(0))
+		kind, status, reason := errorFields(err)
+		h.emit("error", kind)
 		h.emit("status", strconv.FormatInt(status, 10))
+		h.emit("reason", reason)
 
 	case actionLoad:
 		store := h.store(secretstore.InteractionNever)
+		if h.openOnly {
+			h.emitProbe(store)
+		}
 		h.emitLoad(store, "error")
 		h.emitStage(store)
+
+	case actionExists:
+		store := h.store(secretstore.InteractionNever)
+		if h.openOnly {
+			h.emitProbe(store)
+		}
+		found, err := store.Exists(ctx, h.key)
+		kind, status, reason := errorFields(err)
+		h.emit("error", kind)
+		h.emit("status", strconv.FormatInt(status, 10))
+		h.emit("reason", reason)
+		h.emit("exists", strconv.FormatBool(found))
+
+	case actionDelete:
+		store := h.store(secretstore.InteractionNever)
+		if h.openOnly {
+			h.emitProbe(store)
+		}
+		kind, status, reason := errorFields(store.Delete(ctx, h.key))
+		h.emit("error", kind)
+		h.emit("status", strconv.FormatInt(status, 10))
+		h.emit("reason", reason)
 
 	case actionSaveTwice:
 		store := h.store(secretstore.InteractionNever)
