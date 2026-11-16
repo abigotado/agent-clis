@@ -49,6 +49,11 @@ Limits to state plainly:
 - Secret bytes are zeroed in Go memory on a best-effort basis only. The
   platform libraries copy them into buffers this module cannot zero.
 - Core dumps can contain secrets; callers should adopt `DisableCoreDumps`.
+- Inside a sandbox that refuses the macOS keychain's status read (Codex's
+  read-only sandbox does), the store reports `Unavailable` with the reason
+  `keychain-unusable`. It never reports not found, read-only or success there,
+  and a caller must not read it as an absent or expired credential or ask the
+  user to authenticate again.
 
 Tests must use fake credentials and local servers. They must never call a live
 YouTrack instance or the user's own OS secret store. Untagged tests use an

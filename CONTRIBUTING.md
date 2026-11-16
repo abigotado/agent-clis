@@ -60,11 +60,23 @@ The keychain run needs `-timeout 20m`: it builds and signs helper binaries.
 (`core-macos`, `core-windows`, `core-linux`) runs these with the variables set.
 Without the variable a test skips when its environment is missing.
 
-Two macOS rows are opt-in and local only; CI never runs them. Setting
-`SECRETSTORE_CODEX_SANDBOX=/path/to/codex` runs the `codex` subtests of
-`TestKeychainSaveInReadOnlySandbox`, which save and load under Codex's
-built-in `:read-only` profile. Codex runs with an empty temporary `CODEX_HOME`
-and a scratch working directory, so no Codex configuration is read or changed:
+The macOS codex rows are opt-in and local only; CI never runs them. Setting
+`SECRETSTORE_CODEX_SANDBOX=/path/to/codex` runs the `codex sandbox` subtests of
+`TestKeychainSaveInReadOnlySandbox`. Each stores an item outside, runs `Load`,
+`Save`, `Exists` or `Delete` under Codex, and branches on what the lock probe
+measures there: if it is unusable the operation must report `KindUnavailable`
+with `keychain-unusable` and a read that bypasses the store's gate must fail
+too; otherwise the operation must behave normally. Each row logs one line with
+the profile, the probe step and status, and the outcome.
+
+`SECRETSTORE_CODEX_PROFILE` picks the policy: `:read-only` by default, any
+other value starting with `:` (for example `:workspace-write`) is passed to
+`-P`, and `config` uses your real Codex configuration. Except for `config`,
+Codex runs with an empty temporary `CODEX_HOME` and a scratch working
+directory, so no Codex configuration is read or changed; `config` sets no
+`CODEX_HOME`, `-P` or `-C` and runs in a temporary directory. Nothing is ever
+written under `~/.codex`. The write probe must be refused only under
+`:read-only`; other profiles record the result.
 
 ```bash
 cd core
