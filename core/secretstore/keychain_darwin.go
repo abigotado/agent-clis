@@ -111,13 +111,23 @@ static OSStatus sk_exists(CFStringRef service, CFStringRef account, SecKeychainR
 	return status;
 }
 
+// The probe call a failed lock probe stopped at, reported through the stage
+// out-parameter of sk_unlocked and sk_unlocked_for_add. Zero is "unknown": the
+// caller initialises it, and a status from any call that did not set a stage is
+// never read as the GetStatus one. Go maps these in probeStepOf.
+#define SK_STAGE_LOOKUP 1
+#define SK_STAGE_COPY_KEYCHAIN 2
+#define SK_STAGE_COPY_DEFAULT 3
+#define SK_STAGE_GET_STATUS 4
+
 // sk_keychain_unlocked reads the unlock state of one keychain. It never
 // prompts and never decrypts.
-static OSStatus sk_keychain_unlocked(SecKeychainRef keychain, int *unlocked) {
+static OSStatus sk_keychain_unlocked(SecKeychainRef keychain, int *unlocked, int *stage) {
 	if (keychain == NULL) {
 		return errSecInternalComponent;
 	}
 	SecKeychainStatus keychainStatus = 0;
+	*stage = SK_STAGE_GET_STATUS;
 	OSStatus status = SecKeychainGetStatus(keychain, &keychainStatus);
 	if (status != errSecSuccess) {
 		return status;
@@ -130,18 +140,19 @@ static OSStatus sk_keychain_unlocked(SecKeychainRef keychain, int *unlocked) {
 // the target, or the default keychain when the target is NULL. It looks at no
 // item, so an existing item of the same name in another keychain cannot
 // answer for the add target.
-static OSStatus sk_unlocked_for_add(SecKeychainRef target, int *unlocked) {
+static OSStatus sk_unlocked_for_add(SecKeychainRef target, int *unlocked, int *stage) {
 	SecKeychainRef keychain = NULL;
 	OSStatus status = errSecSuccess;
 	if (target != NULL) {
 		keychain = (SecKeychainRef)CFRetain(target);
 	} else {
+		*stage = SK_STAGE_COPY_DEFAULT;
 		status = SecKeychainCopyDefault(&keychain);
 	}
 	if (status != errSecSuccess) {
 		return status;
 	}
-	status = sk_keychain_unlocked(keychain, unlocked);
+	status = sk_keychain_unlocked(keychain, unlocked, stage);
 	if (keychain != NULL) {
 		CFRelease(keychain);
 	}
@@ -154,25 +165,27 @@ static OSStatus sk_unlocked_for_add(SecKeychainRef target, int *unlocked) {
 // is gone it falls back to the keychain an add would go to. Only a missing
 // item takes that path. Any other lookup failure is returned, so a keychain
 // whose lock state cannot be read never looks unlocked.
-static OSStatus sk_unlocked(CFStringRef service, CFStringRef account, SecKeychainRef target, sk_trace *trace, int *unlocked) {
+static OSStatus sk_unlocked(CFStringRef service, CFStringRef account, SecKeychainRef target, sk_trace *trace, int *unlocked, int *stage) {
 	SecKeychainItemRef item = NULL;
+	*stage = SK_STAGE_LOOKUP;
 	OSStatus status = sk_lookup(service, account, target, 1, trace, &item);
 	if (trace != NULL) {
 		return status;
 	}
 	if (status == errSecItemNotFound) {
-		return sk_unlocked_for_add(target, unlocked);
+		return sk_unlocked_for_add(target, unlocked, stage);
 	}
 	if (status != errSecSuccess) {
 		return status;
 	}
 	SecKeychainRef keychain = NULL;
+	*stage = SK_STAGE_COPY_KEYCHAIN;
 	status = SecKeychainItemCopyKeychain(item, &keychain);
 	CFRelease(item);
 	if (status != errSecSuccess) {
 		return status;
 	}
-	status = sk_keychain_unlocked(keychain, unlocked);
+	status = sk_keychain_unlocked(keychain, unlocked, stage);
 	if (keychain != NULL) {
 		CFRelease(keychain);
 	}
@@ -341,6 +354,7 @@ const (
 	cStatusInteractionNotAllowed = int64(C.errSecInteractionNotAllowed)
 	cStatusDuplicateItem         = int64(C.errSecDuplicateItem)
 	cStatusUserCanceled          = int64(C.errSecUserCanceled)
+	cStatusParam                 = int64(C.errSecParam)
 )
 
 // keychainRef is a SecKeychainRef. The zero value is the default keychain and
@@ -438,6 +452,31 @@ func statusOf(status C.OSStatus) error {
 	return &statusError{status: int64(status)}
 }
 
+// probeStepOf maps the stage a lock probe reported to the step of a
+// statusError. Anything it does not know, zero included, is probeStepUnknown.
+func probeStepOf(stage C.int) probeStep {
+	switch stage {
+	case C.SK_STAGE_LOOKUP:
+		return probeStepLookup
+	case C.SK_STAGE_COPY_KEYCHAIN:
+		return probeStepCopyKeychain
+	case C.SK_STAGE_COPY_DEFAULT:
+		return probeStepCopyDefault
+	case C.SK_STAGE_GET_STATUS:
+		return probeStepGetStatus
+	default:
+		return probeStepUnknown
+	}
+}
+
+// probeStatusOf is statusOf for a lock probe, which also records the step.
+func probeStatusOf(status C.OSStatus, stage C.int) error {
+	if status == C.errSecSuccess {
+		return nil
+	}
+	return &statusError{status: int64(status), step: probeStepOf(stage)}
+}
+
 func (k *keychainItems) exists(_ context.Context, name itemName) (bool, error) {
 	service, account, release, err := k.strings(name)
 	if err != nil {
@@ -464,10 +503,10 @@ func (k *keychainItems) keychainUnlocked(_ context.Context, name itemName) (bool
 	}
 	defer release()
 	trace := k.trace()
-	var unlocked C.int
-	status := C.sk_unlocked(service, account, k.target, trace, &unlocked)
+	var unlocked, stage C.int
+	status := C.sk_unlocked(service, account, k.target, trace, &unlocked, &stage)
 	k.record("status", trace)
-	if err := statusOf(status); err != nil {
+	if err := probeStatusOf(status, stage); err != nil {
 		return false, err
 	}
 	return unlocked != 0, nil
@@ -478,8 +517,8 @@ func (k *keychainItems) addKeychainUnlocked(_ context.Context, _ itemName) (bool
 		// Dry-run mode builds no dictionary for this probe and touches nothing.
 		return false, nil
 	}
-	var unlocked C.int
-	if err := statusOf(C.sk_unlocked_for_add(k.target, &unlocked)); err != nil {
+	var unlocked, stage C.int
+	if err := probeStatusOf(C.sk_unlocked_for_add(k.target, &unlocked, &stage), stage); err != nil {
 		return false, err
 	}
 	return unlocked != 0, nil

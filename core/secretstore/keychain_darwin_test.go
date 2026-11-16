@@ -25,6 +25,7 @@ func TestStatusLiteralsMatchSecurityFramework(t *testing.T) {
 		{"errSecInteractionNotAllowed", statusInteractionNotAllowed, cStatusInteractionNotAllowed},
 		{"errSecDuplicateItem", statusDuplicateItem, cStatusDuplicateItem},
 		{"errSecUserCanceled", statusUserCanceled, cStatusUserCanceled},
+		{"errSecParam", statusParam, cStatusParam},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.literal != tt.c {
@@ -35,17 +36,48 @@ func TestStatusLiteralsMatchSecurityFramework(t *testing.T) {
 	// The literals are the ones the classification table documents.
 	want := map[string]int64{
 		"not found": -25300, "auth failed": -25293, "interaction not allowed": -25308,
-		"duplicate": -25299, "user canceled": -128,
+		"duplicate": -25299, "user canceled": -128, "param": -50,
 	}
 	got := map[string]int64{
 		"not found": cStatusItemNotFound, "auth failed": cStatusAuthFailed,
 		"interaction not allowed": cStatusInteractionNotAllowed, "duplicate": cStatusDuplicateItem,
-		"user canceled": cStatusUserCanceled,
+		"user canceled": cStatusUserCanceled, "param": cStatusParam,
 	}
 	for name, status := range want {
 		if got[name] != status {
 			t.Errorf("%s = %d, want %d", name, got[name], status)
 		}
+	}
+}
+
+// TestProbeStepsMatchTheCStages pins the stage numbers the C probe reports to
+// the steps the classification reads, and checks a dry-run probe reports the
+// step it stopped at.
+func TestProbeStepsMatchTheCStages(t *testing.T) {
+	// Literal arguments: a test file cannot import "C", so no C.int variable.
+	for _, tt := range []struct {
+		stage int
+		got   probeStep
+		want  probeStep
+	}{
+		{0, probeStepOf(0), probeStepUnknown},
+		{1, probeStepOf(1), probeStepLookup},
+		{2, probeStepOf(2), probeStepCopyKeychain},
+		{3, probeStepOf(3), probeStepCopyDefault},
+		{4, probeStepOf(4), probeStepGetStatus},
+		{99, probeStepOf(99), probeStepUnknown},
+	} {
+		if tt.got != tt.want {
+			t.Errorf("probeStepOf(%d) = %d, want %d", tt.stage, tt.got, tt.want)
+		}
+	}
+
+	var traces []queryTrace
+	items := &keychainItems{dry: &traces}
+	_, err := items.keychainUnlocked(t.Context(), itemName{service: "svc.test", account: "acct"})
+	var se *statusError
+	if !errors.As(err, &se) || se.step != probeStepLookup {
+		t.Fatalf("dry-run probe error = %v, want a statusError at the lookup step", err)
 	}
 }
 

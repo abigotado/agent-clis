@@ -142,7 +142,11 @@ const (
 	// KindInteractionRequired means the store needs user interaction, such as
 	// unlocking, and the Interaction mode is InteractionNever.
 	KindInteractionRequired
-	// KindUnavailable means no backend is reachable on this system.
+	// KindUnavailable means no backend is reachable on this system, or the
+	// store cannot be used from this process, such as inside a sandbox that
+	// denies keychain access (see ReasonKeychainUnusable). It never means the
+	// credential is absent: a caller must not suggest re-authenticating and
+	// must not treat it as KindNotFound.
 	KindUnavailable
 	// KindReadOnly means the store refused a write that reads are allowed.
 	KindReadOnly
@@ -188,7 +192,14 @@ const (
 	// ReasonTooManyMatches means items for one key were still there after the
 	// bounded number of removal rounds.
 	ReasonTooManyMatches Reason = "too-many-matches"
-	ReasonOther          Reason = "other"
+	// ReasonKeychainUnusable means the keychain cannot be used from this
+	// process, as inside a sandbox that denies keychain access: the check
+	// before an operation was refused as a malformed call, so a search that
+	// finds nothing there says nothing about the credential. It accompanies
+	// KindUnavailable and never means the credential is absent: a caller must
+	// not suggest re-authenticating and must not treat it as not found.
+	ReasonKeychainUnusable Reason = "keychain-unusable"
+	ReasonOther            Reason = "other"
 )
     The closed set of reasons. The empty Reason means none was recorded.
 

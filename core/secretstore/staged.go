@@ -33,6 +33,7 @@ const (
 	statusInteractionNotAllowed int64 = -25308 // errSecInteractionNotAllowed
 	statusDuplicateItem         int64 = -25299 // errSecDuplicateItem
 	statusUserCanceled          int64 = -128   // errSecUserCanceled
+	statusParam                 int64 = -50    // errSecParam
 )
 
 // stageSuffix is appended to an account name to name its stage. U+241F is
@@ -53,10 +54,38 @@ func (n itemName) stage() itemName {
 	return itemName{service: n.service, account: n.account + stageSuffix}
 }
 
+// probeStep names the call of a lock probe that failed. The zero value means
+// the step is not known, which is what every status from a primitive and every
+// test-injected status carries: it is never read as probeStepGetStatus.
+type probeStep int
+
+const (
+	probeStepUnknown probeStep = iota
+	// probeStepLookup is the search for the item whose keychain is wanted.
+	probeStepLookup
+	// probeStepCopyKeychain is the read of the found item's keychain.
+	probeStepCopyKeychain
+	// probeStepCopyDefault is the read of the default keychain, the add
+	// target when no keychain was named.
+	probeStepCopyDefault
+	// probeStepGetStatus is the read of the keychain's lock state.
+	probeStepGetStatus
+)
+
 // statusError is the error an itemAPI returns for a failed operating-system
 // call. It never reaches a caller: the store classifies it into an *Error.
 type statusError struct {
 	status int64
+	// step is the probe call that failed, or probeStepUnknown for anything
+	// but a lock probe.
+	step probeStep
+}
+
+// unusable reports whether the error says the keychain cannot be used from
+// this process: the lock-state read itself was refused as a malformed call.
+// A -50 from any other step keeps its ordinary meaning.
+func (e *statusError) unusable() bool {
+	return e.status == statusParam && e.step == probeStepGetStatus
 }
 
 func (e *statusError) Error() string {
@@ -160,20 +189,22 @@ func (s *stagedStore) failure(op string, err error, write bool) *Error {
 	}
 	if write {
 		// Temporary rule: a write refused with a status not listed above is
-		// reported as read-only. Two sandboxes are measured. A sandbox-exec
-		// profile that denies file writes to the keychain returns 100001.
+		// reported as read-only. A sandbox-exec profile that denies file
+		// writes to the keychain returns 100001 and leaves reads working.
 		// Codex's read-only sandbox (codex-cli 0.167.1, macOS 26.6.2,
-		// 2026-11-13) returns -50 (errSecParam) for the add, the unlock and the
-		// status read, and its searches find nothing, so a stored item reads as
-		// not-found there. -50 is also what a malformed call returns, so the
-		// status alone cannot name the sandbox.
+		// 2026-11-13) is not that case: it returns -50 (errSecParam) for the
+		// add, the unlock and the status read, and its searches find nothing.
+		// The lock probe taken before each primitive catches it (beforeProbe),
+		// so a -50 that reaches this table comes from the primitive itself
+		// with a working probe, and keeps this meaning.
 		return s.fail(op, KindReadOnly, se.status)
 	}
 	return s.fail(op, KindOther, se.status)
 }
 
 // unlocked reports whether the keychain of name is confirmed unlocked. A
-// failed lookup is not confirmed. With forAdd it asks for the keychain an add
+// failed lookup is not confirmed. It is the probe taken after a failed
+// primitive; the probe before one is beforeProbe. With forAdd it asks for the keychain an add
 // of name goes to instead of the one that holds an existing item.
 func (s *stagedStore) unlocked(ctx context.Context, name itemName, forAdd bool) bool {
 	probe := s.api.keychainUnlocked
@@ -182,6 +213,50 @@ func (s *stagedStore) unlocked(ctx context.Context, name itemName, forAdd bool) 
 	}
 	unlocked, err := probe(ctx, name)
 	return err == nil && unlocked
+}
+
+// beforeProbe takes the lock state before a primitive on name. A probe that
+// cannot be answered is "not confirmed unlocked" (false, nil), except when the
+// keychain cannot be used from this process at all: then the returned *Error is
+// KindUnavailable with ReasonKeychainUnusable and the caller must stop before
+// the primitive, so no operation derives absent or not-found from a store it
+// could not look into. Codex's sandbox is the measured case: GetStatus returns
+// -50 there and every search finds nothing.
+//
+// The item probe searches before it reads the lock state, and the search can
+// fail in a sandbox before GetStatus is reached. When it fails at the lookup or
+// copy-keychain step the add-target probe is taken as well, because that one
+// reads the lock state of the default keychain directly. Outside a sandbox that
+// read is 0, so the fallback changes nothing there.
+func (s *stagedStore) beforeProbe(ctx context.Context, op string, name itemName, forAdd bool) (bool, *Error) {
+	probe := s.api.keychainUnlocked
+	if forAdd {
+		probe = s.api.addKeychainUnlocked
+	}
+	unlocked, err := probe(ctx, name)
+	if err == nil {
+		return unlocked, nil
+	}
+	var se *statusError
+	if !errors.As(err, &se) {
+		return false, nil
+	}
+	if se.unusable() {
+		return false, s.unusable(op)
+	}
+	if !forAdd && (se.step == probeStepLookup || se.step == probeStepCopyKeychain) {
+		_, addErr := s.api.addKeychainUnlocked(ctx, name)
+		var addSE *statusError
+		if errors.As(addErr, &addSE) && addSE.unusable() {
+			return false, s.unusable(op)
+		}
+	}
+	return false, nil
+}
+
+// unusable is the error for a keychain this process cannot use.
+func (s *stagedStore) unusable(op string) *Error {
+	return &Error{Op: op, Backend: s.backend, Kind: KindUnavailable, Status: statusParam, Reason: ReasonKeychainUnusable}
 }
 
 // classify classifies a failed primitive on name. unlockedBefore is the lock
@@ -204,7 +279,10 @@ func (s *stagedStore) classify(ctx context.Context, op string, name itemName, un
 
 // lookup reports whether name exists, by reference.
 func (s *stagedStore) lookup(ctx context.Context, op string, name itemName) (bool, error) {
-	before := s.unlocked(ctx, name, false)
+	before, unusable := s.beforeProbe(ctx, op, name, false)
+	if unusable != nil {
+		return false, unusable
+	}
 	found, err := s.api.exists(ctx, name)
 	if err != nil {
 		return false, s.classify(ctx, op, name, before, false, err, false)
@@ -217,7 +295,10 @@ func (s *stagedStore) lookup(ctx context.Context, op string, name itemName) (boo
 func (s *stagedStore) readItem(ctx context.Context, op string, name itemName) ([]byte, error) {
 	// The keychain state is taken before the read because it cannot be taken
 	// later: a lock that opens during the call must not read as unlocked.
-	before := s.unlocked(ctx, name, false)
+	before, unusable := s.beforeProbe(ctx, op, name, false)
+	if unusable != nil {
+		return nil, unusable
+	}
 	value, err := s.api.read(ctx, name, s.max)
 	if err != nil {
 		clear(value)
@@ -235,7 +316,10 @@ func (s *stagedStore) readItem(ctx context.Context, op string, name itemName) ([
 
 // addItem creates one item; a failure is classified with the lock state.
 func (s *stagedStore) addItem(ctx context.Context, op string, name itemName, value []byte) error {
-	before := s.unlocked(ctx, name, true)
+	before, unusable := s.beforeProbe(ctx, op, name, true)
+	if unusable != nil {
+		return unusable
+	}
 	if err := s.api.add(ctx, name, value); err != nil {
 		return s.classify(ctx, op, name, before, true, err, true)
 	}
@@ -322,7 +406,10 @@ func (s *stagedStore) Load(ctx context.Context, key Key) ([]byte, error) {
 
 // deleteItem deletes one item; a missing item is success.
 func (s *stagedStore) deleteItem(ctx context.Context, op string, name itemName) error {
-	before := s.unlocked(ctx, name, false)
+	before, unusable := s.beforeProbe(ctx, op, name, false)
+	if unusable != nil {
+		return unusable
+	}
 	err := s.api.delete(ctx, name)
 	if err == nil {
 		return nil
@@ -382,7 +469,10 @@ func (s *stagedStore) Save(ctx context.Context, key Key, secret []byte) error {
 	ctx = context.WithoutCancel(ctx)
 
 	// Step 2. The stage is removed only when this step fails: until it
-	// completes the account item still holds the previous value.
+	// completes the account item still holds the previous value. The removal
+	// has a lock probe of its own, so a -50 that stops this step before its
+	// primitive still lets the cleanup run; only when the cleanup's probe is
+	// refused as well does the stage stay, and the next Save rolls it forward.
 	if err := s.deleteItem(ctx, "save", name); err != nil {
 		// The error returned is the delete failure; a stage that cannot be
 		// removed either is picked up by the next Save's roll-forward.
@@ -392,7 +482,10 @@ func (s *stagedStore) Save(ctx context.Context, key Key, secret []byte) error {
 	s.step(2)
 
 	// Step 3. A duplicate means someone recreated the account item in the
-	// window. The stage is kept: it may be the only copy.
+	// window. The stage is kept: it may be the only copy. So it is when the
+	// add-target probe is refused with -50 (KindUnavailable): the account item
+	// is gone, the stage holds the new value, Load returns it and the next
+	// Save rolls it forward.
 	if err := s.addItem(ctx, "save", name, secret); err != nil {
 		return err
 	}

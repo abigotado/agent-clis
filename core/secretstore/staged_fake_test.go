@@ -314,3 +314,37 @@ func runUntilCrash(t *testing.T, f *fakeKeychain, fn func()) {
 	}()
 	fn()
 }
+
+// probeFault makes the nth call (1-based) of one label, such as "status acct"
+// or "addstatus stage", return err instead of reaching the fake's own logic.
+type probeFault struct {
+	call string
+	nth  int
+	err  error
+}
+
+// unusableProbe is the error the lock probe returns when GetStatus is refused
+// as a malformed call, which is how a sandbox that denies the keychain shows.
+var unusableProbe = &statusError{status: statusParam, step: probeStepGetStatus}
+
+// injectFaults installs before-hooks for the faults and returns the log
+// positions where they fired, which the caller reads after the run.
+func (f *fakeKeychain) injectFaults(faults ...probeFault) *[]int {
+	counts := make(map[string]int)
+	fired := new([]int)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.before = func(call string) error {
+		counts[call]++
+		for _, fault := range faults {
+			if fault.call == call && fault.nth == counts[call] {
+				f.mu.Lock()
+				*fired = append(*fired, len(f.log)-1)
+				f.mu.Unlock()
+				return fault.err
+			}
+		}
+		return nil
+	}
+	return fired
+}

@@ -16,16 +16,24 @@ func newStaged(f *fakeKeychain) *stagedStore {
 	return newStagedStore(f, "keychain", stagedMax)
 }
 
-// wantError asserts err is an *Error of the given kind, op and status.
+// wantError asserts err is an *Error of the given kind, op and status, with
+// no Reason.
 func wantError(t *testing.T, err error, op string, kind Kind, status int64) {
+	t.Helper()
+	wantErrorReason(t, err, op, kind, status, "")
+}
+
+// wantErrorReason asserts err is an *Error of the given kind, op, status and
+// reason.
+func wantErrorReason(t *testing.T, err error, op string, kind Kind, status int64, reason Reason) {
 	t.Helper()
 	var se *Error
 	if !errors.As(err, &se) {
 		t.Fatalf("err = %v, want an *Error", err)
 	}
-	if se.Op != op || se.Kind != kind || se.Status != status || se.Backend != "keychain" {
-		t.Fatalf("err = {op %q backend %q kind %v status %d}, want {op %q backend keychain kind %v status %d}",
-			se.Op, se.Backend, se.Kind, se.Status, op, kind, status)
+	if se.Op != op || se.Kind != kind || se.Status != status || se.Reason != reason || se.Backend != "keychain" {
+		t.Fatalf("err = {op %q backend %q kind %v status %d reason %q}, want {op %q backend keychain kind %v status %d reason %q}",
+			se.Op, se.Backend, se.Kind, se.Status, se.Reason, op, kind, status, reason)
 	}
 	for _, leak := range []string{fakeService, fakeAccount} {
 		if strings.Contains(err.Error(), leak) {
@@ -1208,4 +1216,360 @@ func TestAddClassificationUsesTheAddTargetProbe(t *testing.T) {
 			wantError(t, err, "save", tt.want, statusAuthFailed)
 		})
 	}
+}
+
+// wantUnusable asserts err says the keychain cannot be used from this process:
+// Unavailable with -50 and ReasonKeychainUnusable, and never a result that
+// reads as absent or refused.
+func wantUnusable(t *testing.T, err error, op string) {
+	t.Helper()
+	wantErrorReason(t, err, op, KindUnavailable, statusParam, ReasonKeychainUnusable)
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("errors.Is(%v, ErrUnavailable) = false", err)
+	}
+	for _, other := range []error{ErrNotFound, ErrReadOnly, ErrInteractionRequired, ErrAccessDenied} {
+		if errors.Is(err, other) {
+			t.Fatalf("errors.Is(%v, %v) = true, want false", err, other)
+		}
+	}
+}
+
+// wantSkipped asserts the call after each logged fault was not primitive: the
+// operation stopped at the probe instead of going on to the primitive.
+func wantSkipped(t *testing.T, f *fakeKeychain, fired []int, primitive string) {
+	t.Helper()
+	if len(fired) == 0 {
+		t.Fatal("the injected fault never fired")
+	}
+	calls := f.calls()
+	for _, at := range fired {
+		if at+1 < len(calls) && calls[at+1] == primitive {
+			t.Fatalf("calls = %v: %q ran right after the failed probe at %d", calls, primitive, at)
+		}
+	}
+}
+
+// TestUnusableKeychainStopsBeforeThePrimitive injects -50 at the GetStatus step
+// of exactly one probe call per row. Every site that takes a probe before a
+// primitive must stop there with KindUnavailable and ReasonKeychainUnusable,
+// never reach the primitive, and never turn the unusable store into not-found,
+// read-only or a nil error.
+func TestUnusableKeychainStopsBeforeThePrimitive(t *testing.T) {
+	exists := func(s *stagedStore) error { _, err := s.Exists(t.Context(), fakeKey); return err }
+	load := func(s *stagedStore) error { _, err := s.Load(t.Context(), fakeKey); return err }
+	del := func(s *stagedStore) error { return s.Delete(t.Context(), fakeKey) }
+	save := func(s *stagedStore) error { return s.Save(t.Context(), fakeKey, []byte("new")) }
+
+	for _, tt := range []struct {
+		name   string
+		acct   string // initial account value, "" for none
+		stage  string // initial stage value, "" for none
+		op     string
+		run    func(*stagedStore) error
+		faults []probeFault
+		// skipped is the primitive that must not follow the failed probe.
+		skipped string
+		// wantAcct and wantStage are the values left behind, "" for absent.
+		wantAcct, wantStage string
+		// wantLoad is what Load returns once the fault is gone, "" to not check.
+		wantLoad string
+		// mutations, when not nil, is the exact list of add and delete calls.
+		mutations []string
+	}{
+		{name: "Exists: first account lookup", op: "exists", run: exists, skipped: "exists acct",
+			faults: []probeFault{{"status acct", 1, unusableProbe}}},
+		{name: "Exists: stage lookup", op: "exists", run: exists, skipped: "exists stage",
+			faults: []probeFault{{"status stage", 1, unusableProbe}}},
+		{name: "Exists: second account lookup", op: "exists", run: exists, skipped: "exists acct",
+			faults: []probeFault{{"status acct", 2, unusableProbe}}},
+
+		{name: "Load: stage read", acct: "old", wantAcct: "old", op: "load", run: load, skipped: "read stage",
+			faults: []probeFault{{"status stage", 1, unusableProbe}}},
+		{name: "Load: account read after a good stage probe", acct: "old", wantAcct: "old", op: "load", run: load, skipped: "read acct",
+			faults: []probeFault{{"status acct", 1, unusableProbe}}},
+		{name: "Load: second round stage read", op: "load", run: load, skipped: "read stage",
+			faults: []probeFault{{"status stage", 2, unusableProbe}}},
+		{name: "Load: second round account read", op: "load", run: load, skipped: "read acct",
+			faults: []probeFault{{"status acct", 2, unusableProbe}}},
+
+		{name: "Delete: stage", acct: "old", stage: "newer", wantAcct: "", wantStage: "newer", op: "delete", run: del, skipped: "delete stage",
+			faults: []probeFault{{"status stage", 1, unusableProbe}}},
+		{name: "Delete: account", acct: "old", wantAcct: "old", op: "delete", run: del, skipped: "delete acct",
+			faults: []probeFault{{"status acct", 1, unusableProbe}}},
+		{name: "Delete: nothing stored is not a success", op: "delete", run: del, skipped: "delete acct",
+			faults: []probeFault{{"status acct", 1, unusableProbe}}},
+
+		{name: "Save: leftover stage read", acct: "old", wantAcct: "old", op: "save", run: save, skipped: "read stage",
+			faults: []probeFault{{"status stage", 1, unusableProbe}}, wantLoad: "old", mutations: []string{}},
+		{name: "Save step 1: add-target probe", acct: "old", wantAcct: "old", op: "save", run: save, skipped: "add stage",
+			faults: []probeFault{{"addstatus stage", 1, unusableProbe}}, wantLoad: "old", mutations: []string{}},
+		{name: "Save step 2: probe, cleanup removes the stage", acct: "old", wantAcct: "old", op: "save", run: save, skipped: "delete acct",
+			faults: []probeFault{{"status acct", 1, unusableProbe}}, wantLoad: "old",
+			mutations: []string{"add stage", "delete stage"}},
+		{name: "Save step 2: probe and cleanup probe both keep the stage", acct: "old", wantAcct: "old", wantStage: "new", op: "save", run: save,
+			skipped: "delete acct", wantLoad: "new", mutations: []string{"add stage"},
+			faults: []probeFault{{"status acct", 1, unusableProbe}, {"status stage", 2, unusableProbe}}},
+		{name: "Save step 3: add-target probe keeps the stage with the new value", acct: "old", wantAcct: "", wantStage: "new", op: "save", run: save,
+			skipped: "add acct", wantLoad: "new", mutations: []string{"add stage", "delete acct"},
+			faults: []probeFault{{"addstatus acct", 1, unusableProbe}}},
+		{name: "Save step 4: stage probe", acct: "old", wantAcct: "new", wantStage: "new", op: "save", run: save,
+			skipped: "delete stage", wantLoad: "new", mutations: []string{"add stage", "delete acct", "add acct"},
+			faults: []probeFault{{"status stage", 2, unusableProbe}}},
+
+		{name: "roll-forward: delete-account probe", acct: "old", stage: "newest", wantAcct: "old", wantStage: "newest", op: "save", run: save,
+			skipped: "delete acct", wantLoad: "newest", mutations: []string{},
+			faults: []probeFault{{"status acct", 1, unusableProbe}}},
+		{name: "roll-forward: add-account probe", acct: "old", stage: "newest", wantAcct: "", wantStage: "newest", op: "save", run: save,
+			skipped: "add acct", wantLoad: "newest", mutations: []string{"delete acct"},
+			faults: []probeFault{{"addstatus acct", 1, unusableProbe}}},
+		{name: "roll-forward: stage delete probe", acct: "old", stage: "newest", wantAcct: "newest", wantStage: "newest", op: "save", run: save,
+			skipped: "delete stage", wantLoad: "newest", mutations: []string{"delete acct", "add acct"},
+			faults: []probeFault{{"status stage", 2, unusableProbe}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFakeKeychain()
+			if tt.acct != "" {
+				f.put(fakeAcctName, tt.acct)
+			}
+			if tt.stage != "" {
+				f.put(fakeStageName, tt.stage)
+			}
+			fired := f.injectFaults(tt.faults...)
+			s := newStaged(f)
+			err := tt.run(s)
+			if err == nil {
+				t.Fatal("the operation succeeded on a keychain that cannot be used")
+			}
+			wantUnusable(t, err, tt.op)
+			wantSkipped(t, f, *fired, tt.skipped)
+			if tt.mutations != nil {
+				if got := f.mutations(); !slices.Equal(got, tt.mutations) && (len(got) != 0 || len(tt.mutations) != 0) {
+					t.Fatalf("mutations = %v, want %v", got, tt.mutations)
+				}
+			}
+			f.before = nil
+			for _, item := range []struct {
+				name itemName
+				want string
+				what string
+			}{{fakeAcctName, tt.wantAcct, "account"}, {fakeStageName, tt.wantStage, "stage"}} {
+				if tt.op == "exists" || tt.op == "load" && tt.acct == "" {
+					break
+				}
+				if got, ok := f.value(item.name); got != item.want || ok != (item.want != "") {
+					t.Fatalf("%s = %q (present %v), want %q", item.what, got, ok, item.want)
+				}
+			}
+			if tt.wantLoad != "" {
+				mustLoad(t, s, tt.wantLoad)
+			}
+			if tt.op == "save" {
+				if err := s.Save(t.Context(), fakeKey, []byte("again")); err != nil {
+					t.Fatalf("retry once the keychain is usable: %v", err)
+				}
+				mustLoad(t, s, "again")
+				wantNoStage(t, f)
+			}
+		})
+	}
+}
+
+// TestOtherMinus50DoesNotMeanUnusable: only -50 at the GetStatus step is the
+// unusable signal. -50 from the lookup, copy-keychain or copy-default step, from
+// a step that is not known, from a primitive, or from the probe taken after a
+// failed primitive keeps today's meaning.
+func TestOtherMinus50DoesNotMeanUnusable(t *testing.T) {
+	for _, step := range []struct {
+		name string
+		step probeStep
+	}{
+		{"lookup", probeStepLookup},
+		{"copy-keychain", probeStepCopyKeychain},
+		{"copy-default", probeStepCopyDefault},
+		{"unknown", probeStepUnknown},
+	} {
+		probeErr := &statusError{status: statusParam, step: step.step}
+		for _, tt := range []struct {
+			name string
+			// run returns the error and the op; the store holds a foreign stage
+			// that refuses with auth-failed, so a probe that cannot confirm
+			// the lock reads InteractionRequired and a confirmed one AccessDenied.
+			run    func(*stagedStore) error
+			op     string
+			faults []probeFault
+		}{
+			{"Load stage probe", func(s *stagedStore) error { _, err := s.Load(t.Context(), fakeKey); return err }, "load",
+				[]probeFault{{"status stage", 1, probeErr}}},
+			{"Save leftover stage probe", func(s *stagedStore) error { return s.Save(t.Context(), fakeKey, []byte("v3")) }, "save",
+				[]probeFault{{"status stage", 1, probeErr}}},
+		} {
+			t.Run(step.name+": "+tt.name, func(t *testing.T) {
+				f := newFakeKeychain()
+				f.put(fakeAcctName, "old")
+				f.putForeign(fakeStageName, statusAuthFailed)
+				f.injectFaults(tt.faults...)
+				err := tt.run(newStaged(f))
+				wantError(t, err, tt.op, KindInteractionRequired, statusAuthFailed)
+				if errors.Is(err, ErrUnavailable) {
+					t.Fatalf("err = %v, must not be Unavailable", err)
+				}
+			})
+		}
+		t.Run(step.name+": add-target probe", func(t *testing.T) {
+			f := newFakeKeychain()
+			refused := &statusError{status: statusAuthFailed}
+			f.before = func(call string) error {
+				switch call {
+				case "add stage":
+					return refused
+				case "addstatus stage":
+					return probeErr
+				}
+				return nil
+			}
+			err := newStaged(f).Save(t.Context(), fakeKey, []byte("v"))
+			wantError(t, err, "save", KindInteractionRequired, statusAuthFailed)
+		})
+	}
+
+	t.Run("a primitive's own -50 with a working probe", func(t *testing.T) {
+		for _, tt := range []struct {
+			name    string
+			fail    string
+			setup   func(f *fakeKeychain)
+			run     func(*stagedStore) error
+			op      string
+			want    Kind
+			wantErr bool
+		}{
+			{"exists", "exists acct", func(*fakeKeychain) {}, func(s *stagedStore) error { _, err := s.Exists(t.Context(), fakeKey); return err }, "exists", KindOther, true},
+			{"read", "read acct", func(f *fakeKeychain) { f.put(fakeAcctName, "v") }, func(s *stagedStore) error { _, err := s.Load(t.Context(), fakeKey); return err }, "load", KindOther, true},
+			{"add", "add stage", func(*fakeKeychain) {}, func(s *stagedStore) error { return s.Save(t.Context(), fakeKey, []byte("v")) }, "save", KindReadOnly, true},
+			{"delete", "delete acct", func(f *fakeKeychain) { f.put(fakeAcctName, "v") }, func(s *stagedStore) error { return s.Delete(t.Context(), fakeKey) }, "delete", KindReadOnly, true},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				f := newFakeKeychain()
+				tt.setup(f)
+				f.before = func(call string) error {
+					if call == tt.fail {
+						return &statusError{status: statusParam}
+					}
+					return nil
+				}
+				err := tt.run(newStaged(f))
+				wantError(t, err, tt.op, tt.want, statusParam)
+				if errors.Is(err, ErrUnavailable) {
+					t.Fatalf("err = %v, must not be Unavailable", err)
+				}
+			})
+		}
+	})
+
+	t.Run("a -50 only from the probe after a failed primitive", func(t *testing.T) {
+		for _, tt := range []struct {
+			name string
+			run  func(*stagedStore) error
+			op   string
+		}{
+			{"Load", func(s *stagedStore) error { _, err := s.Load(t.Context(), fakeKey); return err }, "load"},
+			{"Save", func(s *stagedStore) error { return s.Save(t.Context(), fakeKey, []byte("v3")) }, "save"},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				f := newFakeKeychain()
+				f.put(fakeAcctName, "old")
+				f.putForeign(fakeStageName, statusAuthFailed)
+				f.injectFaults(probeFault{"status stage", 2, unusableProbe})
+				err := tt.run(newStaged(f))
+				wantError(t, err, tt.op, KindInteractionRequired, statusAuthFailed)
+				if v, ok := f.value(fakeStageName); !ok || v != "foreign-secret" {
+					t.Fatalf("stage = %q (present %v), want it kept", v, ok)
+				}
+			})
+		}
+	})
+}
+
+// TestLookupFailureFallsBackToTheAddTarget: the item probe searches before it
+// reads the lock state, and a search that fails before GetStatus says nothing
+// about whether the keychain is usable. The add-target probe then decides.
+func TestLookupFailureFallsBackToTheAddTarget(t *testing.T) {
+	for _, step := range []struct {
+		name string
+		step probeStep
+	}{
+		{"lookup", probeStepLookup},
+		{"copy-keychain", probeStepCopyKeychain},
+	} {
+		probeErr := &statusError{status: -1, step: step.step}
+		t.Run(step.name+" failure and an unusable add target", func(t *testing.T) {
+			f := newFakeKeychain()
+			f.put(fakeAcctName, "old")
+			f.putForeign(fakeStageName, statusAuthFailed)
+			fired := f.injectFaults(
+				probeFault{"status stage", 1, probeErr},
+				probeFault{"addstatus stage", 1, unusableProbe})
+			_, err := newStaged(f).Load(t.Context(), fakeKey)
+			wantUnusable(t, err, "load")
+			wantSkipped(t, f, *fired, "read stage")
+		})
+		t.Run(step.name+" failure and a good add target keeps today's result", func(t *testing.T) {
+			f := newFakeKeychain()
+			f.put(fakeAcctName, "old")
+			f.putForeign(fakeStageName, statusAuthFailed)
+			f.injectFaults(probeFault{"status stage", 1, probeErr})
+			_, err := newStaged(f).Load(t.Context(), fakeKey)
+			wantError(t, err, "load", KindInteractionRequired, statusAuthFailed)
+			var asked int
+			for _, call := range f.calls() {
+				if call == "addstatus stage" {
+					asked++
+				}
+			}
+			if asked != 1 {
+				t.Fatalf("add-target probe taken %d times, want once as the fallback", asked)
+			}
+		})
+		t.Run(step.name+" failure and an add target that fails at another step", func(t *testing.T) {
+			f := newFakeKeychain()
+			f.put(fakeAcctName, "old")
+			f.putForeign(fakeStageName, statusAuthFailed)
+			f.injectFaults(
+				probeFault{"status stage", 1, probeErr},
+				probeFault{"addstatus stage", 1, &statusError{status: statusParam, step: probeStepCopyDefault}})
+			_, err := newStaged(f).Load(t.Context(), fakeKey)
+			wantError(t, err, "load", KindInteractionRequired, statusAuthFailed)
+		})
+	}
+
+	t.Run("a probe that fails at GetStatus with another status takes no fallback", func(t *testing.T) {
+		f := newFakeKeychain()
+		f.put(fakeAcctName, "old")
+		f.injectFaults(probeFault{"status stage", 1, &statusError{status: -1, step: probeStepGetStatus}})
+		mustLoad(t, newStaged(f), "old")
+		if slices.Contains(f.calls(), "addstatus stage") {
+			t.Fatalf("calls = %v, the add-target probe must not run", f.calls())
+		}
+	})
+
+	t.Run("the add-target probe itself takes no fallback", func(t *testing.T) {
+		f := newFakeKeychain()
+		f.before = func(call string) error {
+			if call == "addstatus stage" {
+				return &statusError{status: -1, step: probeStepLookup}
+			}
+			return nil
+		}
+		if err := newStaged(f).Save(t.Context(), fakeKey, []byte("v")); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		n := 0
+		for _, call := range f.calls() {
+			if call == "addstatus stage" {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Fatalf("add-target probe taken %d times, want once", n)
+		}
+	})
 }

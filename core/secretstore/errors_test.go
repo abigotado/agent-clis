@@ -76,6 +76,7 @@ func TestErrorText(t *testing.T) {
 		{"with status", Error{Op: "save", Backend: "keychain", Kind: KindOther, Status: -25299}, "secretstore: save (keychain): other status -25299"},
 		{"with reason", Error{Op: "open", Backend: "secretservice", Kind: KindUnavailable, Reason: ReasonServiceUnknown}, "secretstore: open (secretservice): unavailable service-unknown"},
 		{"with status and reason", Error{Op: "delete", Backend: "credman", Kind: KindOther, Status: 5, Reason: ReasonAccessDenied}, "secretstore: delete (credman): other status 5 access-denied"},
+		{"keychain unusable", Error{Op: "load", Backend: "keychain", Kind: KindUnavailable, Status: -50, Reason: ReasonKeychainUnusable}, "secretstore: load (keychain): unavailable status -50 keychain-unusable"},
 		{"foreign reason text is not echoed", Error{Op: "load", Backend: "secretservice", Kind: KindOther, Reason: "org.example.Error: key=hunter2"}, "secretstore: load (secretservice): other other"},
 		{"foreign op and backend are not echoed", Error{Op: "load key=hunter2", Backend: "svc=hunter2", Kind: KindNotFound}, "secretstore: other (other): not-found"},
 	}
@@ -90,16 +91,17 @@ func TestErrorText(t *testing.T) {
 
 func TestReasonSetIsClosed(t *testing.T) {
 	want := map[Reason]string{
-		ReasonServiceUnknown: "service-unknown",
-		ReasonNameHasNoOwner: "name-has-no-owner",
-		ReasonNoReply:        "no-reply",
-		ReasonNotSupported:   "not-supported",
-		ReasonIsLocked:       "is-locked",
-		ReasonNoSession:      "no-session",
-		ReasonNoSuchObject:   "no-such-object",
-		ReasonAccessDenied:   "access-denied",
-		ReasonTooManyMatches: "too-many-matches",
-		ReasonOther:          "other",
+		ReasonServiceUnknown:   "service-unknown",
+		ReasonNameHasNoOwner:   "name-has-no-owner",
+		ReasonNoReply:          "no-reply",
+		ReasonNotSupported:     "not-supported",
+		ReasonIsLocked:         "is-locked",
+		ReasonNoSession:        "no-session",
+		ReasonNoSuchObject:     "no-such-object",
+		ReasonAccessDenied:     "access-denied",
+		ReasonTooManyMatches:   "too-many-matches",
+		ReasonKeychainUnusable: "keychain-unusable",
+		ReasonOther:            "other",
 	}
 	for reason, text := range want {
 		t.Run(text, func(t *testing.T) {
