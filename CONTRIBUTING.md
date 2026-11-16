@@ -70,7 +70,7 @@ too; otherwise the operation must behave normally. Each row logs one line with
 the profile, the probe step and status, and the outcome.
 
 `SECRETSTORE_CODEX_PROFILE` picks the policy: `:read-only` by default, any
-other value starting with `:` (for example `:workspace-write`) is passed to
+other value starting with `:` (for example `:workspace`, the built-in workspace-write profile in codex-cli 0.167.1) is passed to
 `-P`, and `config` uses your real Codex configuration. Except for `config`,
 Codex runs with an empty temporary `CODEX_HOME` and a scratch working
 directory, so no Codex configuration is read or changed; `config` sets no

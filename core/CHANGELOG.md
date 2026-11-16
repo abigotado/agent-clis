@@ -64,6 +64,17 @@ All notable changes to the `core` module are listed here. Tags are
   the rows run under `SECRETSTORE_CODEX_PROFILE` and branch on what the probe
   measures there. A raw read that bypasses the store's gate must fail wherever
   the probe says unusable; one that succeeds means the rule is too wide.
+  Measured 2026-11-16 with codex-cli 0.167.1 on macOS 26.6.2:
+  - Under `:read-only` and `:workspace` (the built-in workspace-write profile),
+    the item probe and the add-target probe both fail at get-status with -50,
+    and the raw read finds nothing (-25300). `Load`, `Save`, `Exists` and
+    `Delete` all report unavailable, status -50, keychain-unusable. Under
+    `:workspace` the scratch directory is writable, yet the keychain still
+    cannot be used.
+  - Under a configuration whose default permissions are `:danger-full-access`,
+    nothing is sandboxed: the probes pass and every operation behaves normally.
+  - No profile showed a -50 probe together with a working read, so the rule
+    did not need narrowing.
 
 ### Notes for the first consumer (M6)
 
