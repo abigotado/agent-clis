@@ -18,13 +18,13 @@
     },
     {
       "path": "github.com/spf13/pflag",
-      "version": "v1.0.10",
-      "zip_sha256": "a246b8c9d3daa87d6c634cdfee1bdf7fa53d5817eeef4fa0c6da43edd12de4ca"
+      "version": "v1.1.0",
+      "zip_sha256": "041f4b3813dc90681ef0d976b607a6f40a360acdd00e5dfe4111fd85f82bae46"
     },
     {
       "path": "golang.org/x/sys",
-      "version": "v0.49.0",
-      "zip_sha256": "e73a06591ca0d7016ce3ccb45c36a8ed7128468aecc1a357f94d815c760c6b31"
+      "version": "v0.50.0",
+      "zip_sha256": "b115e8a144a7c9d1df3ffb8af20b283e162844b5b624a97ee342955cca69b9e6"
     },
     {
       "path": "golang.org/x/term",
