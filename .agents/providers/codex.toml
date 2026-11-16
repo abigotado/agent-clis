@@ -4,7 +4,15 @@ settings_file = "config.toml"
 instructions_file = "AGENTS.md"
 agent_dir = "agents"
 policy_file = "rules/generated-policy.rules"
+# "off" runs the main thread and every writable agent with Codex's built-in
+# `:danger-full-access` profile, as the global harness does: hooks, approvals and
+# the generated rules are the protection. Read-only agents keep the generated
+# read-only profile. Both generated profile tables are still written, so
+# "profile" switches the sandbox back on at the next compile.
+sandbox = "off"
 sandbox_mode = "workspace-write"
 max_threads = 4
-max_depth = 2
+max_depth = 1
 python_command = "${AGENT_HARNESS_PYTHON:-python3}"
+# Profiles are named agent-harness-workspace and agent-harness-read-only.
+default_permissions = "agent-harness"

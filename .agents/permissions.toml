@@ -70,8 +70,10 @@ ask = [
 # rules on literal command prefixes, so a rewritten equivalent bypasses any
 # entry here. The boundary is that an unlisted command falls through to the
 # session's permission mode (the auto-mode classifier under this repository's
-# `default_mode = "auto"`, a prompt in `default`), plus the Codex read-only and
-# workspace sandbox profiles.
+# `default_mode = "auto"`, a prompt in `default`), plus the Codex read-only
+# profile for read-only agents. The Codex main thread and writable agents run
+# without an OS sandbox (`sandbox = "off"`), so hooks, approvals and these
+# rules are their protection.
 deny = [
   # Local credentials. Read and Edit are kept symmetric: denying only Read
   # would still let a blanket-allowed Write clobber a credential file. An

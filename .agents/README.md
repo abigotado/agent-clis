@@ -118,16 +118,20 @@ would mean something different in the Codex policy.
 
 Settings ownership stays `merge` and hook paths stay absolute: those
 project-scope options protect committed provider output, and this repository's
-output is git-ignored. `providers/codex.toml` does not set `sandbox = "off"`,
-so a project-scope compile keeps the compiler's default workspace permission
-profile and the Codex sandbox stays on here (the home harness's own `"off"`
-does not carry into this compile); its `sandbox_mode = "workspace-write"` is
-only the compiler's migration assertion, not the switch. The deny list above
-treats the sandbox as part of the boundary. Its known cost is that a sandboxed
-Codex session cannot write `<git common dir>/agent-review`, where the review
-record lives (verified from a linked worktree), or the CLI's own state
-directory; record a Codex review from the session that started the job, or run
-that step outside the sandbox.
+output is git-ignored. `providers/codex.toml` follows the home harness:
+`sandbox = "off"` runs the Codex main thread and writable agents with the
+built-in `:danger-full-access` profile, so hooks, approvals and the generated
+rules, not an OS sandbox, are the protection; read-only agents keep the
+generated read-only profile, and `max_depth = 1` and
+`default_permissions = "agent-harness"` match the home file. `sandbox_mode =
+"workspace-write"` is only the compiler's migration assertion, not the switch.
+The global-only keys (`emit_skills`, `home_seals`, `worktree_parents`,
+`skills_root_manifest`) are deliberately not copied. This is what makes the
+macOS keychain usable by Codex agents here: under the workspace or read-only
+sandbox every legacy keychain call fails with -50, and read-only agents still
+cannot use it. A Codex session can also write
+`<git common dir>/agent-review` and the CLI's own state directory, so a Codex
+review can be recorded from the session that runs it.
 
 ## Adding a rule
 
