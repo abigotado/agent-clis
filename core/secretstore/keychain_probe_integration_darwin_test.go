@@ -84,8 +84,13 @@ func TestKeychainProbeOfAKeychainThatIsNotUsable(t *testing.T) {
 			var se *secretstore.Error
 			if errors.As(loadErr, &se) {
 				t.Logf("Load: kind %s, OSStatus %d, reason %q", se.Kind, se.Status, se.Reason)
-				if se.Reason == secretstore.ReasonKeychainUnusable || se.Status == -50 {
-					t.Errorf("Load reports keychain-unusable or -50 for a keychain that is merely broken: kind %s, OSStatus %d, reason %q", se.Kind, se.Status, se.Reason)
+				if se.Reason == secretstore.ReasonKeychainUnusable || se.Kind == secretstore.KindUnavailable {
+					t.Errorf("Load reports the keychain as unusable when it is merely broken: kind %s, OSStatus %d, reason %q", se.Kind, se.Status, se.Reason)
+				}
+				if se.Status == -50 {
+					// A primitive's own -50 keeps its ordinary meaning; record it,
+					// since the docs describe -50 as the sandbox's status.
+					t.Logf("Load of a broken keychain returned -50 without keychain-unusable")
 				}
 			} else if loadErr == nil {
 				t.Error("Load of a key that was never stored succeeded")

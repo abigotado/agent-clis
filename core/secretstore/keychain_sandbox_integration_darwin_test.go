@@ -298,6 +298,13 @@ func wantCodexOutcome(t *testing.T, f *fixture, self testBinary, sb codexPolicy,
 // operation behaves as it does outside a sandbox.
 func wantCodexUsable(t *testing.T, f *fixture, self testBinary, op string, key secretstore.Key, old, replacement []byte, r helperResult) {
 	t.Helper()
+	// A usable keychain under a policy that denies keychain writes (measured:
+	// a profile extending :workspace with extra filesystem rules) reads
+	// normally while Save and Delete report read-only and change nothing.
+	if (op == actionSaveStatus || op == actionDelete) && r.get(t, "error") == "read-only" {
+		f.expectLoad(t, self, key, old)
+		return
+	}
 	r.want(t, "error", "none")
 	switch op {
 	case actionLoad:
@@ -332,8 +339,9 @@ const codexConfigProfile = "config"
 // SECRETSTORE_CODEX_SANDBOX is not set. The profile is :read-only by default,
 // any other value starting with ":" is passed to -P, and "config" uses the
 // user's real codex config: no CODEX_HOME override, no -P and no -C, with the
-// helper's working directory a temporary one. The test writes nothing under
-// the user's codex home; under "config" codex itself may update its own state
+// helper's working directory a temporary one. "config:NAME" uses the real
+// config with its named permission profile NAME (-P NAME, -C a temporary
+// dir). The test writes nothing under the user's codex home; under "config" codex itself may update its own state
 // there, as on any run.
 //
 // Before returning it runs a file write under the same prefix and records
@@ -358,10 +366,14 @@ func codexSandbox(t *testing.T) codexPolicy {
 	case profile == codexConfigProfile:
 		policy.prefix = []string{codex, "sandbox", "--"}
 		policy.dir = t.TempDir()
+	case strings.HasPrefix(profile, codexConfigProfile+":") && len(profile) > len(codexConfigProfile)+1:
+		// A named profile from the user's real codex config.
+		policy.prefix = []string{codex, "sandbox", "-P", strings.TrimPrefix(profile, codexConfigProfile+":"), "-C", t.TempDir(), "--"}
+		policy.dir = t.TempDir()
 	case strings.HasPrefix(profile, ":"):
 		policy.prefix = []string{"/usr/bin/env", "CODEX_HOME=" + t.TempDir(), codex, "sandbox", "-P", profile, "-C", t.TempDir(), "--"}
 	default:
-		t.Fatalf("%s = %q, want %q, a profile starting with %q, or %q", codexProfileEnv, profile, codexReadOnlyProfile, ":", codexConfigProfile)
+		t.Fatalf("%s = %q, want %q, a profile starting with %q, %q, or %q", codexProfileEnv, profile, codexReadOnlyProfile, ":", codexConfigProfile, codexConfigProfile+":NAME")
 	}
 
 	target := filepath.Join(t.TempDir(), "write-probe")

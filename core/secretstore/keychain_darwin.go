@@ -518,7 +518,10 @@ func (k *keychainItems) addKeychainUnlocked(_ context.Context, _ itemName) (bool
 		return false, nil
 	}
 	var unlocked, stage C.int
-	if err := probeStatusOf(C.sk_unlocked_for_add(k.target, &unlocked, &stage), stage); err != nil {
+	// Separate statements: Go does not order reading stage against the call
+	// that writes it when both sit in one expression.
+	status := C.sk_unlocked_for_add(k.target, &unlocked, &stage)
+	if err := probeStatusOf(status, stage); err != nil {
 		return false, err
 	}
 	return unlocked != 0, nil
