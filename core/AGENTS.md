@@ -24,7 +24,9 @@ Credential Manager and the Linux Secret Service. It never falls back to a file.
 - No backend may turn an unusable store into not found or absent. A store the
   process cannot use (the macOS keychain inside a sandbox that refuses its
   status read) is `KindUnavailable` with `ReasonKeychainUnusable`, never
-  `KindNotFound`, `KindReadOnly`, or a nil error from Delete or Exists.
+  `KindNotFound`, `KindReadOnly`, or a nil error from Delete or Exists. A
+  caller must never read it as a missing or expired credential or suggest
+  re-authenticating.
 - The exported API is pinned by `secretstore/testdata/api.golden`. A change to
   it is a deliberate edit of that file, reviewed as a public API change.
 - Untagged tests never call a real OS secret store. The tagged integration

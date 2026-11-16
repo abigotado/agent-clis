@@ -273,7 +273,13 @@ func wantCodexOutcome(t *testing.T, f *fixture, self testBinary, sb codexPolicy,
 		return
 	}
 	if raw := r.get(t, "raw_error"); raw == "none" {
-		t.Errorf("probe -50 with a working read: rule must narrow (raw read of the stored item succeeded while the probe said unusable)\n%s", r.describe())
+		if probeUnusable {
+			t.Errorf("probe -50 with a working read: rule must narrow (raw read of the stored item succeeded while the probe said unusable)\n%s", r.describe())
+		} else {
+			// Only the add target is unusable while reads work: narrowing would
+			// keep gating the add, so this is not evidence the read rule is wide.
+			t.Errorf("add-target probe -50 with a working read: decide whether Save should still be gated\n%s", r.describe())
+		}
 	}
 	r.want(t, errField, "unavailable")
 	r.want(t, statusField, "-50")
@@ -326,8 +332,9 @@ const codexConfigProfile = "config"
 // SECRETSTORE_CODEX_SANDBOX is not set. The profile is :read-only by default,
 // any other value starting with ":" is passed to -P, and "config" uses the
 // user's real codex config: no CODEX_HOME override, no -P and no -C, with the
-// helper's working directory a temporary one. Nothing is ever written under
-// the user's codex home.
+// helper's working directory a temporary one. The test writes nothing under
+// the user's codex home; under "config" codex itself may update its own state
+// there, as on any run.
 //
 // Before returning it runs a file write under the same prefix and records
 // whether it was refused. Only under :read-only a write that succeeds fails the

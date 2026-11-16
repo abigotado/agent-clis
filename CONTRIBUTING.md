@@ -74,8 +74,9 @@ other value starting with `:` (for example `:workspace`, the built-in workspace-
 `-P`, and `config` uses your real Codex configuration. Except for `config`,
 Codex runs with an empty temporary `CODEX_HOME` and a scratch working
 directory, so no Codex configuration is read or changed; `config` sets no
-`CODEX_HOME`, `-P` or `-C` and runs in a temporary directory. Nothing is ever
-written under `~/.codex`. The write probe must be refused only under
+`CODEX_HOME`, `-P` or `-C` and runs in a temporary directory. The test writes
+nothing under `~/.codex`; under `config`, Codex itself may update its own state
+there, as on any run. The write probe must be refused only under
 `:read-only`; other profiles record the result.
 
 ```bash

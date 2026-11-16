@@ -1343,7 +1343,7 @@ func TestUnusableKeychainStopsBeforeThePrimitive(t *testing.T) {
 			wantUnusable(t, err, tt.op)
 			wantSkipped(t, f, *fired, tt.skipped)
 			if tt.mutations != nil {
-				if got := f.mutations(); !slices.Equal(got, tt.mutations) && (len(got) != 0 || len(tt.mutations) != 0) {
+				if got := f.mutations(); !slices.Equal(got, tt.mutations) {
 					t.Fatalf("mutations = %v, want %v", got, tt.mutations)
 				}
 			}
