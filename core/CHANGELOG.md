@@ -73,6 +73,12 @@ All notable changes to the `core` module are listed here. Tags are
     cannot be used.
   - Under a configuration whose default permissions are `:danger-full-access`,
     nothing is sandboxed: the probes pass and every operation behaves normally.
+  - A named profile that extends `:read-only` behaves as `:read-only`. One
+    that extends `:workspace` with extra filesystem rules leaves the keychain
+    usable: the probes pass and reads work, while `Save` and `Delete` report
+    `KindReadOnly` (OSStatus 100001) and leave the stored item unchanged.
+    Such a profile is a read-only store, not an unusable one. Each row there
+    took 35 to 240 seconds, against about 3 seconds elsewhere.
   - No profile showed a -50 probe together with a working read, so the rule
     did not need narrowing.
 
