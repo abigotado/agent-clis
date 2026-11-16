@@ -301,7 +301,11 @@ func wantCodexUsable(t *testing.T, f *fixture, self testBinary, op string, key s
 	// A usable keychain under a policy that denies keychain writes (measured:
 	// a profile extending :workspace with extra filesystem rules) reads
 	// normally while Save and Delete report read-only and change nothing.
+	// Only the sandbox's write-deny status qualifies: a Save or Delete that
+	// reports read-only with any other status is a bug, not the policy.
 	if (op == actionSaveStatus || op == actionDelete) && r.get(t, "error") == "read-only" {
+		r.want(t, "status", sandboxWriteDenyStatus)
+		r.want(t, "reason", "none")
 		f.expectLoad(t, self, key, old)
 		return
 	}
@@ -340,9 +344,10 @@ const codexConfigProfile = "config"
 // any other value starting with ":" is passed to -P, and "config" uses the
 // user's real codex config: no CODEX_HOME override, no -P and no -C, with the
 // helper's working directory a temporary one. "config:NAME" uses the real
-// config with its named permission profile NAME (-P NAME, -C a temporary
-// dir). The test writes nothing under the user's codex home; under "config" codex itself may update its own state
-// there, as on any run.
+// config with its named permission profile NAME (-P NAME, with -C and the
+// helper's working directory the same temporary dir). The test writes nothing
+// under the user's codex home; under "config" and "config:NAME" codex itself
+// may update its own state there, as on any run.
 //
 // Before returning it runs a file write under the same prefix and records
 // whether it was refused. Only under :read-only a write that succeeds fails the
@@ -368,8 +373,12 @@ func codexSandbox(t *testing.T) codexPolicy {
 		policy.dir = t.TempDir()
 	case strings.HasPrefix(profile, codexConfigProfile+":") && len(profile) > len(codexConfigProfile)+1:
 		// A named profile from the user's real codex config.
-		policy.prefix = []string{codex, "sandbox", "-P", strings.TrimPrefix(profile, codexConfigProfile+":"), "-C", t.TempDir(), "--"}
+		name := strings.TrimPrefix(profile, codexConfigProfile+":")
+		if strings.HasPrefix(name, "-") {
+			t.Fatalf("%s = %q: a profile name must not start with '-'", codexProfileEnv, profile)
+		}
 		policy.dir = t.TempDir()
+		policy.prefix = []string{codex, "sandbox", "-P", name, "-C", policy.dir, "--"}
 	case strings.HasPrefix(profile, ":"):
 		policy.prefix = []string{"/usr/bin/env", "CODEX_HOME=" + t.TempDir(), codex, "sandbox", "-P", profile, "-C", t.TempDir(), "--"}
 	default:
@@ -397,6 +406,11 @@ func codexSandbox(t *testing.T) codexPolicy {
 	}
 	return policy
 }
+
+// sandboxWriteDenyStatus is the OSStatus a keychain write gets when a sandbox
+// denies the file write (measured under sandbox-exec and under a codex profile
+// that leaves the keychain usable but denies writes).
+const sandboxWriteDenyStatus = "100001"
 
 // codexReadOnlyProfile is the default permission profile of the codex rows.
 const codexReadOnlyProfile = ":read-only"
