@@ -753,6 +753,46 @@ func TestSecretServiceInteraction(t *testing.T) {
 		}
 	})
 
+	t.Run("CreateItem with no prompt and no item path is malformed", func(t *testing.T) {
+		f := newFakeSS()
+		f.createNoPath = true
+		err := newSSStore(f, InteractionAllowed).Save(t.Context(), ssKey, []byte("v"))
+		wantSSError(t, err, KindOther, ReasonOther)
+		if len(f.items) != 0 {
+			t.Fatalf("items = %d after a Save that must fail", len(f.items))
+		}
+	})
+
+	for _, result := range []string{"root", "string"} {
+		t.Run("a prompt result of "+result+" with the item stored succeeds and keeps the others", func(t *testing.T) {
+			f := newFakeSS()
+			f.createPrompt = prompt
+			f.createResult = result
+			f.keepOnCreate = true
+			f.addItem(storeAttrs(ssKey), []byte("old"))
+			if err := newSSStore(f, InteractionAllowed).Save(t.Context(), ssKey, []byte("new")); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			if len(f.items) != 2 {
+				t.Fatalf("items = %d, want the old and the new one left: which is which is unknown", len(f.items))
+			}
+		})
+
+		t.Run("a prompt result of "+result+" with nothing stored fails", func(t *testing.T) {
+			f := newFakeSS()
+			f.createPrompt = prompt
+			f.createResult = "lost"
+			if result == "string" {
+				f.createResult = "lost-string"
+			}
+			err := newSSStore(f, InteractionAllowed).Save(t.Context(), ssKey, []byte("v"))
+			wantSSError(t, err, KindOther, ReasonOther)
+			if len(f.items) != 0 {
+				t.Fatalf("items = %d, want none", len(f.items))
+			}
+		})
+	}
+
 	t.Run("a prompt from Delete under never is refused", func(t *testing.T) {
 		f := newFakeSS()
 		f.deletePrompt = prompt

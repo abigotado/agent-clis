@@ -33,8 +33,16 @@ type fakeSS struct {
 	// unlocked when it completes.
 	unlockPrompt dbus.ObjectPath
 	createPrompt dbus.ObjectPath // CreateItem returns this prompt and no item
+	// createNoPath makes CreateItem answer "/" for the item and no prompt,
+	// without making an item.
+	createNoPath bool
 	deletePrompt dbus.ObjectPath // Delete returns this prompt
 	promptMode   string          // complete, dismissed, block or fail
+	// createResult is what the CreateItem prompt's Completed carries once the
+	// item is made: "" the item's path, "root" the "/" path, "string" a
+	// non-path value; "lost" and "lost-string" are the same two with no item
+	// made at all.
+	createResult string
 	pending      []dbus.ObjectPath
 	pendingNew   *fakeSSItem // an item CreateItem made once its prompt completes
 	// stayLocked makes a completed unlock prompt leave the objects locked.
@@ -350,6 +358,9 @@ func (f *fakeSS) createItem(args []any) ([]any, error) {
 		f.pendingNew = &fakeSSItem{attrs: maps.Clone(attrs), value: value}
 		return []any{noObject, f.createPrompt}, nil
 	}
+	if f.createNoPath {
+		return []any{noObject, noObject}, nil
+	}
 	it := f.addItem(attrs, value)
 	return []any{it.path, noObject}, nil
 }
@@ -427,9 +438,19 @@ func (w *fakeWatch) wait(ctx context.Context) (ssCompletion, error) {
 		f.unlockPaths(f.pending)
 	}
 	if w.prompt == f.createPrompt && f.pendingNew != nil {
-		it := f.addItem(f.pendingNew.attrs, f.pendingNew.value)
+		lost := strings.HasPrefix(f.createResult, "lost")
+		path := noObject
+		if !lost {
+			path = f.addItem(f.pendingNew.attrs, f.pendingNew.value).path
+		}
 		f.pendingNew = nil
-		return ssCompletion{result: dbus.MakeVariant(it.path)}, nil
+		switch f.createResult {
+		case "root", "lost":
+			return ssCompletion{result: dbus.MakeVariant(noObject)}, nil
+		case "string", "lost-string":
+			return ssCompletion{result: dbus.MakeVariant("not a path")}, nil
+		}
+		return ssCompletion{result: dbus.MakeVariant(path)}, nil
 	}
 	return ssCompletion{result: dbus.MakeVariant(noObject)}, nil
 }

@@ -815,7 +815,9 @@ func (s *secretServiceStore) seal(op string, session *ssSession, secret []byte) 
 
 // Save implements Store. CreateItem with replace set swaps an existing item
 // with the same attributes; any other item that still matches afterwards is
-// removed, so Load never sees two.
+// removed, so Load never sees two. Save returns nil only with proof that an
+// item for the key exists: the path CreateItem or its prompt returned, or a
+// search after a prompt that named none.
 func (s *secretServiceStore) Save(ctx context.Context, key Key, secret []byte) error {
 	if err := s.begin(ctx, "save", key); err != nil {
 		return err
@@ -864,26 +866,40 @@ func (s *secretServiceStore) Save(ctx context.Context, key Key, secret []byte) e
 	if !ok1 || !ok2 || !item.IsValid() || !prompt.IsValid() {
 		return s.malformed("save")
 	}
-	if prompt != noObject {
-		result, err := s.promptOrRefuse(ctx, bus, "save", prompt)
-		if err != nil {
-			return err
+	if prompt == noObject {
+		// No prompt means the item exists, so its path must name it.
+		if item == noObject {
+			return s.malformed("save")
 		}
-		if created, ok := result.Value().(dbus.ObjectPath); ok {
-			item = created
-		}
+		return s.removeMatching(ctx, bus, "save", collection, key, item)
 	}
-	return s.removeOthers(ctx, bus, collection, key, item)
+	result, err := s.promptOrRefuse(ctx, bus, "save", prompt)
+	if err != nil {
+		return err
+	}
+	if created, ok := result.Value().(dbus.ObjectPath); ok && created.IsValid() && created != noObject {
+		item = created
+	}
+	if item == noObject {
+		return s.confirmSaved(ctx, bus, collection, key)
+	}
+	return s.removeMatching(ctx, bus, "save", collection, key, item)
 }
 
-// removeOthers deletes every item matching key except keep. When keep is
-// unknown, which only happens after a prompt that returned no path, nothing is
-// removed: guessing could delete the item just written.
-func (s *secretServiceStore) removeOthers(ctx context.Context, bus ssBus, collection dbus.ObjectPath, key Key, keep dbus.ObjectPath) error {
-	if keep == noObject {
-		return nil
+// confirmSaved is the end of a Save whose prompt completed without naming the
+// item it created. Nothing proves the write, so it searches for the key's
+// items: none means the Save did not store anything and fails. Otherwise a
+// match is the item just written or one that was there before, and which is
+// unknown, so nothing is removed: guessing could delete the item just written.
+func (s *secretServiceStore) confirmSaved(ctx context.Context, bus ssBus, collection dbus.ObjectPath, key Key) error {
+	items, err := s.search(ctx, bus, "save", collection, key)
+	if err != nil {
+		return err
 	}
-	return s.removeMatching(ctx, bus, "save", collection, key, keep)
+	if len(items) == 0 {
+		return s.malformed("save")
+	}
+	return nil
 }
 
 // openSecretService builds the store over the session bus at addr and checks
