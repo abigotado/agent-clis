@@ -149,6 +149,7 @@ jobs:
   core-unit:
     name: core (unit tests, static checks, dependency closure)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: core
@@ -254,6 +255,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.core == 'true' || needs.changes.outputs.all == 'true'
     runs-on: macos-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: core
@@ -337,6 +339,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.core == 'true' || needs.changes.outputs.all == 'true'
     runs-on: windows-latest
+    timeout-minutes: 20
     defaults:
       run:
         shell: bash
@@ -410,6 +413,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.core == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         shell: bash
@@ -485,6 +489,7 @@ jobs:
         cli: ${{ fromJSON(needs.changes.outputs.clis) }}
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 30 || 20 }}
     env:
       GOWORK: ${{ github.workspace }}/go.work
     defaults:
