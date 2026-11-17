@@ -777,6 +777,20 @@ func TestSecretServiceInteraction(t *testing.T) {
 			}
 		})
 
+		t.Run("a prompt result of "+result+" fails when CreateItem also named a stored item", func(t *testing.T) {
+			f := newFakeSS()
+			f.createPrompt = prompt
+			f.createResult = result
+			f.keepOnCreate = true
+			f.createPathWithPrompt = true
+			f.addItem(storeAttrs(ssKey), []byte("old"))
+			err := newSSStore(f, InteractionAllowed).Save(t.Context(), ssKey, []byte("new"))
+			wantSSError(t, err, KindOther, ReasonOther)
+			if len(f.items) != 2 {
+				t.Fatalf("items = %d, want both left: which one is new is unknown", len(f.items))
+			}
+		})
+
 		t.Run("a prompt result of "+result+" with nothing stored fails", func(t *testing.T) {
 			f := newFakeSS()
 			f.createPrompt = prompt

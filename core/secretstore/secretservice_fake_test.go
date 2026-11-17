@@ -36,8 +36,11 @@ type fakeSS struct {
 	// createNoPath makes CreateItem answer "/" for the item and no prompt,
 	// without making an item.
 	createNoPath bool
-	deletePrompt dbus.ObjectPath // Delete returns this prompt
-	promptMode   string          // complete, dismissed, block or fail
+	// createPathWithPrompt makes CreateItem with a prompt also return the path
+	// of an item already stored for the key, against the specification.
+	createPathWithPrompt bool
+	deletePrompt         dbus.ObjectPath // Delete returns this prompt
+	promptMode           string          // complete, dismissed, block or fail
 	// createResult is what the CreateItem prompt's Completed carries once the
 	// item is made: "" the item's path, "root" the "/" path, "string" a
 	// non-path value; "lost" and "lost-string" are the same two with no item
@@ -356,6 +359,9 @@ func (f *fakeSS) createItem(args []any) ([]any, error) {
 	}
 	if f.createPrompt != "" {
 		f.pendingNew = &fakeSSItem{attrs: maps.Clone(attrs), value: value}
+		if stale := f.search(attrs); f.createPathWithPrompt && len(stale) > 0 {
+			return []any{stale[0], f.createPrompt}, nil
+		}
 		return []any{noObject, f.createPrompt}, nil
 	}
 	if f.createNoPath {

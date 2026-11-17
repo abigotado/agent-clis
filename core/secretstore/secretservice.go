@@ -816,8 +816,8 @@ func (s *secretServiceStore) seal(op string, session *ssSession, secret []byte) 
 // Save implements Store. CreateItem with replace set swaps an existing item
 // with the same attributes; any other item that still matches afterwards is
 // removed, so Load never sees two. Save returns nil only with proof that an
-// item for the key exists: the path CreateItem or its prompt returned, or a
-// search after a prompt that named none.
+// item for the key exists: the path CreateItem returned without a prompt, or
+// the path its prompt returned.
 func (s *secretServiceStore) Save(ctx context.Context, key Key, secret []byte) error {
 	if err := s.begin(ctx, "save", key); err != nil {
 		return err
@@ -877,16 +877,16 @@ func (s *secretServiceStore) Save(ctx context.Context, key Key, secret []byte) e
 	if err != nil {
 		return err
 	}
-	if created, ok := result.Value().(dbus.ObjectPath); ok && created.IsValid() && created != noObject {
-		item = created
-	}
-	if item == noObject {
-		// The prompt completed without naming the item it created. A search
-		// cannot tell the new item from one that was there before, so nothing
-		// proves the write: fail rather than report a Save that may be lost.
+	// With a prompt, only the prompt's result names the created item: the
+	// specification makes CreateItem's own path "/" then, so a path it
+	// returned anyway proves nothing. A search cannot tell the new item from
+	// one that was there before either, so without a path from the prompt
+	// fail rather than report a Save that may be lost.
+	created, ok := result.Value().(dbus.ObjectPath)
+	if !ok || !created.IsValid() || created == noObject {
 		return s.malformed("save")
 	}
-	return s.removeMatching(ctx, bus, "save", collection, key, item)
+	return s.removeMatching(ctx, bus, "save", collection, key, created)
 }
 
 // openSecretService builds the store over the session bus at addr and checks
