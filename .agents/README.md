@@ -118,16 +118,35 @@ would mean something different in the Codex policy.
 
 Settings ownership stays `merge` and hook paths stay absolute: those
 project-scope options protect committed provider output, and this repository's
-output is git-ignored. `providers/codex.toml` does not set `sandbox = "off"`,
-so a project-scope compile keeps the compiler's default workspace permission
-profile and the Codex sandbox stays on here (the home harness's own `"off"`
-does not carry into this compile); its `sandbox_mode = "workspace-write"` is
-only the compiler's migration assertion, not the switch. The deny list above
-treats the sandbox as part of the boundary. Its known cost is that a sandboxed
-Codex session cannot write `<git common dir>/agent-review`, where the review
-record lives (verified from a linked worktree), or the CLI's own state
-directory; record a Codex review from the session that started the job, or run
-that step outside the sandbox.
+output is git-ignored. `providers/codex.toml` follows the home harness:
+`sandbox = "off"` runs the Codex main thread and writable agents with the
+built-in `:danger-full-access` profile, so hooks, approvals and the generated
+rules, not an OS sandbox, are the protection; read-only agents keep the
+generated read-only profile, and `max_depth = 1` and
+`default_permissions = "agent-harness"` match the home file. `sandbox_mode =
+"workspace-write"` is only the compiler's migration assertion, not the switch.
+`emit_skills`, `home_seals` and `worktree_parents` apply only at global scope,
+so they are not copied. `skills_root_manifest` names a skills installer's
+manifest, and this repository has no such installer, so it is left unset.
+
+Consequences of `sandbox = "off"`:
+
+- The `Read(...)`/`Edit(...)` credential denies reach Codex only as filesystem
+  entries of the generated profiles. The main thread and writable agents select
+  `:danger-full-access` instead, so the denies no longer bind them; they bind
+  Claude and the Codex read-only agents. For the main thread and writable agents
+  only the Bash prefix rules and the hooks still apply.
+- The macOS keychain becomes usable by Codex agents here (under the workspace or
+  read-only sandbox every legacy keychain call fails with -50, as measured in
+  the `core/` secret-store work); read-only agents still cannot use it.
+- Only the Codex main thread or a writable agent can write
+  `<git common dir>/agent-review` and the CLI's own state directory. Read-only
+  `reviewer` and `adversarial-review` jobs, and a `codex exec` job started
+  read-only from another session, still cannot, so the session that started a
+  review records it.
+- `max_depth = 1` follows the home file, and the Codex `orchestrator` runs as a
+  depth-1 subagent, so it cannot start agents of its own. Orchestrate from the
+  main thread, or raise `max_depth` here as a project deviation.
 
 ## Adding a rule
 
