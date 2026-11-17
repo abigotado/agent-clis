@@ -116,7 +116,7 @@ jobs:
           set -euo pipefail
           allowed="$(printf '%s\n' github.com/abigotado/agent-clis/core golang.org/x/sys github.com/godbus/dbus/v5 | LC_ALL=C sort)"
           for target_os in linux darwin windows; do
-            modules="$(GOOS="${target_os}" go list -deps -test -f '{{if not .Standard}}{{with .Module}}{{.Path}}{{else}}no-module:{{.ImportPath}}{{end}}{{end}}' ./... | awk 'NF' | LC_ALL=C sort -u)"
+            modules="$(CGO_ENABLED=1 GOOS="${target_os}" go list -deps -test -f '{{if not .Standard}}{{with .Module}}{{.Path}}{{else}}no-module:{{.ImportPath}}{{end}}{{end}}' ./... | awk 'NF' | LC_ALL=C sort -u)"
             test -n "${modules}"
             unexpected="$(LC_ALL=C comm -23 <(printf '%s\n' "${modules}") <(printf '%s\n' "${allowed}"))"
             if [ -n "${unexpected}" ]; then
