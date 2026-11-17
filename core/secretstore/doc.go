@@ -1,7 +1,8 @@
 // Package secretstore stores one secret per (service, account) pair in the
-// operating system's credential store: the login keychain on macOS, Credential
-// Manager on Windows, and a Secret Service provider on Linux. It never falls
-// back to a file.
+// operating system's credential store: on macOS the keychains of the user's
+// search list (adds go to the default keychain), Credential Manager on
+// Windows, and a Secret Service provider on Linux. It never falls back to a
+// file.
 //
 // A Store is opened with Open and addressed by a Key. Failures are *Error
 // values whose Kind says what the caller should do next; every Kind has a

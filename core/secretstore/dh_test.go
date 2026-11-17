@@ -326,3 +326,11 @@ func TestDHKeyPairWipeZeroesTheExponent(t *testing.T) {
 		}
 	}
 }
+
+// newDHKeyPairFromExponent builds a pair from a known exponent, for vectors.
+func newDHKeyPairFromExponent(priv *big.Int) *dhKeyPair {
+	p := dhPrime()
+	k := &dhKeyPair{priv: new(big.Int).Set(priv), pub: make([]byte, dhValueBytes)}
+	new(big.Int).Exp(big.NewInt(2), priv, p).FillBytes(k.pub)
+	return k
+}

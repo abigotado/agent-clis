@@ -33,7 +33,7 @@ relies on:
 
 | OS | Store | What the protection rests on |
 | --- | --- | --- |
-| macOS | login keychain, Security.framework | the keychain's access control list, which names the code-signing identity of the program that created the item; the keychain lock; the user's session |
+| macOS | the default keychain for adds and the user's keychain search list for reads and deletes, Security.framework | the keychain's access control list, which names the code-signing identity of the program that created the item; the keychain lock; the user's session |
 | Windows | Credential Manager, per-user, local-machine persistence | the user's logon session and DPAPI protection of the credential; a secret is split over a manifest and numbered chunks |
 | Linux | Secret Service provider (for example gnome-keyring) on the session bus | the provider's own lock and unlock; the session bus socket being owned by the user; no bus is launched |
 

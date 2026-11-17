@@ -21,6 +21,7 @@ func (f *modeFixer) fix(mode Interaction) bool {
 	return f.mode == mode
 }
 
-// processMode is the one piece of package state: the interaction mode is a
-// process-wide property of the platform stores, so it is fixed process-wide.
+// processMode holds the interaction mode: it is a process-wide property of
+// the platform stores, so it is fixed process-wide. The only other package
+// state is the darwin prompt setter, which tests replace.
 var processMode modeFixer

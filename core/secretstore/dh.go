@@ -91,14 +91,6 @@ func (k *dhKeyPair) wipe() {
 	clear(k.priv.Bits())
 }
 
-// newDHKeyPairFromExponent builds a pair from a known exponent, for vectors.
-func newDHKeyPairFromExponent(priv *big.Int) *dhKeyPair {
-	p := dhPrime()
-	k := &dhKeyPair{priv: new(big.Int).Set(priv), pub: make([]byte, dhValueBytes)}
-	new(big.Int).Exp(big.NewInt(2), priv, p).FillBytes(k.pub)
-	return k
-}
-
 // deriveKey validates the peer's public value and returns the 16-byte AES key.
 // The peer value y must satisfy 1 < y < p-1 and fit in 128 bytes (leading
 // zeros may be absent); the shared secret must be neither 1 nor p-1.

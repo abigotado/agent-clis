@@ -257,6 +257,9 @@ static OSStatus sk_create_access(CFStringRef description, SecAccessRef *access) 
 	SecAccessRef created = NULL;
 	status = SecAccessCreate(description, applications, &created);
 	if (status != errSecSuccess || created == NULL) {
+		if (created != NULL) {
+			CFRelease(created);
+		}
 		CFRelease(applications);
 		return status != errSecSuccess ? status : errSecInternalComponent;
 	}
