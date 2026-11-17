@@ -65,6 +65,8 @@ func DisableCoreDumps() error
     DisableCoreDumps sets the soft and hard core-file size limits to zero so
     a crash cannot write secrets to disk. It does nothing on systems without
     RLIMIT_CORE. The limits can only be raised again by a privileged process.
+    A failure is an *Error of KindOther whose Status is the errno when there is
+    one; it carries no operating-system text.
 
 
 TYPES
@@ -77,7 +79,8 @@ type ACLRepairer interface {
     It rewrites an item so the running binary can read it again.
 
 type Error struct {
-	// Op is the operation: open, exists, load, save, delete, or repair.
+	// Op is the operation: open, exists, load, save, delete, repair, or
+	// disable-core-dumps.
 	Op string
 	// Backend is keychain, credman, secretservice, memory, or none.
 	Backend string

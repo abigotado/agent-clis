@@ -2,7 +2,8 @@ package secretstore
 
 import (
 	"context"
-	"fmt"
+	"errors"
+	"syscall"
 )
 
 // MaxSecretBytesLimit is the largest MaxSecretBytes an Options value accepts.
@@ -86,10 +87,22 @@ func Open(ctx context.Context, opts Options) (Store, error) {
 
 // DisableCoreDumps sets the soft and hard core-file size limits to zero so a
 // crash cannot write secrets to disk. It does nothing on systems without
-// RLIMIT_CORE. The limits can only be raised again by a privileged process.
+// RLIMIT_CORE. The limits can only be raised again by a privileged process. A
+// failure is an *Error of KindOther whose Status is the errno when there is
+// one; it carries no operating-system text.
 func DisableCoreDumps() error {
-	if err := disableCoreDumps(); err != nil {
-		return fmt.Errorf("secretstore: disable core dumps: %w", err)
+	return disableCoreDumpsWith(disableCoreDumps)
+}
+
+func disableCoreDumpsWith(disable func() error) error {
+	err := disable()
+	if err == nil {
+		return nil
 	}
-	return nil
+	e := &Error{Op: "disable-core-dumps", Backend: "none", Kind: KindOther}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		e.Status = int64(errno)
+	}
+	return e
 }

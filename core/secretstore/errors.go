@@ -131,7 +131,8 @@ var (
 // is built only from the fixed fields below, so it cannot carry a secret, a
 // key, or provider text.
 type Error struct {
-	// Op is the operation: open, exists, load, save, delete, or repair.
+	// Op is the operation: open, exists, load, save, delete, repair, or
+	// disable-core-dumps.
 	Op string
 	// Backend is keychain, credman, secretservice, memory, or none.
 	Backend string
@@ -148,7 +149,7 @@ type Error struct {
 // can never reach error text.
 func knownOp(op string) string {
 	switch op {
-	case "open", "exists", "load", "save", "delete", "repair":
+	case "open", "exists", "load", "save", "delete", "repair", "disable-core-dumps":
 		return op
 	default:
 		return "other"
