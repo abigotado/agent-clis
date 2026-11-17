@@ -125,15 +125,17 @@ rules, not an OS sandbox, are the protection; read-only agents keep the
 generated read-only profile, and `max_depth = 1` and
 `default_permissions = "agent-harness"` match the home file. `sandbox_mode =
 "workspace-write"` is only the compiler's migration assertion, not the switch.
-The global-only keys (`emit_skills`, `home_seals`, `worktree_parents`,
-`skills_root_manifest`) are deliberately not copied.
+`emit_skills`, `home_seals` and `worktree_parents` apply only at global scope,
+so they are not copied. `skills_root_manifest` names a skills installer's
+manifest, and this repository has no such installer, so it is left unset.
 
 Consequences of `sandbox = "off"`:
 
 - The `Read(...)`/`Edit(...)` credential denies reach Codex only as filesystem
-  entries of the generated workspace profile, which nothing selects now. They
-  bind Claude and the Codex read-only agents; for the Codex main thread and
-  writable agents only the Bash prefix rules and the hooks still apply.
+  entries of the generated profiles. The main thread and writable agents select
+  `:danger-full-access` instead, so the denies no longer bind them; they bind
+  Claude and the Codex read-only agents. For the main thread and writable agents
+  only the Bash prefix rules and the hooks still apply.
 - The macOS keychain becomes usable by Codex agents here (under the workspace or
   read-only sandbox every legacy keychain call fails with -50, as measured in
   the `core/` secret-store work); read-only agents still cannot use it.
