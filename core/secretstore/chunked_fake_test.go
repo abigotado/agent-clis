@@ -149,6 +149,10 @@ func (f *fakeCredMan) enumerate(ctx context.Context, filter string) ([]string, e
 	f.mu.Unlock()
 	slices.Sort(out)
 	f.leave(call)
+	// Like the real binding, never return a truncated list.
+	if err := checkEnumerated(len(out)); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 

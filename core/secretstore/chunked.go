@@ -84,6 +84,25 @@ func (e *win32Error) Error() string {
 // before the blob is copied.
 var errBlobTooLarge = errors.New("secretstore: stored blob exceeds the bound")
 
+// errTooManyEnumerated is what credAPI.enumerate returns when more credentials
+// match than one enumeration may return. A partial list would let a sweep
+// report success while chunks remain, so it is an error, never a truncation.
+var errTooManyEnumerated = errors.New("secretstore: enumeration exceeds the bound")
+
+// maxEnumerated bounds the credentials one enumeration is read from. A key
+// owns at most a few generations of 52 chunks, so only a program filling the
+// prefix with junk can exceed it.
+const maxEnumerated = 1 << 12
+
+// checkEnumerated returns errTooManyEnumerated when count credentials are more
+// than one enumeration may return.
+func checkEnumerated(count int) error {
+	if count > maxEnumerated {
+		return errTooManyEnumerated
+	}
+	return nil
+}
+
 // credAPI is the set of Credential Manager primitives the format needs. A
 // target is a generic credential's TargetName and the lookup is
 // case-insensitive, as in the real service.
@@ -98,7 +117,9 @@ type credAPI interface {
 	// win32NotFound.
 	delete(ctx context.Context, target string) error
 	// enumerate returns the stored target names that match filter, a name
-	// prefix followed by one '*'. No match is an empty result, not an error.
+	// prefix followed by one '*'. No match is an empty result, not an error,
+	// and more than maxEnumerated matches is errTooManyEnumerated, never a
+	// truncated list.
 	enumerate(ctx context.Context, filter string) ([]string, error)
 }
 
@@ -222,6 +243,11 @@ func (s *chunkedStore) fail(op string, kind Kind, status int64) *Error {
 func (s *chunkedStore) failure(op string, err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return contextError(op, err)
+	}
+	if errors.Is(err, errTooManyEnumerated) {
+		e := s.fail(op, KindOther, 0)
+		e.Reason = ReasonTooManyMatches
+		return e
 	}
 	var we *win32Error
 	if !errors.As(err, &we) {

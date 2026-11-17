@@ -974,6 +974,57 @@ func TestChunkedErrorMapping(t *testing.T) {
 	})
 }
 
+// TestChunkedEnumerationOverBound: an enumeration with more matches than the
+// bound is an error, so a sweep never reads a partial list as a complete one.
+func TestChunkedEnumerationOverBound(t *testing.T) {
+	if err := checkEnumerated(maxEnumerated); err != nil {
+		t.Fatalf("checkEnumerated(%d) = %v, want nil", maxEnumerated, err)
+	}
+	if err := checkEnumerated(maxEnumerated + 1); !errors.Is(err, errTooManyEnumerated) {
+		t.Fatalf("checkEnumerated(%d) = %v, want errTooManyEnumerated", maxEnumerated+1, err)
+	}
+
+	// fill makes more own-looking names than one enumeration may return.
+	fill := func(f *fakeCredMan) {
+		prefix := manifestTarget(chunkedKey)
+		for i := 0; i <= maxEnumerated; i++ {
+			f.put(chunkTarget(prefix, "ff"+strconv.Itoa(i), i), []byte("x"))
+		}
+	}
+	wantTooMany := func(t *testing.T, err error, op string) {
+		t.Helper()
+		wantCredError(t, err, op, KindOther, 0)
+		var e *Error
+		if !errors.As(err, &e) || e.Reason != ReasonTooManyMatches {
+			t.Fatalf("%s = %v, want reason %q", op, err, ReasonTooManyMatches)
+		}
+	}
+
+	t.Run("delete fails", func(t *testing.T) {
+		f, s := newChunked(t, MaxSecretBytesLimit)
+		fill(f)
+		wantTooMany(t, s.Delete(t.Context(), chunkedKey), "delete")
+	})
+	t.Run("sweep fails", func(t *testing.T) {
+		f, s := newChunked(t, MaxSecretBytesLimit)
+		fill(f)
+		wantTooMany(t, s.sweep(t.Context(), "save", manifestTarget(chunkedKey), "00"), "save")
+	})
+	t.Run("save keeps its value", func(t *testing.T) {
+		// The sweep after the manifest is best effort, so Save still reports
+		// the success it had; the value must load.
+		f, s := newChunked(t, MaxSecretBytesLimit)
+		fill(f)
+		if err := s.Save(t.Context(), chunkedKey, []byte("v")); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		got, err := s.Load(t.Context(), chunkedKey)
+		if err != nil || string(got) != "v" {
+			t.Fatalf("Load = %q, %v", got, err)
+		}
+	})
+}
+
 // TestChunkedWriteNotFoundIsNotAbsence: a not-found from the chunk write or from
 // the manifest write is KindOther, and the Save cleans up after itself.
 func TestChunkedWriteNotFoundIsNotAbsence(t *testing.T) {

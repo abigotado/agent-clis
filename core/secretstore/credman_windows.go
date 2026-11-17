@@ -18,11 +18,6 @@ const (
 	credTypeGeneric      = 1 // CRED_TYPE_GENERIC
 	credPersistLocalHost = 2 // CRED_PERSIST_LOCAL_MACHINE
 
-	// maxEnumerated bounds the credentials one enumeration is read from. A key
-	// owns at most a few generations of 52 chunks, so this only limits what a
-	// program filling the prefix with junk can make us copy; a sweep that sees
-	// fewer names than exist finishes on a later Save or Delete.
-	maxEnumerated = 1 << 12
 )
 
 // credential is CREDENTIALW. x/sys/windows does not define it, so the layout
@@ -202,8 +197,11 @@ func (c *credman) enumerate(ctx context.Context, filter string) ([]string, error
 		return nil, failed
 	}
 	defer c.free(unsafe.Pointer(creds))
+	if err := checkEnumerated(int(count)); err != nil {
+		return nil, err
+	}
 	var names []string
-	for _, cred := range unsafe.Slice(creds, min(int(count), maxEnumerated)) {
+	for _, cred := range unsafe.Slice(creds, int(count)) {
 		if cred.Type != credTypeGeneric || cred.TargetName == nil {
 			continue
 		}
