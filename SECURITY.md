@@ -48,6 +48,9 @@ Limits to state plainly:
   a secret with its own, and the caller cannot tell from the store alone.
 - Secret bytes are zeroed in Go memory on a best-effort basis only. The
   platform libraries copy them into buffers this module cannot zero.
+- On Linux the Secret Service session is encrypted when the provider supports
+  it. A provider that answers "not supported" to the encrypted request gets the
+  `plain` algorithm, and the secret then crosses the session bus unencrypted.
 - Core dumps can contain secrets; callers should adopt `DisableCoreDumps`.
 - Inside a sandbox that refuses the macOS keychain's status read (Codex's
   read-only sandbox does), the store reports `Unavailable` with the reason

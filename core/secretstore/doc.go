@@ -28,8 +28,10 @@
 // On macOS the Security framework receives the secret in an immutable CFData
 // that is released without being zeroed; only the Go copies are zeroed, on a
 // best-effort basis. On Linux the D-Bus library copies the secret into message
-// buffers it does not zero, and the Secret Service session encryption only
-// hides the secret from a passive observer of the session bus; only the Go
+// buffers it does not zero, and the Secret Service session encryption, used when
+// the provider supports it, only hides the secret from a passive observer of
+// the session bus; a provider that does not support it gets the plain
+// algorithm, which sends the secret unencrypted over the bus. Only the Go
 // copies are zeroed, on a best-effort basis.
 //
 // Package secretstoretest provides an in-memory fake and a behaviour suite
