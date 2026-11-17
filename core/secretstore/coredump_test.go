@@ -23,7 +23,7 @@ func TestDisableCoreDumps(t *testing.T) {
 }
 
 func TestDisableCoreDumpsFailureCarriesNoOSText(t *testing.T) {
-	const osText = "operation not permitted at /home/someone/secret-path"
+	const osText = "operation not permitted by someone-private-name"
 	for _, tt := range []struct {
 		name       string
 		err        error
