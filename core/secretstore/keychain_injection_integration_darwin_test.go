@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/abigotado/agent-clis/core/secretstore/internal/kctest"
@@ -127,6 +128,13 @@ func runInjected(t *testing.T, bin testBinary, dylib string) (loaded bool, r hel
 // flag alone: a copy of the same ad hoc binary, signed ad hoc again with the
 // runtime flag and nothing else changed, must not load the library either.
 //
+// A machine with System Integrity Protection disabled does not enforce the
+// hardened runtime, and a GitHub-hosted macOS runner loaded the library into
+// both flagged helpers. The row skips, with a notice, only when both flagged
+// helpers load it and csrutil reports SIP disabled; any other load fails,
+// SECRETSTORE_REQUIRE_KEYCHAIN or not. The SIP status and boot-args are logged
+// whenever a flagged helper loads the library.
+//
 // The helpers are the signed binaries of TestKeychainAcrossBinaries: A1 carries
 // the flag, the ad hoc one does not. Building and signing them takes as long as
 // it does there.
@@ -193,15 +201,63 @@ func TestHardenedRuntimeRefusesInjection(t *testing.T) {
 	if !flaggedSig.AdHoc() || !flaggedSig.Runtime() {
 		t.Fatalf("the ad hoc copy is not signed ad hoc with the runtime flag (flags 0x%x), so it cannot pin the refusal on the flag", flaggedSig.Flags)
 	}
-	loaded, r = runInjected(t, flagged, dylib)
-	t.Logf("ad hoc with the runtime flag: library loaded %t, DYLD_INSERT_LIBRARIES in its environment: %s", loaded, r.fields["dyld_env"])
-	if loaded {
-		t.Errorf("the ad hoc helper with only the runtime flag added loaded a library from DYLD_INSERT_LIBRARIES\n%s", r.describe())
+	flaggedLoaded, flaggedRun := runInjected(t, flagged, dylib)
+	t.Logf("ad hoc with the runtime flag: library loaded %t, DYLD_INSERT_LIBRARIES in its environment: %s", flaggedLoaded, flaggedRun.fields["dyld_env"])
+	hardenedLoaded, hardenedRun := runInjected(t, hardened, dylib)
+	t.Logf("hardened runtime: library loaded %t, DYLD_INSERT_LIBRARIES in its environment: %s", hardenedLoaded, hardenedRun.fields["dyld_env"])
+	if !flaggedLoaded && !hardenedLoaded {
+		return
 	}
 
-	loaded, r = runInjected(t, hardened, dylib)
-	t.Logf("hardened runtime: library loaded %t, DYLD_INSERT_LIBRARIES in its environment: %s", loaded, r.fields["dyld_env"])
-	if loaded {
-		t.Errorf("the helper signed with the hardened runtime loaded a library from DYLD_INSERT_LIBRARIES\n%s", r.describe())
+	sip := readSystemIntegrity(t.Context())
+	t.Logf("csrutil status: %s", sip.status)
+	t.Logf("boot-args: %s", sip.bootArgs)
+	if flaggedLoaded && hardenedLoaded && sip.disabled {
+		// Both helpers carry the runtime flag (checked above) and the control
+		// shows the loader honours the variable, so a runner that loads the
+		// library into both while it reports SIP disabled does not enforce the
+		// hardened runtime: the row measures nothing there. CI accepts this
+		// skip only together with the notice, by its exact text.
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			fmt.Println(sipDisabledNotice)
+		}
+		t.Skip("System Integrity Protection is disabled here, so the hardened runtime is not enforced and the row measures nothing")
 	}
+	if flaggedLoaded {
+		t.Errorf("the ad hoc helper with only the runtime flag added loaded a library from DYLD_INSERT_LIBRARIES (SIP: %s)\n%s", sip.status, flaggedRun.describe())
+	}
+	if hardenedLoaded {
+		t.Errorf("the helper signed with the hardened runtime loaded a library from DYLD_INSERT_LIBRARIES (SIP: %s)\n%s", sip.status, hardenedRun.describe())
+	}
+}
+
+// sipDisabledNotice is the workflow command printed when the row is skipped
+// because the runner reports SIP disabled. The macOS CI step matches it by
+// this exact text, so change both together.
+const sipDisabledNotice = "::notice title=keychain integration::TestHardenedRuntimeRefusesInjection skipped: System Integrity Protection is disabled on this runner"
+
+// systemIntegrity is what the machine reports about SIP. disabled is true only
+// when csrutil says so in full; an enabled, custom or unreadable status leaves
+// it false, so the row keeps failing there.
+type systemIntegrity struct {
+	status   string
+	bootArgs string
+	disabled bool
+}
+
+func readSystemIntegrity(ctx context.Context) systemIntegrity {
+	var sip systemIntegrity
+	out, err := exec.CommandContext(ctx, "/usr/bin/csrutil", "status").CombinedOutput()
+	sip.status = strings.TrimSpace(tail(out, 512))
+	if err != nil {
+		sip.status = "unreadable: " + err.Error() + ": " + sip.status
+	} else {
+		sip.disabled = sip.status == "System Integrity Protection status: disabled."
+	}
+	out, err = exec.CommandContext(ctx, "/usr/sbin/nvram", "boot-args").CombinedOutput()
+	sip.bootArgs = strings.TrimSpace(tail(out, 512))
+	if err != nil {
+		sip.bootArgs = "unreadable: " + err.Error() + ": " + sip.bootArgs
+	}
+	return sip
 }
