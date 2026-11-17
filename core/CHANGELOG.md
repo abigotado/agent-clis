@@ -12,7 +12,8 @@ All notable changes to the `core` module are listed here. Tags are
   caller's next move, a closed set of `Reason` values, and a process-wide
   `Interaction` mode fixed by the first `Open`.
 - macOS: Keychain through Security.framework (cgo). A save is staged so a
-  failed write never destroys the previous value. A keychain this process
+  failed write leaves either the previous or the new value readable; it never
+  leaves the key empty. A keychain this process
   cannot use, such as inside Codex's read-only sandbox, is `KindUnavailable`
   with the new `ReasonKeychainUnusable` (`"keychain-unusable"`) and status -50.
   `KindUnavailable` now also covers a store that cannot be used from this
@@ -21,8 +22,12 @@ All notable changes to the `core` module are listed here. Tags are
   found.
 - Windows: Credential Manager. A secret is stored as a manifest plus numbered
   chunks, because one credential blob holds at most 2560 bytes.
-- Linux: Secret Service over the session bus, with an encrypted session. Only a
-  `unix:` bus address is used, and no bus is ever launched.
+- Linux: Secret Service over the session bus. The session is encrypted
+  (Diffie-Hellman with AES) whenever the provider supports it; a provider that
+  answers "not supported" to that request gets the `plain` algorithm, which
+  sends the secret unencrypted over the session bus, and any other failure
+  stops the operation instead of falling back. Only a `unix:` bus address is
+  used, and no bus is ever launched.
 - `DisableCoreDumps` for the calling process on Unix.
 - `secretstoretest`: an in-memory fake and the behaviour suite every backend
   passes.
