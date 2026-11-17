@@ -881,25 +881,12 @@ func (s *secretServiceStore) Save(ctx context.Context, key Key, secret []byte) e
 		item = created
 	}
 	if item == noObject {
-		return s.confirmSaved(ctx, bus, collection, key)
-	}
-	return s.removeMatching(ctx, bus, "save", collection, key, item)
-}
-
-// confirmSaved is the end of a Save whose prompt completed without naming the
-// item it created. Nothing proves the write, so it searches for the key's
-// items: none means the Save did not store anything and fails. Otherwise a
-// match is the item just written or one that was there before, and which is
-// unknown, so nothing is removed: guessing could delete the item just written.
-func (s *secretServiceStore) confirmSaved(ctx context.Context, bus ssBus, collection dbus.ObjectPath, key Key) error {
-	items, err := s.search(ctx, bus, "save", collection, key)
-	if err != nil {
-		return err
-	}
-	if len(items) == 0 {
+		// The prompt completed without naming the item it created. A search
+		// cannot tell the new item from one that was there before, so nothing
+		// proves the write: fail rather than report a Save that may be lost.
 		return s.malformed("save")
 	}
-	return nil
+	return s.removeMatching(ctx, bus, "save", collection, key, item)
 }
 
 // openSecretService builds the store over the session bus at addr and checks

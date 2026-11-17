@@ -764,17 +764,16 @@ func TestSecretServiceInteraction(t *testing.T) {
 	})
 
 	for _, result := range []string{"root", "string"} {
-		t.Run("a prompt result of "+result+" with the item stored succeeds and keeps the others", func(t *testing.T) {
+		t.Run("a prompt result of "+result+" fails even with an item stored and removes nothing", func(t *testing.T) {
 			f := newFakeSS()
 			f.createPrompt = prompt
 			f.createResult = result
 			f.keepOnCreate = true
 			f.addItem(storeAttrs(ssKey), []byte("old"))
-			if err := newSSStore(f, InteractionAllowed).Save(t.Context(), ssKey, []byte("new")); err != nil {
-				t.Fatalf("Save: %v", err)
-			}
+			err := newSSStore(f, InteractionAllowed).Save(t.Context(), ssKey, []byte("new"))
+			wantSSError(t, err, KindOther, ReasonOther)
 			if len(f.items) != 2 {
-				t.Fatalf("items = %d, want the old and the new one left: which is which is unknown", len(f.items))
+				t.Fatalf("items = %d, want both left: which one is new is unknown", len(f.items))
 			}
 		})
 

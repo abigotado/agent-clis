@@ -89,7 +89,8 @@ const (
 	ReasonNoSuchObject   Reason = "no-such-object"
 	ReasonAccessDenied   Reason = "access-denied"
 	// ReasonTooManyMatches means items for one key were still there after the
-	// bounded number of removal rounds.
+	// bounded number of removal rounds, or a store listed more items than it
+	// reads in one enumeration (Credential Manager), so the list is incomplete.
 	ReasonTooManyMatches Reason = "too-many-matches"
 	// ReasonKeychainUnusable means the keychain cannot be used from this
 	// process, as inside a sandbox that denies keychain access: the check

@@ -237,16 +237,17 @@ jobs:
         run: |
           set -euo pipefail
           allowed="$(printf '%s\n' github.com/abigotado/agent-clis/core golang.org/x/sys github.com/godbus/dbus/v5 | LC_ALL=C sort)"
-          for target_os in linux darwin windows; do
-            modules="$(CGO_ENABLED=1 GOOS="${target_os}" go list -deps -test -f '{{if not .Standard}}{{with .Module}}{{.Path}}{{else}}no-module:{{.ImportPath}}{{end}}{{end}}' ./... | awk 'NF' | LC_ALL=C sort -u)"
+          # Both cgo settings: darwin && cgo and darwin && !cgo select different files.
+          for cgo in 0 1; do for target_os in linux darwin windows; do
+            modules="$(CGO_ENABLED="${cgo}" GOOS="${target_os}" go list -deps -test -f '{{if not .Standard}}{{with .Module}}{{.Path}}{{else}}no-module:{{.ImportPath}}{{end}}{{end}}' ./... | awk 'NF' | LC_ALL=C sort -u)"
             test -n "${modules}"
             unexpected="$(LC_ALL=C comm -23 <(printf '%s\n' "${modules}") <(printf '%s\n' "${allowed}"))"
             if [ -n "${unexpected}" ]; then
-              echo "::error::core depends on modules outside the allowed set for GOOS=${target_os}:"
+              echo "::error::core depends on modules outside the allowed set for GOOS=${target_os} CGO_ENABLED=${cgo}:"
               echo "${unexpected}"
               exit 1
             fi
-          done
+          done; done
 
   # The cgo Security.framework backend only compiles on macOS, so it needs its
   # own runner. Selected like a CLI job: when core or everything changed.
