@@ -210,6 +210,73 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
     end
   end
 
+  def test_scans_tools_and_workflow_scripts_for_publication_actions
+    [
+      "tools/sign-release/internal/other/other.go",
+      "tools/sign-release/main.go",
+      "tools/sign-release/sign.sh",
+      "tools/other/publish.sh",
+      ".github/scripts/publish.sh",
+    ].each do |script|
+      success, stderr = verify(CONFIG, { script => "gh release create v1\n" })
+      refute success, script
+      assert_includes stderr, "#{script} contains a publication action"
+    end
+  end
+
+  def test_scans_dot_files_and_dot_directories_under_tools_and_workflow_scripts
+    [
+      "tools/sign-release/.publish.sh",
+      "tools/sign-release/.hidden/run.sh",
+      "tools/.hidden/run.sh",
+      ".github/scripts/.publish.sh",
+      ".github/scripts/.hidden/run.sh",
+    ].each do |script|
+      success, stderr = verify(CONFIG, { script => "gh release create v1\n" })
+      refute success, script
+      assert_includes stderr, "#{script} contains a publication action"
+    end
+  end
+
+  def test_exempts_only_the_listed_files
+    listed = ".github/scripts/verify-portable-release-policy_test.rb"
+    success, stderr = verify(CONFIG, { listed => "gh release create v1\n" })
+    assert success, stderr
+
+    success, stderr = verify(CONFIG, { ".github/scripts/verify-portable-release-policy_test2.rb" => "gh release create v1\n" })
+    refute success
+    assert_includes stderr, "verify-portable-release-policy_test2.rb contains a publication action"
+  end
+
+  def test_every_scan_exemption_is_needed_and_exact
+    source = File.read(VERIFIER, encoding: "UTF-8")
+    exempt = source[/SCAN_EXEMPT = %w\[\n(.*?)\n\]\.freeze/m, 1]
+    refute_nil exempt
+    paths = exempt.split
+    refute_empty paths
+    paths.each do |path|
+      refute path.include?("*"), "#{path} must be an exact path"
+      assert File.file?(File.join(ROOT, path)), "#{path} is exempt but does not exist"
+      # Without its entry the scan must reject the file, or the entry is stale.
+      Dir.mktmpdir("portable-release-policy-exempt") do |root|
+        FileUtils.mkdir_p(File.join(root, ".github/workflows"))
+        File.write(File.join(root, ".github/workflows/ci.yaml"), MINIMAL_CI)
+        File.write(File.join(root, ".github/workflows/release.yaml"), RELEASE)
+        config_path = File.join(root, CONFIG_PATH)
+        FileUtils.mkdir_p(File.dirname(config_path))
+        File.write(config_path, YAML.dump(CONFIG))
+        target = File.join(root, path)
+        FileUtils.mkdir_p(File.dirname(target))
+        FileUtils.cp(File.join(ROOT, path), target)
+        stripped = File.join(root, "verifier.rb")
+        File.write(stripped, source.sub("  #{path}\n", ""))
+        _stdout, stderr, status = Open3.capture3("ruby", stripped, config_path, root)
+        refute status.success?, "#{path} would pass the scan without its exemption"
+        assert_includes stderr, path
+      end
+    end
+  end
+
   def test_rejects_a_release_workflow_that_restores_the_go_cache
     changed = RELEASE.gsub("cache: false", "cache: true")
     refute_equal RELEASE, changed

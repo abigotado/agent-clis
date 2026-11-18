@@ -175,6 +175,15 @@ PUBLISHERS = { ".github/workflows/release.yaml" => EXPECTED_RELEASE_WORKFLOW }.f
 # The tap publisher needs signing and its Environment, so nothing may occupy its
 # path until it is added to PUBLISHERS.
 RESERVED = %w[.github/workflows/tap.yaml .github/workflows/tap.yml].freeze
+# Files outside the publishing workflows that the content scan skips, by exact
+# path (never by directory or pattern, so a new file is scanned until it is
+# listed here). The guard and its test quote the patterns they search for. A
+# file under tools/ that drives `gh` or `codesign` is added here only in a
+# change that records it as a deliberate guard change.
+SCAN_EXEMPT = %w[
+  .github/scripts/verify-portable-release-policy.rb
+  .github/scripts/verify-portable-release-policy_test.rb
+].freeze
 CI_WORKFLOW = ".github/workflows/ci.yaml"
 CI_GATE = "ci-ok"
 CHECKOUT_INPUTS = %w[persist-credentials fetch-depth].freeze
@@ -281,12 +290,19 @@ Dir.glob(File.join(root, "{,*/}{Formula,Cask,Casks}/**/*.rb")).each do |candidat
 end
 
 # The trailing /**/* matters: a trailing /** does not recurse in Ruby and would
-# scan nothing.
-surface = [File.join(root, ".github/workflows/**/*"), File.join(root, "{,*/}{packaging,scripts}/**/*")].flat_map { |glob| Dir.glob(glob) }.uniq
+# scan nothing. FNM_DOTMATCH makes tools/ and .github/scripts/ include dot-files
+# and dot-directories (and "." entries, which File.file? drops).
+surface = [
+  [File.join(root, ".github/workflows/**/*"), 0],
+  [File.join(root, ".github/scripts/**/*"), File::FNM_DOTMATCH],
+  [File.join(root, "tools/**/*"), File::FNM_DOTMATCH],
+  [File.join(root, "{,*/}{packaging,scripts}/**/*"), 0],
+].flat_map { |glob, flags| Dir.glob(glob, flags) }.uniq
 surface.each do |candidate|
   next unless File.file?(candidate)
   relative = relative_to_root.call(candidate)
   next if PUBLISHERS.key?(relative)
+  next if SCAN_EXEMPT.include?(relative)
   content = File.binread(candidate).force_encoding(Encoding::UTF_8).scrub
   errors << "#{relative} contains a Homebrew or quarantine bypass" if content.match?(/(?:\bbrew\s+(?:tap|tap-new|create|bump)|\bxattr\b|com\.apple\.quarantine|spctl\s+--master-disable)/i)
   errors << "#{relative} contains a publication action" if content.match?(/(?:\bgoreleaser\s+release\b|\bgh\s+(?:api|release)\b|action-gh-release|\/upload-artifact@)/i)
