@@ -544,6 +544,8 @@ func (s *Service) UninstallAgentSkill(ctx context.Context, opts SkillOptions) ([
 	return skillResultInfo(values), err
 }
 
+const credentialStoreSandboxHint = "stop and ask the operator to run this outside the sandbox; do not change a sandbox policy yourself; do not re-authenticate"
+
 func TranslateError(err error, name string) error {
 	if err == nil {
 		return nil
@@ -590,7 +592,17 @@ func TranslateError(err error, name string) error {
 	case errors.Is(err, auth.ErrInteractionNotAllowed):
 		return errx.Auth("KEYCHAIN_INTERACTION_REQUIRED", "Keychain access requires an interactive operator session")
 	case errors.Is(err, auth.ErrKeychainMigrationRequired):
-		return errx.ConfirmRequired("Keychain ACL migration")
+		return errx.ConfirmRequired("Keychain ACL migration").
+			WithHint("ask the operator to run youtrack-agent-cli auth migrate-keychain --profile %s --yes in an interactive macOS session, or run auth login again", name)
+	case errors.Is(err, auth.ErrCredentialStoreUnavailable):
+		return errx.Permission("CREDENTIAL_STORE_UNAVAILABLE", "the native credential store is unavailable in this environment").
+			WithHint(credentialStoreSandboxHint)
+	case errors.Is(err, auth.ErrCredentialStoreReadOnly):
+		return errx.Permission("CREDENTIAL_STORE_READ_ONLY", "the native credential store is read-only in this environment").
+			WithHint(credentialStoreSandboxHint)
+	case errors.Is(err, auth.ErrCredentialStoreContended):
+		return errx.Conflict("CREDENTIAL_STORE_CONTENDED", "another process replaced the stored credential for profile %q", name).
+			WithHint("another process replaced the stored credential; run youtrack-agent-cli auth status --profile %s, then retry", name)
 	case errors.Is(err, auth.ErrKeychainEntryNotFound):
 		return errx.NotFound("keychain_credential", name, nil)
 	case errors.Is(err, auth.ErrKeychainMigrationBlocked):
