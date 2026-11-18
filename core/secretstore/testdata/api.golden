@@ -1,0 +1,236 @@
+package secretstore // import "github.com/abigotado/agent-clis/core/secretstore"
+
+Package secretstore stores one secret per (service, account) pair in the
+operating system's credential store: on macOS the keychains of the user's
+search list (adds go to the default keychain), Credential Manager on Windows,
+and a Secret Service provider on Linux. It never falls back to a file.
+
+A Store is opened with Open and addressed by a Key. Failures are *Error values
+whose Kind says what the caller should do next; every Kind has a sentinel
+that errors.Is matches. Error text never contains secret bytes, the Service or
+Account of the key, or text produced by the operating system.
+
+The first Open with valid options fixes the process-wide Interaction mode.
+A later Open with the other mode fails with ErrInvalidArgument, including when
+that first Open itself failed; an Open with invalid options fixes nothing.
+
+On Linux the session bus address is DBUS_SESSION_BUS_ADDRESS when it is set,
+and then only a unix: address is used; any other transport is refused and does
+not fall back. When it is unset or empty the address is $XDG_RUNTIME_DIR/bus,
+as libdbus does, but only if XDG_RUNTIME_DIR is an absolute path and bus there
+is a socket itself, not a symlink, owned by the effective user. Otherwise Open
+fails with ErrUnavailable, and the error never names the path. No bus is ever
+launched.
+
+Callers that save a credential while another process may read or rewrite it
+should hold their own lock around Save and around reads that must be consistent
+with it; the package does not provide cross-process locking.
+
+On macOS the Security framework receives the secret in an immutable CFData
+that is released without being zeroed; only the Go copies are zeroed, on a
+best-effort basis. On Linux the D-Bus library copies the secret into message
+buffers it does not zero, and the Secret Service session encryption, used when
+the provider supports it, only hides the secret from a passive observer of the
+session bus; a provider that does not support it gets the plain algorithm,
+which sends the secret unencrypted over the bus. Only the Go copies are zeroed,
+on a best-effort basis.
+
+Package secretstoretest provides an in-memory fake and a behaviour suite that a
+Store implementation must pass.
+
+CONSTANTS
+
+const MaxSecretBytesLimit = 128 << 10
+    MaxSecretBytesLimit is the largest MaxSecretBytes an Options value accepts.
+
+
+VARIABLES
+
+var (
+	ErrNotFound            = errors.New("secretstore: not found")
+	ErrAccessDenied        = errors.New("secretstore: access denied")
+	ErrInteractionRequired = errors.New("secretstore: interaction required")
+	ErrUnavailable         = errors.New("secretstore: unavailable")
+	ErrReadOnly            = errors.New("secretstore: read-only")
+	ErrContended           = errors.New("secretstore: contended")
+	ErrTooLarge            = errors.New("secretstore: too large")
+	ErrCorrupt             = errors.New("secretstore: corrupt")
+	ErrCanceled            = errors.New("secretstore: canceled")
+	ErrInvalidArgument     = errors.New("secretstore: invalid argument")
+)
+    The sentinels errors.Is matches for each Kind except KindOther.
+
+
+FUNCTIONS
+
+func DisableCoreDumps() error
+    DisableCoreDumps sets the soft and hard core-file size limits to zero so
+    a crash cannot write secrets to disk. It does nothing on systems without
+    RLIMIT_CORE. The limits can only be raised again by a privileged process.
+    A failure is an *Error of KindOther whose Status is the errno when there is
+    one; it carries no operating-system text.
+
+
+TYPES
+
+type ACLRepairer interface {
+	// RepairAccess needs InteractionAllowed and trusts only the running binary.
+	RepairAccess(ctx context.Context, key Key) error
+}
+    ACLRepairer is implemented by the macOS store and the in-memory fake.
+    It rewrites an item so the running binary can read it again.
+
+type Error struct {
+	// Op is the operation: open, exists, load, save, delete, repair, or
+	// disable-core-dumps.
+	Op string
+	// Backend is keychain, credman, secretservice, memory, or none.
+	Backend string
+	// Kind is the classification errors.Is matches through Unwrap.
+	Kind Kind
+	// Status is the operating-system status code, or 0 when there is none.
+	Status int64
+	// Reason is the provider condition, or empty when there is none.
+	Reason Reason
+}
+    Error is the error every Store method returns for a store failure. Its text
+    is built only from the fixed fields below, so it cannot carry a secret,
+    a key, or provider text.
+
+func (e *Error) Error() string
+    Error returns "secretstore: <op> (<backend>): <kind>[ status <n>][
+    <reason>]". An Op, Backend or Reason outside its closed set renders as
+    "other".
+
+func (e Error) GoString() string
+    GoString renders %#v of an Error or *Error, with a value receiver so both
+    print the same sanitized fields as Error, without a leading "&", and never
+    echo an unknown Reason, Op or Backend.
+
+func (e *Error) Unwrap() error
+    Unwrap returns the sentinel for the error's Kind, or nil for KindOther.
+
+type Interaction int
+    Interaction says whether the store may ask the user for anything.
+
+const (
+	// InteractionNever is the default: the store fails with
+	// ErrInteractionRequired instead of prompting. Agents always run here.
+	InteractionNever Interaction = iota
+	// InteractionAllowed lets the store show unlock and approval prompts. Use
+	// it only in explicit interactive flows.
+	InteractionAllowed
+)
+type Key struct {
+	// Service identifies the caller, such as "youtrack-agent-cli": 1-64 bytes
+	// of ASCII letters, digits, '.', '_' and '-', starting with a letter or
+	// digit.
+	Service string
+	// Account distinguishes secrets of one service, such as a profile name:
+	// 1-128 bytes of valid UTF-8 with no control character, no U+241F, and no
+	// '#'. Accounts are case-sensitive and wildcard characters are ordinary.
+	Account string
+}
+    Key names one secret.
+
+type Kind int
+    Kind classifies a failure by the action the caller should take next.
+
+const (
+	// KindOther is a failure no other kind describes.
+	KindOther Kind = iota
+	// KindNotFound means no item exists for the key.
+	KindNotFound
+	// KindAccessDenied means the item exists but this code identity may not
+	// read it.
+	KindAccessDenied
+	// KindInteractionRequired means the store needs user interaction, such as
+	// unlocking, and the Interaction mode is InteractionNever.
+	KindInteractionRequired
+	// KindUnavailable means no backend is reachable on this system, or the
+	// store cannot be used from this process, such as inside a sandbox that
+	// denies keychain access (see ReasonKeychainUnusable). It never means the
+	// credential is absent: a caller must not suggest re-authenticating and
+	// must not treat it as KindNotFound.
+	KindUnavailable
+	// KindReadOnly means the store refused a write that reads are allowed.
+	KindReadOnly
+	// KindContended means the item was replaced while Save was running.
+	KindContended
+	// KindTooLarge means a secret exceeds the configured or backend bound.
+	KindTooLarge
+	// KindCorrupt means stored data could not be decoded.
+	KindCorrupt
+	// KindCanceled means the user dismissed an interactive prompt.
+	KindCanceled
+	// KindInvalidArgument means a key or option was rejected before any store
+	// access, or an Open conflicted with the process-wide mode.
+	KindInvalidArgument
+)
+    The kinds an *Error can carry. KindOther is the zero value and has no
+    sentinel; its Status or Reason describes the failure.
+
+func (k Kind) String() string
+    String returns a stable lower-case name for the kind.
+
+type Options struct {
+	// MaxSecretBytes bounds Save and Load; it must be 1..MaxSecretBytesLimit.
+	MaxSecretBytes int
+	// Interaction is the process-wide interaction mode.
+	Interaction Interaction
+}
+    Options configure Open.
+
+type Reason string
+    Reason names a provider condition behind an *Error. It is a closed set:
+    provider message text never becomes a Reason.
+
+const (
+	ReasonServiceUnknown Reason = "service-unknown"
+	ReasonNameHasNoOwner Reason = "name-has-no-owner"
+	ReasonNoReply        Reason = "no-reply"
+	ReasonNotSupported   Reason = "not-supported"
+	ReasonIsLocked       Reason = "is-locked"
+	ReasonNoSession      Reason = "no-session"
+	ReasonNoSuchObject   Reason = "no-such-object"
+	ReasonAccessDenied   Reason = "access-denied"
+	// ReasonTooManyMatches means items for one key were still there after the
+	// bounded number of removal rounds, or a store listed more items than it
+	// reads in one enumeration (Credential Manager), so the list is incomplete.
+	ReasonTooManyMatches Reason = "too-many-matches"
+	// ReasonKeychainUnusable means the keychain cannot be used from this
+	// process, as inside a sandbox that denies keychain access: the check
+	// before an operation was refused as a malformed call, so a search that
+	// finds nothing there says nothing about the credential. It accompanies
+	// KindUnavailable and never means the credential is absent: a caller must
+	// not suggest re-authenticating and must not treat it as not found.
+	ReasonKeychainUnusable Reason = "keychain-unusable"
+	ReasonOther            Reason = "other"
+)
+    The closed set of reasons. The empty Reason means none was recorded.
+
+type Store interface {
+	// Exists reports whether an item exists. It returns no secret.
+	Exists(ctx context.Context, key Key) (bool, error)
+	// Load returns a copy of the secret; the caller zeroes it after use.
+	Load(ctx context.Context, key Key) ([]byte, error)
+	// Save stores secret, replacing any existing item. An empty secret is
+	// ErrInvalidArgument and one above the bound is ErrTooLarge, both before
+	// the store is touched.
+	Save(ctx context.Context, key Key, secret []byte) error
+	// Delete removes the item. Deleting a missing item succeeds.
+	Delete(ctx context.Context, key Key) error
+}
+    Store keeps secrets in the platform credential store. Every method returns
+    an *Error for a store failure, a context error for a canceled context,
+    and an error matching ErrInvalidArgument for an invalid key.
+
+func Open(ctx context.Context, opts Options) (Store, error)
+    Open returns the native store for this operating system. It never returns a
+    file-backed store; where no backend exists it fails with ErrUnavailable.
+
+    The first Open with valid options in a process fixes the Interaction mode,
+    even if that Open then fails (for example on a canceled context); Open with
+    invalid options fixes nothing. A later Open with a different mode fails with
+    ErrInvalidArgument. Open performs no recovery of interrupted writes.
+

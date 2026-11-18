@@ -3,8 +3,10 @@
 This repository holds Go CLIs built for machine callers. There is no root
 module.
 
-- Every CLI, and later the shared `core/`, is one directory with one `go.mod`.
-- CLIs never import each other. `core/` never imports a CLI.
+- Every CLI, and the shared `core/`, is one directory with one `go.mod`.
+- CLIs never import each other. `core/` never imports a CLI and has only
+  `golang.org/x/sys` and `github.com/godbus/dbus/v5` beyond the standard
+  library; CI checks that closure.
 - `go.work` is not committed. Build and test every module with `GOWORK=off`, so
   a module is checked against the versions its own `go.mod` declares.
 - Release tags are prefixed with the module directory (`<cli>/vX.Y.Z`). Never

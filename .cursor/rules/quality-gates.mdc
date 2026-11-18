@@ -67,6 +67,32 @@ modules, an always-on `repo` job, and one job per CLI. The single required check
 is `ci-ok`, which needs every other job and fails on any failure or
 cancellation, so a skipped module job cannot pass by accident.
 
+`core/` is shared, so its jobs are not selected by path in the same way:
+
+- `core-unit` always runs: gofmt, `go vet` for linux, darwin and windows, tests
+  with and without cgo, `govulncheck`, `staticcheck`, the dependency-closure
+  check, and `core-hygiene.sh` over the tracked files and the pull request's
+  commit messages. Its checkout uses `fetch-depth: 0` for that; it is the only
+  extra checkout input the guard allows, and `persist-credentials` stays false.
+- `core-macos`, `core-windows` and `core-linux` run the real backends and the
+  tagged integration tests with `SECRETSTORE_REQUIRE_KEYCHAIN`,
+  `SECRETSTORE_REQUIRE_CREDMAN` and `SECRETSTORE_REQUIRE_SECRET_SERVICE` set, so
+  a row that cannot run fails the job. They run when core or everything changed.
+- `core-compat` builds and tests every CLI against the local `core` with a
+  temporary `go.work` (`GOWORK` pointing at a generated file in the job, never a
+  committed one). It is blocking.
+- `.github/workflows/core-tag.yaml` only reads on a pushed `core/v*` tag: the
+  name must be `core/v0.X.Y` and the commit an ancestor of `origin/main`.
+
+`.github/scripts/core-hygiene.sh` takes an optional revision range and fails on
+a home path, YouTrack Cloud host (only `*.youtrack.cloud` and
+`*.myjetbrains.com`; other hosts are not checked), signing team identifier, token
+shape, private key or assistant attribution in `core/` files and in the messages
+of commits that touch `core/`, and on a `go.work` or a CLI-module import (current
+or old module path) in files. An unresolvable range, or a rule that cannot run,
+fails the script instead of passing. Its test is
+`.github/scripts/core-hygiene_test.rb`, run by the `repo` job.
+
 `.github/scripts/verify-portable-release-policy.rb` takes two required arguments,
 the GoReleaser config and the repository root, because a default root once let
 it pass while scanning nothing:

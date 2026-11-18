@@ -1,21 +1,47 @@
 #!/usr/bin/env bash
 # Decide which CI jobs a change needs and write the result to GITHUB_OUTPUT.
 # Any doubt selects every job: skipping a needed check is the failure to avoid.
+#
+# Outputs, always all four and written once:
+#   youtrack  the youtrack-agent-cli jobs are needed because of its own paths
+#   core      core/ changed (its job always runs; the flag feeds later jobs)
+#   clis      JSON array of the registered CLI modules (every module but core)
+#   all       something shared changed or the diff is uncertain: run everything
 set -euo pipefail
 
-emit() {
-  printf 'youtrack=%s\nall=%s\n' "$1" "$2" >>"${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"
+# A new module must be added here and given jobs before it can land, otherwise
+# nothing would ever select it. The list is sorted, as git ls-files prints it.
+registered_modules="core/go.mod
+youtrack-agent-cli/go.mod"
+
+youtrack=false
+core=false
+all=false
+
+clis_json() {
+  local out="" module dir
+  while IFS= read -r module; do
+    dir="${module%/go.mod}"
+    [ "${dir}" = core ] && continue
+    out+="${out:+,}\"${dir}\""
+  done <<<"${registered_modules}"
+  printf '[%s]' "${out}"
+}
+
+emit_and_exit() {
+  printf 'youtrack=%s\ncore=%s\nclis=%s\nall=%s\n' \
+    "${youtrack}" "${core}" "$(clis_json)" "${all}" >>"${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"
   exit 0
 }
 
 run_everything() {
   echo "ci-changes: selecting every job: $1" >&2
-  emit false true
+  youtrack=false
+  core=false
+  all=true
+  emit_and_exit
 }
 
-# A new module must be added here and given jobs before it can land, otherwise
-# nothing would ever select it.
-registered_modules="youtrack-agent-cli/go.mod"
 tracked_modules="$(git ls-files -- go.mod '*/go.mod')"
 if [ "${tracked_modules}" != "${registered_modules}" ]; then
   echo "::error::tracked go.mod files differ from the registered list: ${tracked_modules}"
@@ -37,12 +63,12 @@ changed="$(git diff --no-renames --name-only "${BASE_SHA}...${HEAD_SHA}")" \
   || run_everything "diff failed"
 [ -n "${changed}" ] || run_everything "empty diff"
 
-youtrack=false
 while IFS= read -r path; do
   case "${path}" in
     youtrack-agent-cli/*) youtrack=true ;;
+    core/*) core=true ;;
     *) run_everything "shared path ${path}" ;;
   esac
 done <<<"${changed}"
 
-emit "${youtrack}" false
+emit_and_exit

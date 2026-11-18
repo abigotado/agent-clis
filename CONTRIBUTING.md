@@ -30,6 +30,79 @@ go vet ./...
 go test -race ./...
 ```
 
+For `core`, the same three commands run inside `core/`, plus `go vet` for each
+target OS and a cgo-free test run:
+
+```bash
+cd core
+export GOWORK=off
+for os in linux darwin windows; do GOOS=$os go vet ./...; done
+CGO_ENABLED=0 go test ./...
+```
+
+The real backends have integration tests behind build tags. Each needs its own
+operating system, and each fails instead of skipping when its variable is set:
+
+| OS | Tag | Variable |
+| --- | --- | --- |
+| macOS | `keychainintegration` | `SECRETSTORE_REQUIRE_KEYCHAIN=1` |
+| Windows | `credmanintegration` | `SECRETSTORE_REQUIRE_CREDMAN=1` |
+| Linux | `secretserviceintegration` | `SECRETSTORE_REQUIRE_SECRET_SERVICE=1` |
+
+```bash
+cd core
+SECRETSTORE_REQUIRE_KEYCHAIN=1 go test -race -count=1 -timeout 20m -v \
+  -tags keychainintegration ./secretstore/...
+```
+
+The keychain run needs `-timeout 20m`: it builds and signs helper binaries.
+`go vet -tags <tag> ./...` covers the tagged files on their own OS. CI
+(`core-macos`, `core-windows`, `core-linux`) runs these with the variables set.
+Without the variable a test skips when its environment is missing.
+
+The macOS codex rows are opt-in and local only; CI never runs them. Setting
+`SECRETSTORE_CODEX_SANDBOX=/path/to/codex` runs the `codex sandbox` subtests of
+`TestKeychainSaveInReadOnlySandbox`. Each stores an item outside, runs `Load`,
+`Save`, `Exists` or `Delete` under Codex, and branches on what the lock probe
+measures there: if it is unusable the operation must report `KindUnavailable`
+with `keychain-unusable` and a read that bypasses the store's gate must fail
+too; otherwise the operation must behave normally. Each row logs one line with
+the profile, the probe step and status, and the outcome.
+
+`SECRETSTORE_CODEX_PROFILE` picks the policy: `:read-only` by default, any
+other value starting with `:` (for example `:workspace`, the built-in
+workspace-write profile in codex-cli 0.167.1) is passed to `-P`, `config` uses
+your real Codex configuration, and `config:NAME` uses it with its named
+permission profile `NAME`. The `:` profiles run Codex with an empty temporary
+`CODEX_HOME` and a scratch working directory, so no Codex configuration is read
+or changed. `config` and `config:NAME` use your real `CODEX_HOME`: `config`
+passes no `-P` or `-C`, `config:NAME` passes `-P NAME`, and both run in a
+temporary directory (also `-C` for `config:NAME`). The test writes nothing
+under `~/.codex`; in both real-config modes Codex itself may update its own
+state there, as on any run. The write probe must be refused only under
+`:read-only`; other profiles record the result.
+
+```bash
+cd core
+SECRETSTORE_REQUIRE_KEYCHAIN=1 SECRETSTORE_CODEX_SANDBOX=/path/to/codex \
+  go test -race -count=1 -v -tags keychainintegration \
+  -run 'TestKeychainSaveInReadOnlySandbox' ./secretstore
+```
+
+Recorded measurement: the macOS keychain interaction flag is process-scoped. It
+was measured in a logged-in GUI (Aqua) session on macOS 26.6.2, 2026-11-13.
+
+Before a pull request, run the hygiene check from the repository root. It scans
+the tracked files under `core/` and the commit messages that touch it for local
+paths, YouTrack Cloud hosts (`*.youtrack.cloud` and `*.myjetbrains.com` only),
+token shapes, private keys and assistant attribution (an unresolvable range
+fails the check):
+
+```bash
+.github/scripts/core-hygiene.sh origin/main..HEAD
+ruby .github/scripts/core-hygiene_test.rb
+```
+
 and at the repository root:
 
 ```bash
