@@ -64,6 +64,9 @@ type Service struct {
 	// OperatorWriteSupport permits tests to supply an in-process backend. The
 	// production default is fixed by build tags, with no flag or environment bypass.
 	OperatorWriteSupport func() bool
+	// RepairCredentials is the store that may prompt the operator. Only the
+	// explicit Keychain repair flow uses it; Credentials never prompts.
+	RepairCredentials auth.CredentialAccessStore
 }
 
 // NewDefault creates the user-scoped production service without reading any
@@ -81,8 +84,9 @@ func NewDefault(logger *slog.Logger) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("locate user config directory: %w", err)
 	}
+	credentials, repairCredentials := auth.NewDefaultNativeStores()
 	return &Service{
-		Profiles: profiles, Policies: policies, Credentials: auth.KeychainStore{},
+		Profiles: profiles, Policies: policies, Credentials: credentials, RepairCredentials: repairCredentials,
 		Journal:  journal.New(filepath.Join(configDir, "youtrack-agent-cli", "journal")),
 		Approver: approval.Unsupported{}, HTTP: http.DefaultTransport, Logger: logger, Now: time.Now,
 		OperatorWrites: operatorwrite.New(filepath.Join(configDir, "youtrack-agent-cli")),

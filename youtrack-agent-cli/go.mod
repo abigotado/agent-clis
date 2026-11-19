@@ -3,6 +3,7 @@ module github.com/abigotado/agent-clis/youtrack-agent-cli
 go 1.27.4
 
 require (
+	github.com/abigotado/agent-clis/core v0.1.0
 	github.com/creack/pty v1.1.24
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.1.0
@@ -10,4 +11,7 @@ require (
 	golang.org/x/term v0.47.0
 )
 
-require github.com/inconshreveable/mousetrap v1.1.0 // indirect
+require (
+	github.com/godbus/dbus/v5 v5.2.4 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+)

@@ -48,6 +48,7 @@ var (
 	ErrCredentialStoreUnavailable    = errors.New("credential store is unavailable")
 	ErrCredentialStoreReadOnly       = errors.New("credential store is read-only")
 	ErrCredentialStoreContended      = errors.New("credential store entry was replaced concurrently")
+	ErrCredentialStoreInternal       = errors.New("credential store failed internally")
 )
 
 type CredentialKind string

@@ -581,6 +581,19 @@ func TranslateError(err error, name string) error {
 		return errx.Conflict("WRITE_POLICY_STALE", "the project policy does not match the current profile identity")
 	case errors.Is(err, writepolicy.ErrProjectDenied):
 		return errx.Permission("PROJECT_POLICY_DENIED", "the exact project ID and key are not allowlisted")
+	// The store-failure codes come first: an error that carries both a store
+	// failure and ErrNotFound must never read as a missing credential.
+	case errors.Is(err, auth.ErrCredentialStoreUnavailable):
+		return errx.Permission("CREDENTIAL_STORE_UNAVAILABLE", "the native credential store is unavailable in this environment").
+			WithHint(credentialStoreSandboxHint)
+	case errors.Is(err, auth.ErrCredentialStoreReadOnly):
+		return errx.Permission("CREDENTIAL_STORE_READ_ONLY", "the native credential store is read-only in this environment").
+			WithHint(credentialStoreSandboxHint)
+	case errors.Is(err, auth.ErrCredentialStoreContended):
+		return errx.Conflict("CREDENTIAL_STORE_CONTENDED", "another process replaced the stored credential for profile %q", name).
+			WithHint("another process replaced the stored credential; run youtrack-agent-cli auth status --profile %s, then retry", name)
+	case errors.Is(err, auth.ErrCredentialStoreInternal):
+		return errx.Internal("the native credential store rejected an internal request")
 	case errors.Is(err, auth.ErrNotFound):
 		return errx.Auth("CREDENTIAL_NOT_FOUND", "no stored credential exists for profile %q", name)
 	case errors.Is(err, auth.ErrCredentialBindingMismatch):
@@ -593,16 +606,7 @@ func TranslateError(err error, name string) error {
 		return errx.Auth("KEYCHAIN_INTERACTION_REQUIRED", "Keychain access requires an interactive operator session")
 	case errors.Is(err, auth.ErrKeychainMigrationRequired):
 		return errx.ConfirmRequired("Keychain ACL migration").
-			WithHint("ask the operator to run youtrack-agent-cli auth migrate-keychain --profile %s --yes in an interactive macOS session, or run auth login again", name)
-	case errors.Is(err, auth.ErrCredentialStoreUnavailable):
-		return errx.Permission("CREDENTIAL_STORE_UNAVAILABLE", "the native credential store is unavailable in this environment").
-			WithHint(credentialStoreSandboxHint)
-	case errors.Is(err, auth.ErrCredentialStoreReadOnly):
-		return errx.Permission("CREDENTIAL_STORE_READ_ONLY", "the native credential store is read-only in this environment").
-			WithHint(credentialStoreSandboxHint)
-	case errors.Is(err, auth.ErrCredentialStoreContended):
-		return errx.Conflict("CREDENTIAL_STORE_CONTENDED", "another process replaced the stored credential for profile %q", name).
-			WithHint("another process replaced the stored credential; run youtrack-agent-cli auth status --profile %s, then retry", name)
+			WithHint("ask the operator to run youtrack-agent-cli auth migrate-keychain --profile %s --yes in an interactive macOS session, or to run youtrack-agent-cli auth login --profile %s again", name, name)
 	case errors.Is(err, auth.ErrKeychainEntryNotFound):
 		return errx.NotFound("keychain_credential", name, nil)
 	case errors.Is(err, auth.ErrKeychainMigrationBlocked):
