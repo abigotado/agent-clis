@@ -559,6 +559,9 @@ func TranslateError(err error, name string) error {
 	case errors.Is(err, auth.ErrLogoutIncomplete):
 		return errx.Conflict("LOGOUT_INCOMPLETE", "credential removal succeeded but profile %q metadata could not be removed", name).
 			WithHint("inspect the profile and credential state before retrying logout")
+	case errors.Is(err, auth.ErrLoginIncomplete):
+		return errx.Auth("LOGIN_INCOMPLETE", "login replaced the unreadable credential for profile %q but could not save profile metadata; the previous credential is now absent; the new one may remain without matching profile metadata", name).
+			WithHint("run youtrack-agent-cli auth login --profile %s for OAuth, or youtrack-agent-cli auth import-token --profile %s --interactive for a permanent token", name, name)
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return errx.Translate(err)
 	case errors.Is(err, profile.ErrProfileRequired):

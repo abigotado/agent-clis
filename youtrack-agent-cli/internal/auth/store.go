@@ -45,6 +45,7 @@ var (
 	ErrCredentialBindingMismatch     = errors.New("credential binding does not match profile")
 	ErrProfileChangedDuringLogin     = errors.New("profile changed during login")
 	ErrLogoutIncomplete              = errors.New("logout removed the credential but could not remove profile metadata")
+	ErrLoginIncomplete               = errors.New("login replaced an unreadable credential but could not save profile metadata")
 	ErrCredentialStoreUnavailable    = errors.New("credential store is unavailable")
 	ErrCredentialStoreReadOnly       = errors.New("credential store is read-only")
 	ErrCredentialStoreContended      = errors.New("credential store entry was replaced concurrently")

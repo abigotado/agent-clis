@@ -90,9 +90,18 @@ func loginLocked(ctx context.Context, store CredentialAccessStore, registry Prof
 		return profile.Profile{}, fmt.Errorf("%w: %s", ErrOverwriteConfirmationRequired, p.Name)
 	}
 	var previousCredential Credential
+	snapshotLoaded := false
 	if credentialExists {
 		previousCredential, credentialLookupErr = store.Load(ctx, p.Name)
-		if credentialLookupErr != nil {
+		switch {
+		case credentialLookupErr == nil:
+			snapshotLoaded = true
+		case errors.Is(credentialLookupErr, ErrKeychainMigrationRequired), errors.Is(credentialLookupErr, ErrNotFound):
+			// The confirmed overwrite may replace an item this process cannot
+			// read (its access policy denies it, or only a stage item is left).
+			// Continue without a rollback snapshot; only these two outcomes,
+			// never an unavailable, read-only, corrupt or contended store.
+		default:
 			return profile.Profile{}, fmt.Errorf("load existing credential: %w", credentialLookupErr)
 		}
 	}
@@ -126,9 +135,19 @@ func loginLocked(ctx context.Context, store CredentialAccessStore, registry Prof
 	}
 	compensationContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), compensationTimeout)
 	defer cancel()
-	rollbackErr := rollbackCredential(compensationContext, store, p.Name, previousCredential, credentialExists)
+	rollbackErr := rollbackCredential(compensationContext, store, p.Name, previousCredential, snapshotLoaded)
+	// An unreadable item was replaced, so the previous credential is gone
+	// whether or not the new one could be removed again.
+	replacedUnreadable := credentialExists && !snapshotLoaded
 	if rollbackErr != nil {
-		return profile.Profile{}, errors.Join(fmt.Errorf("save profile metadata: %w", registryErr), fmt.Errorf("rollback credential: %w", rollbackErr))
+		failure := errors.Join(fmt.Errorf("save profile metadata: %w", registryErr), fmt.Errorf("rollback credential: %w", rollbackErr))
+		if replacedUnreadable {
+			return profile.Profile{}, errors.Join(ErrLoginIncomplete, failure)
+		}
+		return profile.Profile{}, failure
+	}
+	if replacedUnreadable {
+		return profile.Profile{}, errors.Join(ErrLoginIncomplete, fmt.Errorf("save profile metadata: %w", registryErr))
 	}
 	return profile.Profile{}, fmt.Errorf("save profile metadata: %w", registryErr)
 }

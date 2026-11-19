@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -26,6 +27,8 @@ func TestTranslateErrorCredentialStoreMapping(t *testing.T) {
 			"another process replaced the stored credential; run youtrack-agent-cli auth status --profile work, then retry"},
 		{"migration required", auth.ErrKeychainMigrationRequired, "CONFIRMATION_REQUIRED", 7,
 			"ask the operator to run youtrack-agent-cli auth migrate-keychain --profile work --yes in an interactive macOS session, or to run youtrack-agent-cli auth login --profile work again"},
+		{"login incomplete", auth.ErrLoginIncomplete, "LOGIN_INCOMPLETE", 5,
+			"run youtrack-agent-cli auth login --profile work for OAuth, or youtrack-agent-cli auth import-token --profile work --interactive for a permanent token"},
 		{"migration canceled unchanged", auth.ErrKeychainMigrationCanceled, "CONFIRMATION_REQUIRED", 7, "obtain trusted human approval before continuing"},
 		{"not found unchanged", auth.ErrNotFound, "CREDENTIAL_NOT_FOUND", 5, "run 'youtrack-agent-cli auth login --profile NAME' or rotate the API token"},
 		{"interaction unchanged", auth.ErrInteractionNotAllowed, "KEYCHAIN_INTERACTION_REQUIRED", 5, "run 'youtrack-agent-cli auth login --profile NAME' or rotate the API token"},
@@ -70,6 +73,9 @@ func TestTranslateErrorKeepsDeliberateCodesOverInternalStoreFailure(t *testing.T
 	}{
 		{"logout incomplete join", errors.Join(auth.ErrLogoutIncomplete, auth.ErrCredentialStoreInternal), "LOGOUT_INCOMPLETE", 9},
 		{"logout incomplete wrapped join", fmt.Errorf("logout: %w", errors.Join(auth.ErrLogoutIncomplete, fmt.Errorf("delete: %w", auth.ErrCredentialStoreInternal))), "LOGOUT_INCOMPLETE", 9},
+		{"login incomplete join", errors.Join(auth.ErrLoginIncomplete, fmt.Errorf("save profile metadata: %w", profile.ErrAlreadyExists)), "LOGIN_INCOMPLETE", 5},
+		{"login incomplete with rollback delete failure", errors.Join(auth.ErrLoginIncomplete, errors.Join(fmt.Errorf("save profile metadata: %w", profile.ErrAlreadyExists), fmt.Errorf("rollback credential: %w", auth.ErrCredentialStoreInternal))), "LOGIN_INCOMPLETE", 5},
+		{"login incomplete wrapped store failure", fmt.Errorf("login: %w", errors.Join(auth.ErrLoginIncomplete, auth.ErrCredentialStoreInternal)), "LOGIN_INCOMPLETE", 5},
 		{"login rollback join", errors.Join(fmt.Errorf("save profile metadata: %w", profile.ErrAlreadyExists), fmt.Errorf("rollback credential: %w", auth.ErrCredentialStoreInternal)), "CONFIRMATION_REQUIRED", 7},
 		{"internal alone", fmt.Errorf("wrapped: %w", auth.ErrCredentialStoreInternal), "INTERNAL", 1},
 		{"unavailable outranks internal", errors.Join(auth.ErrCredentialStoreInternal, auth.ErrCredentialStoreUnavailable), "CREDENTIAL_STORE_UNAVAILABLE", 8},
@@ -83,6 +89,36 @@ func TestTranslateErrorKeepsDeliberateCodesOverInternalStoreFailure(t *testing.T
 			}
 			if typed.Reason != test.reason || int(typed.Code) != test.exit {
 				t.Fatalf("got reason=%q exit=%d, want %q/%d", typed.Reason, typed.Code, test.reason, test.exit)
+			}
+		})
+	}
+}
+
+func TestLoginIncompleteOutranksEverySentinelTheRollbackCanFailWith(t *testing.T) {
+	failures := map[string]error{
+		"status error":       &auth.StatusError{Operation: "delete", Status: -1},
+		"migration required": auth.ErrKeychainMigrationRequired,
+		"contended":          auth.ErrCredentialStoreContended,
+		"unavailable":        auth.ErrCredentialStoreUnavailable,
+		"read only":          auth.ErrCredentialStoreReadOnly,
+		"internal":           auth.ErrCredentialStoreInternal,
+		"not found":          auth.ErrNotFound,
+		"interaction":        auth.ErrInteractionNotAllowed,
+		"profile exists":     profile.ErrAlreadyExists,
+		"profile not found":  profile.ErrNotFound,
+		"canceled":           context.Canceled,
+	}
+	for name, cause := range failures {
+		t.Run(name, func(t *testing.T) {
+			err := errors.Join(auth.ErrLoginIncomplete,
+				fmt.Errorf("save profile metadata: %w", profile.ErrAlreadyExists),
+				fmt.Errorf("rollback credential: %w", cause))
+			var typed *errx.Error
+			if !errors.As(TranslateError(err, "work"), &typed) {
+				t.Fatal("not a typed error")
+			}
+			if typed.Reason != "LOGIN_INCOMPLETE" || int(typed.Code) != 5 {
+				t.Fatalf("got reason=%q exit=%d", typed.Reason, typed.Code)
 			}
 		})
 	}

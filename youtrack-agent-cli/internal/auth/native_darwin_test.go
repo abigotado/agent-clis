@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -587,5 +589,130 @@ func TestDefaultNativeStoresOpenNothingUntilUsed(t *testing.T) {
 	_, repairOnly := newDefaultNativeStores(open)
 	if _, err := repairOnly.Exists(t.Context(), "work"); err != nil || len(opens) != 1 {
 		t.Fatalf("repair-only Exists = %v after %v opens", err, opens)
+	}
+}
+
+// gatedOpen counts opens and the most that ran at once. Every open waits for
+// release, so callers that are not serialized pile up inside it.
+type gatedOpen struct {
+	opens    atomic.Int32
+	inFlight atomic.Int32
+	maxSeen  atomic.Int32
+	release  chan struct{}
+}
+
+func (g *gatedOpen) open(_ context.Context, opts secretstore.Options) (secretstore.Store, error) {
+	g.opens.Add(1)
+	now := g.inFlight.Add(1)
+	defer g.inFlight.Add(-1)
+	for {
+		seen := g.maxSeen.Load()
+		if now <= seen || g.maxSeen.CompareAndSwap(seen, now) {
+			break
+		}
+	}
+	<-g.release
+	return secretstoretest.NewMemory(opts), nil
+}
+
+// waitForOverlap gives unserialized callers time to reach open together. It
+// returns early once two are inside; with the mutex it always waits the full
+// budget and the test still passes.
+func (g *gatedOpen) waitForOverlap() {
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) && g.maxSeen.Load() < 2 {
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestNativeStoreBackendOpensExactlyOnceUnderConcurrency(t *testing.T) {
+	const callers = 32
+	gate := &gatedOpen{release: make(chan struct{})}
+	store := NewNativeStore(secretstore.InteractionNever, gate.open)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := store.Exists(t.Context(), "work")
+			errs <- err
+		}()
+	}
+	gate.waitForOverlap()
+	close(gate.release)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("Exists = %v", err)
+		}
+	}
+	if got := gate.opens.Load(); got != 1 {
+		t.Errorf("opens = %d, want exactly 1", got)
+	}
+	if got := gate.maxSeen.Load(); got != 1 {
+		t.Errorf("concurrent opens = %d, want 1", got)
+	}
+}
+
+func TestNativeStoreBackendCanceledCallerDoesNotBlockALiveOne(t *testing.T) {
+	var calls, inFlight, maxSeen atomic.Int32
+	entered := make(chan struct{})
+	store := NewNativeStore(secretstore.InteractionNever, func(ctx context.Context, opts secretstore.Options) (secretstore.Store, error) {
+		call := calls.Add(1)
+		now := inFlight.Add(1)
+		defer inFlight.Add(-1)
+		for {
+			seen := maxSeen.Load()
+			if now <= seen || maxSeen.CompareAndSwap(seen, now) {
+				break
+			}
+		}
+		if call == 1 {
+			close(entered)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return secretstoretest.NewMemory(opts), nil
+	})
+
+	canceledCtx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	canceledResult := make(chan error, 1)
+	go func() {
+		_, err := store.Exists(canceledCtx, "work")
+		canceledResult <- err
+	}()
+	<-entered
+
+	liveResult := make(chan error, 1)
+	go func() {
+		_, err := store.Exists(t.Context(), "work")
+		liveResult <- err
+	}()
+	// With the mutex the live caller waits behind the first open, so a second
+	// concurrent open never appears.
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) && maxSeen.Load() < 2 {
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+
+	if err := <-canceledResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled caller = %v, want context.Canceled", err)
+	}
+	if err := <-liveResult; err != nil {
+		t.Fatalf("live caller = %v, want a successful open", err)
+	}
+	if got := maxSeen.Load(); got != 1 {
+		t.Errorf("concurrent opens = %d, want the live caller to wait for the canceled one", got)
+	}
+	if _, err := store.Exists(t.Context(), "work"); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("opens = %d, want the canceled attempt plus exactly one successful open", got)
 	}
 }
