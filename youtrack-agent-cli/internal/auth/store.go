@@ -42,14 +42,18 @@ var (
 	ErrKeychainMigrationBlocked      = errors.New("keychain migration requires an interactive session")
 	ErrKeychainMigrationCanceled     = errors.New("keychain migration was canceled")
 	ErrKeychainMigrationUnavailable  = errors.New("keychain migration is unavailable")
-	ErrCredentialBindingMismatch     = errors.New("credential binding does not match profile")
-	ErrProfileChangedDuringLogin     = errors.New("profile changed during login")
-	ErrLogoutIncomplete              = errors.New("logout removed the credential but could not remove profile metadata")
-	ErrLoginIncomplete               = errors.New("login replaced an unreadable credential but could not save profile metadata")
-	ErrCredentialStoreUnavailable    = errors.New("credential store is unavailable")
-	ErrCredentialStoreReadOnly       = errors.New("credential store is read-only")
-	ErrCredentialStoreContended      = errors.New("credential store entry was replaced concurrently")
-	ErrCredentialStoreInternal       = errors.New("credential store failed internally")
+	// ErrKeychainRepairDenied means the repair itself was refused access to the
+	// item (for example a stage item this identity cannot read); repeating the
+	// repair cannot help, only a new login can.
+	ErrKeychainRepairDenied       = errors.New("keychain repair was denied access to the item")
+	ErrCredentialBindingMismatch  = errors.New("credential binding does not match profile")
+	ErrProfileChangedDuringLogin  = errors.New("profile changed during login")
+	ErrLogoutIncomplete           = errors.New("logout removed the credential but could not remove profile metadata")
+	ErrLoginIncomplete            = errors.New("login replaced an unreadable credential but could not save profile metadata")
+	ErrCredentialStoreUnavailable = errors.New("credential store is unavailable")
+	ErrCredentialStoreReadOnly    = errors.New("credential store is read-only")
+	ErrCredentialStoreContended   = errors.New("credential store entry was replaced concurrently")
+	ErrCredentialStoreInternal    = errors.New("credential store failed internally")
 )
 
 type CredentialKind string

@@ -257,13 +257,16 @@ func (s *Service) Logout(ctx context.Context, name string) error {
 	return auth.Logout(ctx, s.Credentials, s.Profiles, name)
 }
 
-// MigrateKeychain rebinds one existing item to the current application ACL
-// without reading or returning its credential value.
+// MigrateKeychain repairs the access of one existing item for the current
+// signed binary without returning its credential value. It uses only
+// RepairCredentials, for the existence check too: the process fixes its
+// interaction mode at the first store open, so opening Credentials here would
+// make the repair store fail.
 func (s *Service) MigrateKeychain(ctx context.Context, name string) error {
-	if s == nil || s.Profiles == nil || s.Credentials == nil {
+	if s == nil || s.Profiles == nil || s.RepairCredentials == nil {
 		return errx.Internal("profile or credential store is unavailable")
 	}
-	return auth.MigrateKeychain(ctx, s.Credentials, s.Profiles, name)
+	return auth.MigrateKeychain(ctx, s.RepairCredentials, s.Profiles, name)
 }
 
 // GetPolicy reads an identity-bound exact project allowlist.

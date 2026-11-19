@@ -607,9 +607,12 @@ func TranslateError(err error, name string) error {
 		return errx.Auth("KEYCHAIN_UNSUPPORTED", "this build has no supported native credential store")
 	case errors.Is(err, auth.ErrInteractionNotAllowed):
 		return errx.Auth("KEYCHAIN_INTERACTION_REQUIRED", "Keychain access requires an interactive operator session")
+	case errors.Is(err, auth.ErrKeychainRepairDenied):
+		return errx.ConfirmRequired("Keychain ACL migration").
+			WithHint("the repair was denied access to the stored credential; ask the operator to run youtrack-agent-cli auth login --profile %s --yes, or auth import-token --profile %s --interactive --yes, in an interactive macOS session", name, name)
 	case errors.Is(err, auth.ErrKeychainMigrationRequired):
 		return errx.ConfirmRequired("Keychain ACL migration").
-			WithHint("ask the operator to run youtrack-agent-cli auth migrate-keychain --profile %s --yes in an interactive macOS session, or to run youtrack-agent-cli auth login --profile %s again", name, name)
+			WithHint("ask the operator to run youtrack-agent-cli auth migrate-keychain --profile %s --yes --timeout 5m in an interactive macOS session, or to run youtrack-agent-cli auth login --profile %s again", name, name)
 	case errors.Is(err, auth.ErrKeychainEntryNotFound):
 		return errx.NotFound("keychain_credential", name, nil)
 	case errors.Is(err, auth.ErrKeychainMigrationBlocked):

@@ -155,16 +155,31 @@ func (s *NativeStore) Delete(ctx context.Context, profileName string) error {
 	return nil
 }
 
-// MigrateKeychain is not implemented yet: until the repair path lands it
-// reports the migration as unavailable instead of touching the item.
+// MigrateKeychain repairs the item's access for the running binary through
+// core's ACLRepairer: one interactive read and rewrite of the same item. A
+// backend without that capability reports the migration as unavailable. Only a
+// store opened with InteractionAllowed can repair; any other mode is refused by
+// core with an interaction-required error.
 func (s *NativeStore) MigrateKeychain(ctx context.Context, profileName string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if _, err := nativeKey(profileName); err != nil {
+	key, err := nativeKey(profileName)
+	if err != nil {
 		return err
 	}
-	return ErrKeychainMigrationUnavailable
+	store, err := s.backend(ctx)
+	if err != nil {
+		return err
+	}
+	repairer, ok := store.(secretstore.ACLRepairer)
+	if !ok {
+		return ErrKeychainMigrationUnavailable
+	}
+	if err := repairer.RepairAccess(ctx, key); err != nil {
+		return mapNativeError("repair", err)
+	}
+	return nil
 }
 
 // mapNativeError turns a core/secretstore failure into this package's

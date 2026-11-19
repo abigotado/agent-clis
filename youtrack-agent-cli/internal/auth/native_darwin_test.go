@@ -538,16 +538,131 @@ func TestNativeStoreNeverLeaksATokenMarker(t *testing.T) {
 	}
 }
 
-func TestNativeStoreMigrateKeychainIsUnavailableUntilRepairLands(t *testing.T) {
+// plainStore hides everything but secretstore.Store, so it has no ACLRepairer.
+type plainStore struct{ secretstore.Store }
+
+func TestNativeStoreMigrateKeychainRepairsTheExactItem(t *testing.T) {
 	h := newNativeHarness(t, secretstore.InteractionAllowed)
-	if err := h.store.MigrateKeychain(t.Context(), "work"); !errors.Is(err, ErrKeychainMigrationUnavailable) {
+	if err := h.store.Save(t.Context(), "work", goldenCredential()); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.MigrateKeychain(t.Context(), "work"); err != nil {
+		t.Fatalf("MigrateKeychain = %v", err)
+	}
+	if h.opens != 1 || h.opts.Interaction != secretstore.InteractionAllowed {
+		t.Fatalf("opens=%d interaction=%v, want one allowed open", h.opens, h.opts.Interaction)
+	}
+	if err := h.store.MigrateKeychain(t.Context(), "other"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("MigrateKeychain(missing item) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestNativeStoreMigrateKeychainMapsRepairErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		core error
+		want error
+	}{
+		{"unusable keychain", coreError(secretstore.KindUnavailable, -50, secretstore.ReasonKeychainUnusable), ErrCredentialStoreUnavailable},
+		{"read only", coreError(secretstore.KindReadOnly, 0, ""), ErrCredentialStoreReadOnly},
+		{"contended", coreError(secretstore.KindContended, 0, ""), ErrCredentialStoreContended},
+		{"canceled", coreError(secretstore.KindCanceled, 0, ""), ErrKeychainMigrationCanceled},
+		{"interaction required", coreError(secretstore.KindInteractionRequired, 0, ""), ErrInteractionNotAllowed},
+		{"not found", coreError(secretstore.KindNotFound, 0, ""), ErrNotFound},
+		{"invalid argument", coreError(secretstore.KindInvalidArgument, 0, ""), ErrCredentialStoreInternal},
+		{"corrupt", coreError(secretstore.KindCorrupt, 0, ""), ErrCredentialStoreInternal},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h := newNativeHarness(t, secretstore.InteractionAllowed)
+			h.memory.SetErr(secretstoretest.OpRepair, test.core)
+			if err := h.store.MigrateKeychain(t.Context(), "work"); !errors.Is(err, test.want) {
+				t.Fatalf("MigrateKeychain = %v, want %v", err, test.want)
+			}
+		})
+	}
+	h := newNativeHarness(t, secretstore.InteractionAllowed)
+	h.memory.SetErr(secretstoretest.OpRepair, coreError(secretstore.KindOther, 77, ""))
+	var status *StatusError
+	if err := h.store.MigrateKeychain(t.Context(), "work"); !errors.As(err, &status) || status.Operation != "repair" || status.Status != 77 {
+		t.Fatalf("MigrateKeychain(other) = %v, want a repair StatusError", err)
+	}
+}
+
+// slowRepairer blocks in RepairAccess until the context ends, like a system
+// dialog that is answered too late, and then reports the context error.
+type slowRepairer struct{ secretstore.Store }
+
+func (r *slowRepairer) RepairAccess(ctx context.Context, _ secretstore.Key) error {
+	<-ctx.Done()
+	return fmt.Errorf("repair: %w", ctx.Err())
+}
+
+func TestNativeStoreMigrateKeychainContextExpiringDuringRepairLeavesTheItem(t *testing.T) {
+	memory := secretstoretest.NewMemory(secretstore.Options{MaxSecretBytes: maxStoredCredentialBytes, Interaction: secretstore.InteractionAllowed})
+	store := NewNativeStore(secretstore.InteractionAllowed, func(context.Context, secretstore.Options) (secretstore.Store, error) {
+		return &slowRepairer{Store: memory}, nil
+	})
+	if err := store.Save(t.Context(), "work", goldenCredential()); err != nil {
+		t.Fatal(err)
+	}
+	key := secretstore.Key{Service: KeychainService, Account: "work"}
+	before, err := memory.Load(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	migrateErr := store.MigrateKeychain(ctx, "work")
+	if !errors.Is(migrateErr, context.DeadlineExceeded) {
+		t.Fatalf("MigrateKeychain = %v, want the context error", migrateErr)
+	}
+	for _, sentinel := range []error{ErrKeychainMigrationCanceled, ErrCredentialStoreInternal, ErrKeychainMigrationUnavailable} {
+		if errors.Is(migrateErr, sentinel) {
+			t.Fatalf("a context expiry was reported as %v", sentinel)
+		}
+	}
+	after, err := memory.Load(t.Context(), key)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("item changed during an expired repair: %v", err)
+	}
+	if got := translateMigrationStoreError(migrateErr); got != migrateErr {
+		t.Fatalf("translate changed %v into %v", migrateErr, got)
+	}
+}
+
+func TestNativeStoreMigrateKeychainRefusesWithoutInteraction(t *testing.T) {
+	h := newNativeHarness(t, secretstore.InteractionNever)
+	if err := h.store.Save(t.Context(), "work", goldenCredential()); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.MigrateKeychain(t.Context(), "work"); !errors.Is(err, ErrInteractionNotAllowed) {
+		t.Fatalf("MigrateKeychain = %v, want ErrInteractionNotAllowed", err)
+	}
+}
+
+func TestNativeStoreMigrateKeychainWithoutRepairerIsUnavailable(t *testing.T) {
+	memory := secretstoretest.NewMemory(secretstore.Options{MaxSecretBytes: maxStoredCredentialBytes, Interaction: secretstore.InteractionAllowed})
+	store := NewNativeStore(secretstore.InteractionAllowed, func(context.Context, secretstore.Options) (secretstore.Store, error) {
+		return plainStore{memory}, nil
+	})
+	if err := store.MigrateKeychain(t.Context(), "work"); !errors.Is(err, ErrKeychainMigrationUnavailable) {
 		t.Fatalf("MigrateKeychain = %v, want ErrKeychainMigrationUnavailable", err)
 	}
-	if h.opens != 0 {
-		t.Fatalf("MigrateKeychain opened the store %d times", h.opens)
-	}
+}
+
+func TestNativeStoreMigrateKeychainValidatesBeforeOpening(t *testing.T) {
+	h := newNativeHarness(t, secretstore.InteractionAllowed)
 	if err := h.store.MigrateKeychain(t.Context(), "-bad"); !errors.Is(err, profile.ErrInvalidProfile) {
 		t.Fatalf("MigrateKeychain(invalid name) = %v", err)
+	}
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := h.store.MigrateKeychain(canceled, "work"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("MigrateKeychain(canceled) = %v", err)
+	}
+	if h.opens != 0 {
+		t.Fatalf("invalid input opened the store %d times", h.opens)
 	}
 }
 

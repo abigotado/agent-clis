@@ -17,7 +17,19 @@ func (a *App) newAuthCommand() *cobra.Command {
 
 func (a *App) newAuthMigrateKeychainCommand() *cobra.Command {
 	return &cobra.Command{
-		Use: "migrate-keychain", Short: "Rebind one credential ACL to the current application", Args: usageArgs(cobra.NoArgs),
+		Use:   "migrate-keychain",
+		Short: "Repair a credential's Keychain access for this build (pre-v0.13.0 or unsigned rebuild)",
+		Long: `Repairs the stored credential's Keychain access so the current binary can
+read it. Mainly the one-time transition from builds before v0.13.0; also needed
+after each unsigned or ad-hoc (go install / go build) rebuild. It is not needed
+after later signed upgrades.
+
+It needs one system dialog in an interactive macOS session; answer Allow, never
+Always Allow. Pass --timeout 5m so there is time to answer the dialog: the
+default 30s limit covers the dialog too, and a slow answer is lost. It reads
+and rewrites only the exact item of the selected profile, never contacts
+YouTrack, and requires --yes.`,
+		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := a.requireProfile(); err != nil {
 				return err

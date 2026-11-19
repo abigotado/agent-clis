@@ -137,7 +137,7 @@ No flags of its own.
 
 ### `youtrack-agent-cli auth migrate-keychain`
 
-Rebind one credential ACL to the current application
+Repair a credential's Keychain access for this build (pre-v0.13.0 or unsigned rebuild)
 
 No flags of its own.
 

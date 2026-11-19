@@ -152,9 +152,12 @@ func loginLocked(ctx context.Context, store CredentialAccessStore, registry Prof
 	return profile.Profile{}, fmt.Errorf("save profile metadata: %w", registryErr)
 }
 
-// MigrateKeychain changes only the access policy of the exact credential for
-// an existing profile. It never loads the credential value or contacts
-// YouTrack.
+// MigrateKeychain repairs the access of the exact credential for an existing
+// profile so the running binary can read it. The store rereads and rewrites the
+// item itself (one interactive system dialog) and the value never reaches this
+// function; it never contacts YouTrack. Pass the store opened for interaction:
+// the whole operation, Exists included, must use it, because the process
+// interaction mode is fixed by the first open.
 func MigrateKeychain(ctx context.Context, store CredentialAccessStore, registry ProfileRegistry, profileName string) error {
 	if store == nil || registry == nil {
 		return errors.New("keychain migration dependencies are required")
@@ -188,7 +191,15 @@ func translateMigrationStoreError(err error) error {
 		return fmt.Errorf("%w: %v", ErrKeychainEntryNotFound, err)
 	case errors.Is(err, ErrInteractionNotAllowed):
 		return fmt.Errorf("%w: %v", ErrKeychainMigrationBlocked, err)
-	case errors.Is(err, ErrKeychainMigrationCanceled):
+	case errors.Is(err, ErrKeychainMigrationRequired):
+		// The repair itself was denied; the general hint to migrate again would loop.
+		return fmt.Errorf("%w: %v", ErrKeychainRepairDenied, err)
+	case errors.Is(err, ErrKeychainMigrationCanceled),
+		errors.Is(err, ErrCredentialStoreUnavailable),
+		errors.Is(err, ErrCredentialStoreReadOnly),
+		errors.Is(err, ErrCredentialStoreContended),
+		errors.Is(err, ErrCredentialStoreInternal):
+		// Reported under their own codes, never as a missing migration feature.
 		return err
 	case errors.Is(err, ErrUnsupported):
 		return fmt.Errorf("%w: %v", ErrKeychainMigrationUnavailable, err)
