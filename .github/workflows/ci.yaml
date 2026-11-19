@@ -838,7 +838,7 @@ jobs:
             exit 1
           fi
           for target_os in linux darwin windows; do
-            outside="$(GOOS="${target_os}" go list -deps -test -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | awk 'NF' | grep -Ev '^github.com/abigotado/agent-clis/tools/sign-release(/|$)' || true)"
+            outside="$(GOOS="${target_os}" go list -deps -test -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | awk 'NF' | grep -Ev '^github\.com/abigotado/agent-clis/tools/sign-release(/| |\.test$|$)' || true)"
             if [ -n "${outside}" ]; then
               echo "::error::tools/sign-release imports non-standard packages for GOOS=${target_os}: ${outside//$'\n'/, }"
               exit 1
