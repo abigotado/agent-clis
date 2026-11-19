@@ -276,6 +276,11 @@ func (w *walker) walk(ncmds uint32) error {
 		}
 		off += size
 	}
+	// A header that counts fewer commands than sizeofcmds holds would hide the
+	// rest from every check, and the stream hashes those bytes as if seen.
+	if off != len(w.cmds) {
+		return refuse(RuleLoadCommands, "the %d load commands fill %d of the %d bytes the header declares", ncmds, off, len(w.cmds))
+	}
 	return nil
 }
 

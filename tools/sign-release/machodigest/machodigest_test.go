@@ -260,7 +260,7 @@ func TestRefusals(t *testing.T) {
 			b := base.Clone()
 			put32(b, 16, binary.LittleEndian.Uint32(b[16:])-1)
 			return b
-		}, rule: RuleSignatureCount},
+		}, rule: RuleLoadCommands},
 		{name: "__LINKEDIT vmsize smaller than filesize", data: func() []byte {
 			b := base.Clone()
 			put64(b, base.LinkeditCmdAt+32, binary.LittleEndian.Uint64(b[base.LinkeditCmdAt+48:])-1)
@@ -271,11 +271,11 @@ func TestRefusals(t *testing.T) {
 			put64(b, base.LinkeditCmdAt+32, 0)
 			return b
 		}, rule: RuleLinkeditVMSize},
-		{name: "load commands extend into __LINKEDIT", data: func() []byte {
+		{name: "sizeofcmds reaches past the commands the header counts", data: func() []byte {
 			b := base.Clone()
-			put32(b, 20, 0x1000) // the header and this many bytes reach past __LINKEDIT at 0x1000
+			put32(b, 20, 0x1000) // the commands fill fewer bytes than this
 			return b
-		}, rule: RuleCommandsEnd},
+		}, rule: RuleLoadCommands},
 		{name: "no segment covers the load commands", data: func() []byte {
 			b := base.Clone()
 			put64(b, base.TextCmdAt+48, 0x10)
@@ -570,6 +570,43 @@ func TestLoadCommandsMustEndBeforeLinkedit(t *testing.T) {
 				return
 			}
 			assertRefused(t, tt.rule, func() error { return Write(io.Discard, tt.data) })
+		})
+	}
+}
+
+func TestLoadCommandsMustFillSizeofcmds(t *testing.T) {
+	t.Parallel()
+
+	const lcMain = 0x80000028
+	// The commands end at 216, before __LINKEDIT at 224, so only the count
+	// can reveal that LC_MAIN is not walked.
+	cmds := [][]byte{
+		tinySegment("__TEXT", 0, 224),
+		tinySegment("__LINKEDIT", 224, 16),
+		tinySignature(224, 16),
+		tinyCommand(lcMain, 24),
+	}
+	tests := []struct {
+		name  string
+		ncmds uint32
+		rule  Rule // empty means accepted
+	}{
+		{name: "ncmds counts every command", ncmds: 4},
+		{name: "ncmds drops LC_MAIN, which is not the signature", ncmds: 3, rule: RuleLoadCommands},
+		{name: "ncmds counts more commands than the bytes hold", ncmds: 5, rule: RuleLoadCommands},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := tinyFile(cmds...)
+			put32(data, 16, tt.ncmds)
+			if tt.rule == "" {
+				if _, err := Sum(data); err != nil {
+					t.Fatalf("Sum() error = %v", err)
+				}
+				return
+			}
+			assertRefused(t, tt.rule, func() error { return Write(io.Discard, data) })
 		})
 	}
 }

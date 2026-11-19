@@ -1,0 +1,26 @@
+{
+  "repository": "abigotado/agent-clis",
+  "signer_workflow": ".github/workflows/release.yaml",
+  "clis": {
+    "youtrack-agent-cli": {
+      "identifier": "dev.abigotado.youtrack-agent-cli",
+      "team": "5XCS9FFW5Z",
+      "cert_sha1": "",
+      "formula": "youtrack-agent-cli",
+      "tag_prefix": "youtrack-agent-cli/v",
+      "assets": {
+        "darwin_archives": {
+          "amd64": "youtrack-agent-cli_{version}_darwin_amd64.tar.gz",
+          "arm64": "youtrack-agent-cli_{version}_darwin_arm64.tar.gz"
+        },
+        "darwin_checksums": "checksums-darwin.txt",
+        "linux_archives": {
+          "amd64": "youtrack-agent-cli_{version}_linux_amd64.tar.gz",
+          "arm64": "youtrack-agent-cli_{version}_linux_arm64.tar.gz"
+        },
+        "linux_checksums": "checksums.txt",
+        "archive_entries": ["LICENSE", "README.md", "youtrack-agent-cli"]
+      }
+    }
+  }
+}
