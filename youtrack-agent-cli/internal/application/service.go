@@ -767,7 +767,7 @@ func (s *Service) refreshIfNeeded(ctx context.Context, selected profile.Profile,
 }
 
 // This path is a defensive fence after a successful token response and before
-// the first credential-store write. Never retain the rejected credential or
+// the rotated credential is written. Never retain the rejected credential or
 // the underlying validation error in logs or the user-facing error.
 func refreshPreSaveBindingFailure(err error, logger *slog.Logger) *errx.Error {
 	category := "other"

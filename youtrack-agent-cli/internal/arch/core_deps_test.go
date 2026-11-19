@@ -19,7 +19,7 @@ func goList(t *testing.T, env []string, tags, format string) string {
 	args = append(args, "./cmd/youtrack-agent-cli")
 	command := exec.Command("go", args...)
 	command.Dir = repositoryRoot(t)
-	command.Env = append(command.Environ(), append([]string{"GOFLAGS="}, env...)...)
+	command.Env = append(command.Environ(), append([]string{"GOFLAGS=", "GOWORK=off"}, env...)...)
 	out, err := command.Output()
 	if err != nil {
 		t.Fatalf("go %s: %v", strings.Join(args, " "), err)

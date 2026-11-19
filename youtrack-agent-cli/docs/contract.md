@@ -48,7 +48,7 @@ normal cancellation/timeout recovery. Once an attempt begins, dispatch
 may be uncertain: interrupted code exchange requires a fresh login, and
 refresh failures keep the published code and exit in v0.2.0, including
 DNS/TLS failures and local failure after successful refresh. Local binding
-rejection happens before Save and leaves the old credential in place; a
+rejection happens before the rotated credential is saved and leaves the old credential in place; a
 Save error leaves persisted credential state unknown. The server
 may have rotated the old refresh token before its response was lost.
 Public recovery hints identify fixed local repair for binding or token validation
@@ -74,6 +74,30 @@ agents must not add `--yes` automatically. A durable cross-process refresh fence
 is deferred. OAuth token errors do not publish `error.retry_after`;
 for endpoint unavailability, use caller-bounded backoff and a fresh login.
 See the [detailed OAuth recovery guide](https://github.com/abigotado/agent-clis/blob/main/youtrack-agent-cli/docs/oauth-errors.md).
+
+## Credential store errors (standard macOS CLI)
+
+Credentials live in the shared core secret store. These codes report that
+store; the three `CREDENTIAL_STORE_*` codes never mean the credential is absent or expired.
+
+| `error.code` | Exit | Recovery |
+| --- | ---: | --- |
+| `CREDENTIAL_STORE_UNAVAILABLE` | 8 | The Keychain cannot be used from this process, as in a sandbox. Stop, ask the operator to run the command outside the sandbox, and do not re-authenticate. |
+| `CREDENTIAL_STORE_READ_ONLY` | 8 | The Keychain refuses writes here, including an unrecognized write status. Same recovery: the operator runs the command outside the sandbox; never re-authenticate. |
+| `CREDENTIAL_STORE_CONTENDED` | 9 | Another process replaced the stored credential. Run `auth status --profile NAME`, then retry. |
+| `LOGIN_INCOMPLETE` | 5 | A confirmed login replaced an unreadable credential but could not save profile metadata; the previous credential is gone. Log in again for that profile. |
+
+A refresh that is due first re-saves the current credential. If that save
+fails, the command stops before any token request with the store's own code.
+Nothing was redeemed, so no re-login is needed.
+
+Reclassified from earlier source builds:
+
+- A stored credential inside the Codex sandbox reported `CREDENTIAL_NOT_FOUND` / 5 and now reports `CREDENTIAL_STORE_UNAVAILABLE` / 8.
+- An ad hoc or unsigned rebuild now reports `CONFIRMATION_REQUIRED` / 7. Its hint names `auth migrate-keychain --profile NAME --yes --timeout 5m` or a fresh login (`auth login --profile NAME --yes`).
+- When `auth migrate-keychain` itself is denied access to the stored credential, it reports `CONFIRMATION_REQUIRED` / 7 and its hint names `auth login --profile NAME --yes` or `auth import-token --profile NAME --interactive --yes`. Do not rerun migrate in that case.
+- An unrecognized Keychain write status reports `CREDENTIAL_STORE_READ_ONLY` / 8 instead of `INTERNAL` / 1.
+- OSStatus -25293 while the Keychain lock state is unconfirmed reports `KEYCHAIN_INTERACTION_REQUIRED` / 5 instead of `INTERNAL` / 1. -25308 already reported that code; with a confirmed-unlocked Keychain it is now an access denial (`CONFIRMATION_REQUIRED` / 7).
 
 ## JSON response recovery
 
