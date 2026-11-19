@@ -725,6 +725,15 @@ func (s *Service) refreshIfNeeded(ctx context.Context, selected profile.Profile,
 	if err != nil {
 		return auth.Credential{}, err
 	}
+	// Redeeming rotates the refresh token on the server, so a store that cannot
+	// be written (a sandbox, a read-only keychain) must be found out before the
+	// token endpoint, not after. Re-saving the unchanged credential proves the
+	// write path. Any failure stops here with the store's own error: nothing was
+	// redeemed, so the stored credential is still valid and no "uncertain"
+	// recovery applies.
+	if err := s.Credentials.Save(ctx, selected.Name, credential); err != nil {
+		return auth.Credential{}, fmt.Errorf("check the credential store is writable before refresh: %w", err)
+	}
 	currentScopes := credential.OAuthScopes
 	if len(currentScopes) == 0 {
 		// v1 credentials predate persisted grants. The old exchange path only

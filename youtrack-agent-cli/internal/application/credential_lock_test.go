@@ -111,8 +111,8 @@ func TestCredentialSavesRunUnderTheExclusiveLockThroughTheService(t *testing.T) 
 		if _, _, err := fixture.service.InspectIssue(t.Context(), "work", "APP-1"); err != nil {
 			t.Fatal(err)
 		}
-		if probe.saves != 1 || fixture.transport.tokenRequests != 1 {
-			t.Errorf("saves=%d token requests=%d, want 1 and 1", probe.saves, fixture.transport.tokenRequests)
+		if probe.saves != 2 || fixture.transport.tokenRequests != 1 {
+			t.Errorf("saves=%d token requests=%d, want 2 and 1", probe.saves, fixture.transport.tokenRequests)
 		}
 		probe.requireClean(t)
 	})

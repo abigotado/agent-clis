@@ -276,7 +276,7 @@ func TestReadRefreshesExactlyWhenTheSkewIsReached(t *testing.T) {
 
 			wantRequests, wantSaves, wantBearer := 0, 0, "Bearer stored-access"
 			if test.refresh {
-				wantRequests, wantSaves, wantBearer = 1, 1, "Bearer refreshed-access"
+				wantRequests, wantSaves, wantBearer = 1, 2, "Bearer refreshed-access"
 			}
 			if fixture.transport.tokenRequests != wantRequests || fixture.store.saveCalls != wantSaves {
 				t.Errorf("token requests=%d saves=%d", fixture.transport.tokenRequests, fixture.store.saveCalls)
