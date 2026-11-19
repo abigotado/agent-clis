@@ -55,6 +55,11 @@ func (s *NativeStore) backend(ctx context.Context) (secretstore.Store, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// The wait for the lock can outlast the caller's context, so a cached open
+	// result or the backend is never returned to a canceled caller.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("credential store open: %w", err)
+	}
 	if s.opened {
 		return s.store, s.err
 	}

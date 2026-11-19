@@ -561,7 +561,7 @@ func TranslateError(err error, name string) error {
 			WithHint("inspect the profile and credential state before retrying logout")
 	case errors.Is(err, auth.ErrLoginIncomplete):
 		return errx.Auth("LOGIN_INCOMPLETE", "login replaced the unreadable credential for profile %q but could not save profile metadata; the previous credential is now absent; the new one may remain without matching profile metadata", name).
-			WithHint("run youtrack-agent-cli auth login --profile %s for OAuth, or youtrack-agent-cli auth import-token --profile %s --interactive for a permanent token", name, name)
+			WithHint("ask the operator to run youtrack-agent-cli auth login --profile %s --yes for OAuth, or youtrack-agent-cli auth import-token --profile %s --interactive --yes for a permanent token", name, name)
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return errx.Translate(err)
 	case errors.Is(err, profile.ErrProfileRequired):
@@ -612,7 +612,7 @@ func TranslateError(err error, name string) error {
 			WithHint("the repair was denied access to the stored credential; ask the operator to run youtrack-agent-cli auth login --profile %s --yes, or auth import-token --profile %s --interactive --yes, in an interactive macOS session", name, name)
 	case errors.Is(err, auth.ErrKeychainMigrationRequired):
 		return errx.ConfirmRequired("Keychain ACL migration").
-			WithHint("ask the operator to run youtrack-agent-cli auth migrate-keychain --profile %s --yes --timeout 5m in an interactive macOS session, or to run youtrack-agent-cli auth login --profile %s again", name, name)
+			WithHint("ask the operator to run youtrack-agent-cli auth migrate-keychain --profile %s --yes --timeout 5m in an interactive macOS session, or to run youtrack-agent-cli auth login --profile %s --yes", name, name)
 	case errors.Is(err, auth.ErrKeychainEntryNotFound):
 		return errx.NotFound("keychain_credential", name, nil)
 	case errors.Is(err, auth.ErrKeychainMigrationBlocked):

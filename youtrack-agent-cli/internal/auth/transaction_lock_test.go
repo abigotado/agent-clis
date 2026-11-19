@@ -72,6 +72,9 @@ type guardStore struct {
 	saved    []Credential
 	deleteEr error
 	loads    int
+	// saveErr fails the first Save only; any later Save would be recorded.
+	saveErr     error
+	failedSaves int
 }
 
 func (s *guardStore) guard(operation string) {
@@ -92,6 +95,10 @@ func (s *guardStore) Load(context.Context, string) (Credential, error) {
 
 func (s *guardStore) Save(_ context.Context, _ string, value Credential) error {
 	s.guard("save")
+	if s.saveErr != nil && s.failedSaves == 0 {
+		s.failedSaves++
+		return s.saveErr
+	}
 	s.saved = append(s.saved, value)
 	return nil
 }
@@ -116,6 +123,40 @@ func lockTestCredential(kind CredentialKind, marker string) Credential {
 		}
 	}
 	return Credential{Kind: CredentialPermanentToken, PermanentToken: marker + "-permanent"}
+}
+
+// From outside the store a failed Save over an existing item cannot be told
+// apart from one that never reached its destructive step, so login makes no
+// further mutation: no restore, no delete, and the original error class stays.
+func TestLoginSaveFailureOverExistingCredentialMutatesNothingMore(t *testing.T) {
+	failures := map[string]error{
+		"contended": fmt.Errorf("credential store save: %w", ErrCredentialStoreContended),
+		"canceled":  fmt.Errorf("credential store save: %w", context.Canceled),
+		"generic":   errors.New("save failed"),
+	}
+	existing := map[string]func(*guardStore){
+		"readable item": func(store *guardStore) {
+			store.exists, store.existing = true, lockTestCredential(CredentialPermanentToken, "old")
+		},
+		"unreadable item": func(store *guardStore) { store.exists, store.loadErr = true, ErrKeychainMigrationRequired },
+	}
+	for failureName, saveErr := range failures {
+		for itemName, arrange := range existing {
+			t.Run(failureName+"/"+itemName, func(t *testing.T) {
+				registry, store, intent := newLockFixture(t)
+				store.saveErr = saveErr
+				arrange(store)
+				_, err := Login(t.Context(), store, registry, intent, lockTestCredential(CredentialOAuth, "new"), true)
+				if !errors.Is(err, saveErr) || errors.Is(err, ErrLoginIncomplete) {
+					t.Fatalf("error = %v, want only the save error", err)
+				}
+				if store.failedSaves != 1 || len(store.saved) != 0 || store.deleted != 0 {
+					t.Errorf("failed saves=%d restoring saves=%d deletes=%d, want one failed save and nothing else", store.failedSaves, len(store.saved), store.deleted)
+				}
+				requireNoLockViolations(t, registry)
+			})
+		}
+	}
 }
 
 func newLockFixture(t *testing.T) (*lockRegistry, *guardStore, profile.Profile) {

@@ -85,7 +85,7 @@ store; the three `CREDENTIAL_STORE_*` codes never mean the credential is absent 
 | `CREDENTIAL_STORE_UNAVAILABLE` | 8 | The Keychain cannot be used from this process, as in a sandbox. Stop, ask the operator to run the command outside the sandbox, and do not re-authenticate. |
 | `CREDENTIAL_STORE_READ_ONLY` | 8 | The Keychain refuses writes here, including an unrecognized write status. Same recovery: the operator runs the command outside the sandbox; never re-authenticate. |
 | `CREDENTIAL_STORE_CONTENDED` | 9 | Another process replaced the stored credential. Run `auth status --profile NAME`, then retry. |
-| `LOGIN_INCOMPLETE` | 5 | A confirmed login replaced an unreadable credential but could not save profile metadata; the previous credential is gone. Log in again for that profile. |
+| `LOGIN_INCOMPLETE` | 5 | A confirmed login replaced an unreadable credential but could not save profile metadata; the previous credential is gone. Ask the operator to run `auth login --profile NAME --yes` (or `auth import-token --profile NAME --interactive --yes`) again for that profile. |
 
 A refresh that is due first re-saves the current credential. If that save
 fails, the command stops before any token request with the store's own code.
@@ -98,6 +98,8 @@ Reclassified from earlier source builds:
 - When `auth migrate-keychain` itself is denied access to the stored credential, it reports `CONFIRMATION_REQUIRED` / 7 and its hint names `auth login --profile NAME --yes` or `auth import-token --profile NAME --interactive --yes`. Do not rerun migrate in that case.
 - An unrecognized Keychain write status reports `CREDENTIAL_STORE_READ_ONLY` / 8 instead of `INTERNAL` / 1.
 - OSStatus -25293 while the Keychain lock state is unconfirmed reports `KEYCHAIN_INTERACTION_REQUIRED` / 5 instead of `INTERNAL` / 1. -25308 already reported that code; with a confirmed-unlocked Keychain it is now an access denial (`CONFIRMATION_REQUIRED` / 7).
+- A failure to lower the core-dump limit at start-up now fails every invocation, `--help` and `--version` included, with `INTERNAL` / 1 and the hint `report this with the error message; do not retry unchanged`.
+- A credential-store failure during the pre-refresh re-save used to report `OAUTH_TOKEN_EXCHANGE_FAILED` / 5 after the token request. It now reports the store's own code before any token request: `CREDENTIAL_STORE_*` (8 or 9), `KEYCHAIN_INTERACTION_REQUIRED` / 5, `CONFIRMATION_REQUIRED` / 7, `INTERNAL` / 1, or `CANCELED` / `TIMEOUT` / 6.
 
 ## JSON response recovery
 

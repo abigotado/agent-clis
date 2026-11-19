@@ -499,20 +499,29 @@ func TestNativeStoreNeverLeaksATokenMarker(t *testing.T) {
 	kinds := []secretstore.Kind{secretstore.KindOther, secretstore.KindNotFound, secretstore.KindAccessDenied, secretstore.KindInteractionRequired,
 		secretstore.KindUnavailable, secretstore.KindReadOnly, secretstore.KindContended, secretstore.KindTooLarge, secretstore.KindCorrupt,
 		secretstore.KindCanceled, secretstore.KindInvalidArgument}
-	for _, kind := range kinds {
-		h := newNativeHarness(t, secretstore.InteractionNever)
-		if err := h.store.Save(t.Context(), "work", marked); err != nil {
-			t.Fatal(err)
+	// The reason outranks the kind in mapNativeError, so each kind is injected
+	// once with a reason (the unusable-keychain branch) and once without, which
+	// reaches every kind branch with the marked credential stored.
+	for _, reason := range []secretstore.Reason{secretstore.ReasonKeychainUnusable, ""} {
+		for _, kind := range kinds {
+			h := newNativeHarness(t, secretstore.InteractionNever)
+			if err := h.store.Save(t.Context(), "work", marked); err != nil {
+				t.Fatal(err)
+			}
+			for _, op := range []secretstoretest.Op{secretstoretest.OpExists, secretstoretest.OpLoad, secretstoretest.OpSave, secretstoretest.OpDelete} {
+				h.memory.SetErr(op, coreError(kind, 5, reason))
+			}
+			_, loadErr := h.store.Load(t.Context(), "work")
+			_, existsErr := h.store.Exists(t.Context(), "work")
+			saveErr := h.store.Save(t.Context(), "work", marked)
+			deleteErr := h.store.Delete(t.Context(), "work")
+			for operation, err := range map[string]error{"load": loadErr, "exists": existsErr, "save": saveErr, "delete": deleteErr} {
+				if err == nil {
+					t.Fatalf("%s with kind %v and reason %q succeeded, so the error path did not run", operation, kind, reason)
+				}
+				record(err)
+			}
 		}
-		for _, op := range []secretstoretest.Op{secretstoretest.OpExists, secretstoretest.OpLoad, secretstoretest.OpSave, secretstoretest.OpDelete} {
-			h.memory.SetErr(op, coreError(kind, 5, secretstore.ReasonKeychainUnusable))
-		}
-		_, loadErr := h.store.Load(t.Context(), "work")
-		_, existsErr := h.store.Exists(t.Context(), "work")
-		record(loadErr)
-		record(existsErr)
-		record(h.store.Save(t.Context(), "work", marked))
-		record(h.store.Delete(t.Context(), "work"))
 	}
 
 	// Invalid input carrying the marker, and an undecodable stored item.
@@ -525,7 +534,19 @@ func TestNativeStoreNeverLeaksATokenMarker(t *testing.T) {
 	}
 	_, err := h.store.Load(t.Context(), "work")
 	record(err)
-	record(h.store.Save(t.Context(), tokenMarker, marked))
+	// An invalid name that carries the marker must fail without echoing it.
+	invalidName := tokenMarker + "#"
+	for operation, err := range map[string]error{
+		"save":   h.store.Save(t.Context(), invalidName, marked),
+		"load":   func() error { _, err := h.store.Load(t.Context(), invalidName); return err }(),
+		"exists": func() error { _, err := h.store.Exists(t.Context(), invalidName); return err }(),
+		"delete": h.store.Delete(t.Context(), invalidName),
+	} {
+		if err == nil {
+			t.Fatalf("%s with an invalid name succeeded, so the error path did not run", operation)
+		}
+		record(err)
+	}
 
 	observed = append(observed, textLog.String(), jsonLog.String(), fmt.Sprintf("%v %+v %#v", marked, marked, marked))
 	for index, text := range observed {
@@ -707,6 +728,28 @@ func TestDefaultNativeStoresOpenNothingUntilUsed(t *testing.T) {
 	}
 }
 
+// checkpointContext lets a test observe the caller between the store's first
+// context check and its wait for the lock, and cancel the caller from that
+// point on. The store calls Err first, so the first call closes checked.
+type checkpointContext struct {
+	context.Context
+	checked  chan struct{}
+	once     sync.Once
+	canceled atomic.Bool
+}
+
+func newCheckpointContext(parent context.Context) *checkpointContext {
+	return &checkpointContext{Context: parent, checked: make(chan struct{})}
+}
+
+func (c *checkpointContext) Err() error {
+	c.once.Do(func() { close(c.checked) })
+	if c.canceled.Load() {
+		return context.Canceled
+	}
+	return nil
+}
+
 // gatedOpen counts opens and the most that ran at once. Every open waits for
 // release, so callers that are not serialized pile up inside it.
 type gatedOpen struct {
@@ -730,16 +773,6 @@ func (g *gatedOpen) open(_ context.Context, opts secretstore.Options) (secretsto
 	return secretstoretest.NewMemory(opts), nil
 }
 
-// waitForOverlap gives unserialized callers time to reach open together. It
-// returns early once two are inside; with the mutex it always waits the full
-// budget and the test still passes.
-func (g *gatedOpen) waitForOverlap() {
-	deadline := time.Now().Add(300 * time.Millisecond)
-	for time.Now().Before(deadline) && g.maxSeen.Load() < 2 {
-		time.Sleep(time.Millisecond)
-	}
-}
-
 func TestNativeStoreBackendOpensExactlyOnceUnderConcurrency(t *testing.T) {
 	const callers = 32
 	gate := &gatedOpen{release: make(chan struct{})}
@@ -747,15 +780,21 @@ func TestNativeStoreBackendOpensExactlyOnceUnderConcurrency(t *testing.T) {
 
 	var wg sync.WaitGroup
 	errs := make(chan error, callers)
-	for range callers {
+	contexts := make([]*checkpointContext, callers)
+	for index := range contexts {
+		contexts[index] = newCheckpointContext(t.Context())
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := store.Exists(t.Context(), "work")
+			_, err := store.Exists(contexts[index], "work")
 			errs <- err
 		}()
 	}
-	gate.waitForOverlap()
+	// Every caller is past its first check, so each is inside the open or
+	// waiting for the lock; none can finish before the release.
+	for _, ctx := range contexts {
+		<-ctx.checked
+	}
 	close(gate.release)
 	wg.Wait()
 	close(errs)
@@ -802,17 +841,15 @@ func TestNativeStoreBackendCanceledCallerDoesNotBlockALiveOne(t *testing.T) {
 	}()
 	<-entered
 
+	liveCtx := newCheckpointContext(t.Context())
 	liveResult := make(chan error, 1)
 	go func() {
-		_, err := store.Exists(t.Context(), "work")
+		_, err := store.Exists(liveCtx, "work")
 		liveResult <- err
 	}()
 	// With the mutex the live caller waits behind the first open, so a second
-	// concurrent open never appears.
-	deadline := time.Now().Add(300 * time.Millisecond)
-	for time.Now().Before(deadline) && maxSeen.Load() < 2 {
-		time.Sleep(time.Millisecond)
-	}
+	// concurrent open never appears. It is past its first check here.
+	<-liveCtx.checked
 	cancel()
 
 	if err := <-canceledResult; !errors.Is(err, context.Canceled) {
@@ -829,5 +866,48 @@ func TestNativeStoreBackendCanceledCallerDoesNotBlockALiveOne(t *testing.T) {
 	}
 	if got := calls.Load(); got != 2 {
 		t.Errorf("opens = %d, want the canceled attempt plus exactly one successful open", got)
+	}
+}
+
+// A caller canceled while another goroutine holds the lock for the open must
+// get the context error, never the cached open failure the opener produced.
+func TestNativeStoreBackendRechecksContextAfterWaitingForTheOpener(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	store := NewNativeStore(secretstore.InteractionNever, func(context.Context, secretstore.Options) (secretstore.Store, error) {
+		close(entered)
+		<-release
+		return nil, coreError(secretstore.KindUnavailable, 0, secretstore.ReasonNoReply)
+	})
+
+	openerResult := make(chan error, 1)
+	go func() {
+		_, err := store.Exists(t.Context(), "work")
+		openerResult <- err
+	}()
+	<-entered
+
+	waiterCtx := newCheckpointContext(t.Context())
+	waiterResult := make(chan error, 1)
+	go func() {
+		_, err := store.Exists(waiterCtx, "work")
+		waiterResult <- err
+	}()
+	// The waiter passed its first check, so it is at or behind the lock held by
+	// the opener; canceling now and then releasing the opener orders the
+	// cancellation before the waiter can read the cached failure.
+	<-waiterCtx.checked
+	waiterCtx.canceled.Store(true)
+	close(release)
+
+	if err := <-openerResult; !errors.Is(err, ErrCredentialStoreUnavailable) {
+		t.Fatalf("opener = %v, want ErrCredentialStoreUnavailable", err)
+	}
+	err := <-waiterResult
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrCredentialStoreUnavailable) {
+		t.Fatalf("canceled waiter = %v, want context.Canceled and not the cached open failure", err)
+	}
+	if _, err := store.Exists(t.Context(), "work"); !errors.Is(err, ErrCredentialStoreUnavailable) {
+		t.Fatalf("later live caller = %v, want the cached open failure", err)
 	}
 }
