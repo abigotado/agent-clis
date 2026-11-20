@@ -34,6 +34,14 @@ const (
 	statusDuplicateItem         int64 = -25299 // errSecDuplicateItem
 	statusUserCanceled          int64 = -128   // errSecUserCanceled
 	statusParam                 int64 = -50    // errSecParam
+	statusWritePermission       int64 = -61    // errSecWrPerm
+	statusReadOnly              int64 = -25292 // errSecReadOnly
+	// statusSandboxWriteDenied is what a sandbox-exec profile that denies file
+	// writes makes a keychain write return, while reads and the lock probe
+	// still work. It is not a Security.framework constant: the system reports
+	// it for a file operation the sandbox refused, so there is no C name to
+	// mirror and no test pins it to one.
+	statusSandboxWriteDenied int64 = 100001
 )
 
 // stageSuffix is appended to an account name to name its stage. U+241F is
@@ -160,7 +168,7 @@ func (s *stagedStore) fail(op string, kind Kind, status int64) *Error {
 
 // failure classifies an error from a primitive without any knowledge of the
 // keychain's lock state. write says whether the primitive changes the store,
-// which decides how an unrecognised status reads.
+// which decides whether a refusal can read as KindReadOnly.
 //
 // -25293 and -25308 are both what a locked keychain returns with the UI
 // disabled (a locked file keychain returns -25293, not -25308), and both are
@@ -188,16 +196,25 @@ func (s *stagedStore) failure(op string, err error, write bool) *Error {
 		}
 	}
 	if write {
-		// Temporary rule: a write refused with a status not listed above is
-		// reported as read-only. A sandbox-exec profile that denies file
-		// writes to the keychain returns 100001 and leaves reads working.
+		// A write is read-only only for a status that says the store refused
+		// the write while reads work: statusSandboxWriteDenied (a sandbox-exec
+		// profile that denies file writes to the keychain, with a working
+		// probe), statusWritePermission and statusReadOnly. Any other status
+		// on a write, such as a missing default keychain (-25307), an I/O
+		// error (-36) or a -50 with a working probe, is KindOther with its
+		// status kept: calling it read-only would send the caller to look for
+		// a read-only store that is not there.
+		//
 		// Codex's read-only sandbox (codex-cli 0.167.1, macOS 26.6.2,
-		// 2026-11-13) is not that case: it returns -50 (errSecParam) for the
-		// add, the unlock and the status read, and its searches find nothing.
-		// The lock probe taken before each primitive catches it (beforeProbe),
-		// so a -50 that reaches this table comes from the primitive itself
-		// with a working probe, and keeps this meaning.
-		return s.fail(op, KindReadOnly, se.status)
+		// 2026-11-13) is not read-only in this sense: it returns -50
+		// (errSecParam) for the add, the unlock and the status read, and its
+		// searches find nothing. The lock probe taken before each primitive
+		// catches it (beforeProbe) as KindUnavailable, so a -50 that reaches
+		// this function comes from the primitive itself with a working probe.
+		switch se.status {
+		case statusSandboxWriteDenied, statusWritePermission, statusReadOnly:
+			return s.fail(op, KindReadOnly, se.status)
+		}
 	}
 	return s.fail(op, KindOther, se.status)
 }

@@ -103,10 +103,10 @@ func (r helperResult) stoppedAtKeychainOpen() bool {
 // reads and refuses writes, which is where ErrReadOnly comes from. A helper runs
 // under /usr/bin/sandbox-exec with a profile that allows everything except file
 // writes under the scratch keychain's directory, and saves into the scratch
-// keychain. The backend has no exact status for that refusal yet, so Save is
-// expected to report it through the temporary rule in stagedStore.failure: an
-// unclassified status on a write is KindReadOnly. The row records the status the
-// refusal carried, which is what the exact classification will be written from.
+// keychain. That refusal carries OSStatus 100001 (statusSandboxWriteDenied),
+// one of the three write statuses stagedStore.failure reports as KindReadOnly;
+// any other unrecognised write status is KindOther. The row requires the status
+// to be 100001, so a refusal that reads as read-only for another reason fails it.
 //
 // This is an approximation of the real sandbox, not the real one. The real one
 // is the opt-in codex rows below, run locally: there the lock probe itself is
@@ -430,6 +430,7 @@ func wantReadOnlySave(t *testing.T, s *scratch, self testBinary, r helperResult,
 	r.verifyBinary(t, self)
 	t.Logf("Save under a denied write: kind %s, OSStatus %s", r.get(t, "error"), r.get(t, "status"))
 	r.want(t, "error", "read-only")
+	r.want(t, "status", sandboxWriteDenyStatus)
 	ctx := context.WithoutCancel(t.Context())
 	store := s.store(t, helperMaxSecret, secretstore.InteractionNever)
 	if _, err := store.Load(ctx, key); !errors.Is(err, secretstore.ErrNotFound) {

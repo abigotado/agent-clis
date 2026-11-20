@@ -168,7 +168,7 @@ func TestRollForwardKeepsTheNewestValue(t *testing.T) {
 		return nil
 	}
 	s := newStaged(f)
-	wantError(t, s.Save(t.Context(), fakeKey, []byte("v3")), "save", KindReadOnly, -1)
+	wantError(t, s.Save(t.Context(), fakeKey, []byte("v3")), "save", KindOther, -1)
 	f.before = nil
 	wantNoStage(t, f)
 	if v, _ := f.value(fakeAcctName); v != "newest" {
@@ -727,12 +727,12 @@ func TestSaveFailureCleanup(t *testing.T) {
 		// failure reads as a lock and the stage cleanup fails too.
 		lockDuring bool
 	}{
-		{"step 1 add stage", "add stage", -1, KindReadOnly, false, "old", false},
-		{"step 2 delete account", "delete acct", -1, KindReadOnly, false, "old", false},
+		{"step 1 add stage", "add stage", -1, KindOther, false, "old", false},
+		{"step 2 delete account", "delete acct", -1, KindOther, false, "old", false},
 		{"step 2 delete account locked", "delete acct", statusInteractionNotAllowed, KindInteractionRequired, true, "old", true},
 		{"step 2 delete account locked, auth failed", "delete acct", statusAuthFailed, KindInteractionRequired, true, "old", true},
 		{"step 2 delete account refused on an unlocked keychain", "delete acct", statusAuthFailed, KindAccessDenied, false, "old", false},
-		{"step 3 add account", "add acct", -1, KindReadOnly, true, "", false},
+		{"step 3 add account", "add acct", -1, KindOther, true, "", false},
 		{"step 3 add account canceled", "add acct", statusUserCanceled, KindCanceled, true, "", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -784,7 +784,7 @@ func TestSaveFailureCleanup(t *testing.T) {
 			return nil
 		}
 		s := newStaged(f)
-		wantError(t, s.Save(t.Context(), fakeKey, []byte("new")), "save", KindReadOnly, -1)
+		wantError(t, s.Save(t.Context(), fakeKey, []byte("new")), "save", KindOther, -1)
 		f.before = nil
 		if v, _ := f.value(fakeAcctName); v != "new" {
 			t.Fatalf("account = %q, want new", v)
@@ -847,7 +847,7 @@ func TestSaveFailureAtTheLeftoverStage(t *testing.T) {
 			}
 			return nil
 		}
-		wantError(t, newStaged(f).Save(t.Context(), fakeKey, []byte("v3")), "save", KindReadOnly, -1)
+		wantError(t, newStaged(f).Save(t.Context(), fakeKey, []byte("v3")), "save", KindOther, -1)
 		if v, _ := f.value(fakeAcctName); v != "old" {
 			t.Fatalf("account = %q, want it untouched", v)
 		}
@@ -971,8 +971,12 @@ func TestStatusTable(t *testing.T) {
 		{"delete auth failed on a locked keychain", "delete acct", statusAuthFailed, "add stage", KindInteractionRequired},
 		{"delete interaction not allowed on a locked keychain", "delete acct", statusInteractionNotAllowed, "add stage", KindInteractionRequired},
 		{"add canceled", "add stage", statusUserCanceled, "", KindCanceled},
-		{"add unclassified is read-only", "add stage", 100001, "", KindReadOnly},
-		{"delete unclassified is read-only", "delete acct", 100001, "", KindReadOnly},
+		{"add sandbox write denial is read-only", "add stage", statusSandboxWriteDenied, "", KindReadOnly},
+		{"delete sandbox write denial is read-only", "delete acct", statusSandboxWriteDenied, "", KindReadOnly},
+		{"add errSecWrPerm is read-only", "add stage", statusWritePermission, "", KindReadOnly},
+		{"add errSecReadOnly is read-only", "add stage", statusReadOnly, "", KindReadOnly},
+		{"add unclassified is other", "add stage", -4242, "", KindOther},
+		{"delete unclassified is other", "delete acct", -4242, "", KindOther},
 	} {
 		t.Run("write "+tt.name, func(t *testing.T) {
 			f := newFakeKeychain()
@@ -990,6 +994,82 @@ func TestStatusTable(t *testing.T) {
 			}
 			failWith(tt.target, tt.status)(f)
 			wantError(t, newStaged(f).Save(t.Context(), fakeKey, []byte("new")), "save", tt.want, tt.status)
+		})
+	}
+}
+
+// TestWriteStatusClassification pins which write statuses read as read-only.
+// Only a status that says the store refused the write while reads work is
+// KindReadOnly; every other unrecognised status keeps its value under KindOther,
+// whichever step of Save or Delete it stops, and never matches ErrReadOnly.
+// The probe is working in every row, so none of them is the unusable keychain.
+func TestWriteStatusClassification(t *testing.T) {
+	const (
+		missingDefaultKeychain int64 = -25307 // errSecNoDefaultKeychain
+		ioError                int64 = -36    // ioErr
+		arbitraryPositive      int64 = 7
+	)
+	for _, st := range []struct {
+		name     string
+		status   int64
+		wantKind Kind
+	}{
+		{"sandbox write denial", statusSandboxWriteDenied, KindReadOnly},
+		{"errSecWrPerm", statusWritePermission, KindReadOnly},
+		{"errSecReadOnly", statusReadOnly, KindReadOnly},
+		{"missing default keychain", missingDefaultKeychain, KindOther},
+		{"I/O error", ioError, KindOther},
+		{"errSecParam with a working probe", statusParam, KindOther},
+		{"arbitrary positive status", arbitraryPositive, KindOther},
+	} {
+		for _, op := range []struct {
+			name  string
+			fail  string
+			setup func(f *fakeKeychain)
+			run   func(s *stagedStore) error
+			op    string
+		}{
+			{"save step 1 add stage", "add stage", func(*fakeKeychain) {}, func(s *stagedStore) error { return s.Save(t.Context(), fakeKey, []byte("v")) }, "save"},
+			{"save step 2 delete account", "delete acct", func(f *fakeKeychain) { f.put(fakeAcctName, "old") }, func(s *stagedStore) error { return s.Save(t.Context(), fakeKey, []byte("v")) }, "save"},
+			{"save step 3 add account", "add acct", func(f *fakeKeychain) { f.put(fakeAcctName, "old") }, func(s *stagedStore) error { return s.Save(t.Context(), fakeKey, []byte("v")) }, "save"},
+			{"save step 4 delete stage", "delete stage", func(f *fakeKeychain) { f.put(fakeAcctName, "old") }, func(s *stagedStore) error { return s.Save(t.Context(), fakeKey, []byte("v")) }, "save"},
+			{"delete account", "delete acct", func(f *fakeKeychain) { f.put(fakeAcctName, "v") }, func(s *stagedStore) error { return s.Delete(t.Context(), fakeKey) }, "delete"},
+			{"delete stage", "delete stage", func(f *fakeKeychain) { f.put(fakeStageName, "v") }, func(s *stagedStore) error { return s.Delete(t.Context(), fakeKey) }, "delete"},
+		} {
+			t.Run(st.name+"/"+op.name, func(t *testing.T) {
+				f := newFakeKeychain()
+				op.setup(f)
+				f.before = func(call string) error {
+					if call == op.fail {
+						return &statusError{status: st.status}
+					}
+					return nil
+				}
+				err := op.run(newStaged(f))
+				wantError(t, err, op.op, st.wantKind, st.status)
+				if got := errors.Is(err, ErrReadOnly); got != (st.wantKind == KindReadOnly) {
+					t.Fatalf("errors.Is(err, ErrReadOnly) = %v for kind %v", got, st.wantKind)
+				}
+				if errors.Is(err, ErrUnavailable) {
+					t.Fatalf("err = %v, must not be Unavailable", err)
+				}
+			})
+		}
+	}
+
+	// Reads never become read-only, whatever the status.
+	for _, st := range []int64{statusSandboxWriteDenied, statusWritePermission, statusReadOnly} {
+		t.Run(fmt.Sprintf("a read failing with %d is not read-only", st), func(t *testing.T) {
+			f := newFakeKeychain()
+			f.put(fakeAcctName, "v")
+			f.before = func(call string) error {
+				if call == "read acct" {
+					return &statusError{status: st}
+				}
+				return nil
+			}
+			_, err := newStaged(f).Load(t.Context(), fakeKey)
+			wantError(t, err, "load", KindOther, st)
 		})
 	}
 }
@@ -1064,7 +1144,7 @@ func TestDelete(t *testing.T) {
 			}
 			return nil
 		}
-		wantError(t, newStaged(f).Delete(t.Context(), fakeKey), "delete", KindReadOnly, -1)
+		wantError(t, newStaged(f).Delete(t.Context(), fakeKey), "delete", KindOther, -1)
 		if _, ok := f.value(fakeAcctName); ok {
 			t.Fatal("the account item was not deleted")
 		}
@@ -1444,8 +1524,8 @@ func TestOtherMinus50DoesNotMeanUnusable(t *testing.T) {
 		}{
 			{"exists", "exists acct", func(*fakeKeychain) {}, func(s *stagedStore) error { _, err := s.Exists(t.Context(), fakeKey); return err }, "exists", KindOther, true},
 			{"read", "read acct", func(f *fakeKeychain) { f.put(fakeAcctName, "v") }, func(s *stagedStore) error { _, err := s.Load(t.Context(), fakeKey); return err }, "load", KindOther, true},
-			{"add", "add stage", func(*fakeKeychain) {}, func(s *stagedStore) error { return s.Save(t.Context(), fakeKey, []byte("v")) }, "save", KindReadOnly, true},
-			{"delete", "delete acct", func(f *fakeKeychain) { f.put(fakeAcctName, "v") }, func(s *stagedStore) error { return s.Delete(t.Context(), fakeKey) }, "delete", KindReadOnly, true},
+			{"add", "add stage", func(*fakeKeychain) {}, func(s *stagedStore) error { return s.Save(t.Context(), fakeKey, []byte("v")) }, "save", KindOther, true},
+			{"delete", "delete acct", func(f *fakeKeychain) { f.put(fakeAcctName, "v") }, func(s *stagedStore) error { return s.Delete(t.Context(), fakeKey) }, "delete", KindOther, true},
 		} {
 			t.Run(tt.name, func(t *testing.T) {
 				f := newFakeKeychain()
