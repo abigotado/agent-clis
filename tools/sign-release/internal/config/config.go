@@ -140,7 +140,7 @@ func Parse(data []byte) (Config, error) {
 	if err := json.Unmarshal(data, &c, json.RejectUnknownMembers(true), json.MatchCaseInsensitiveNames(false)); err != nil {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
-	if err := c.validate(); err != nil {
+	if err := c.Validate(); err != nil {
 		return Config{}, err
 	}
 	return c, nil
@@ -155,7 +155,11 @@ func (c Config) CLI(name string) (CLI, error) {
 	return cli, nil
 }
 
-func (c Config) validate() error {
+// Validate checks a configuration with the rules Parse applies. A Config built
+// in code rather than parsed must pass it before use; the signing tool calls
+// it first, so a value no file could hold (a repository with "?" or "#", an
+// archive entry "../x") is refused before any command runs.
+func (c Config) Validate() error {
 	if !repoPattern.MatchString(c.Repository) {
 		return invalid("repository", "%q is not owner/name", c.Repository)
 	}

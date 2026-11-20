@@ -255,3 +255,42 @@ func TestExpandName(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateRefusesAHandBuiltConfig(t *testing.T) {
+	t.Parallel()
+
+	good, err := Parse([]byte(validConfig))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if err := good.Validate(); err != nil {
+		t.Fatalf("Validate() of a parsed config error = %v", err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+		field  string
+	}{
+		{name: "archive entry with a parent reference", mutate: func(c *Config) {
+			cli := c.CLIs["youtrack-agent-cli"]
+			cli.Assets.ArchiveEntries = []string{"../x"}
+			c.CLIs["youtrack-agent-cli"] = cli
+		}, field: "archive_entries"},
+		{name: "repository with a query separator", mutate: func(c *Config) { c.Repository = "abigotado/agent-clis?x=1" }, field: "repository"},
+		{name: "repository with a fragment separator", mutate: func(c *Config) { c.Repository = "abigotado/agent-clis#x" }, field: "repository"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, err := Parse([]byte(validConfig))
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			tc.mutate(&c)
+			var fe *FieldError
+			if err := c.Validate(); !errors.As(err, &fe) || !strings.Contains(fe.Field, tc.field) {
+				t.Fatalf("Validate() error = %v, want a *FieldError on %s", err, tc.field)
+			}
+		})
+	}
+}
