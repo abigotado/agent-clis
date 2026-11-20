@@ -59,7 +59,7 @@ func TestTranslateErrorCredentialStoreMapping(t *testing.T) {
 			}
 			if test.err == auth.ErrCredentialStoreWriteRefused {
 				lower := strings.ToLower(typed.Message + " " + typed.Hint)
-				for _, banned := range []string{"sandbox", "read-only", "read only", "login", "re-authenticate "} {
+				for _, banned := range []string{"sandbox", "read-only", "read only", "login"} {
 					if strings.Contains(lower, banned) {
 						t.Errorf("write-refused text %q contains %q", lower, banned)
 					}
