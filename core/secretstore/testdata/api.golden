@@ -153,7 +153,9 @@ const (
 	// credential is absent: a caller must not suggest re-authenticating and
 	// must not treat it as KindNotFound.
 	KindUnavailable
-	// KindReadOnly means the store refused a write that reads are allowed.
+	// KindReadOnly means the store refused a write with a status that says the
+	// store is read-only while reads are allowed. A write that fails for any
+	// other unrecognised reason is KindOther with its Status kept.
 	KindReadOnly
 	// KindContended means the item was replaced while Save was running.
 	KindContended

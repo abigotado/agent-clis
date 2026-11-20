@@ -358,6 +358,8 @@ const (
 	cStatusDuplicateItem         = int64(C.errSecDuplicateItem)
 	cStatusUserCanceled          = int64(C.errSecUserCanceled)
 	cStatusParam                 = int64(C.errSecParam)
+	cStatusWritePermission       = int64(C.errSecWrPerm)
+	cStatusReadOnly              = int64(C.errSecReadOnly)
 )
 
 // keychainRef is a SecKeychainRef. The zero value is the default keychain and
