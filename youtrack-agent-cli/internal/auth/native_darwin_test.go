@@ -126,7 +126,7 @@ func TestNativeStoreMapsEveryCoreKind(t *testing.T) {
 		{"unavailable no reason", coreError(secretstore.KindUnavailable, 0, ""), ErrCredentialStoreUnavailable, "load"},
 		{"reason outranks kind", coreError(secretstore.KindNotFound, -50, secretstore.ReasonKeychainUnusable), ErrCredentialStoreUnavailable, "load"},
 		{"reason outranks other", coreError(secretstore.KindOther, -50, secretstore.ReasonKeychainUnusable), ErrCredentialStoreUnavailable, "load"},
-		{"read only", coreError(secretstore.KindReadOnly, 0, ""), ErrCredentialStoreReadOnly, "save"},
+		{"read only", coreError(secretstore.KindReadOnly, 100001, ""), ErrCredentialStoreReadOnly, "save"},
 		{"contended", coreError(secretstore.KindContended, 0, ""), ErrCredentialStoreContended, "save"},
 		{"not found", coreError(secretstore.KindNotFound, 0, ""), ErrNotFound, "load"},
 		{"access denied", coreError(secretstore.KindAccessDenied, 0, ""), ErrKeychainMigrationRequired, "load"},
@@ -502,24 +502,28 @@ func TestNativeStoreNeverLeaksATokenMarker(t *testing.T) {
 	// The reason outranks the kind in mapNativeError, so each kind is injected
 	// once with a reason (the unusable-keychain branch) and once without, which
 	// reaches every kind branch with the marked credential stored.
-	for _, reason := range []secretstore.Reason{secretstore.ReasonKeychainUnusable, ""} {
-		for _, kind := range kinds {
-			h := newNativeHarness(t, secretstore.InteractionNever)
-			if err := h.store.Save(t.Context(), "work", marked); err != nil {
-				t.Fatal(err)
-			}
-			for _, op := range []secretstoretest.Op{secretstoretest.OpExists, secretstoretest.OpLoad, secretstoretest.OpSave, secretstoretest.OpDelete} {
-				h.memory.SetErr(op, coreError(kind, 5, reason))
-			}
-			_, loadErr := h.store.Load(t.Context(), "work")
-			_, existsErr := h.store.Exists(t.Context(), "work")
-			saveErr := h.store.Save(t.Context(), "work", marked)
-			deleteErr := h.store.Delete(t.Context(), "work")
-			for operation, err := range map[string]error{"load": loadErr, "exists": existsErr, "save": saveErr, "delete": deleteErr} {
-				if err == nil {
-					t.Fatalf("%s with kind %v and reason %q succeeded, so the error path did not run", operation, kind, reason)
+	// Status 5 reaches the write-refused branch of KindReadOnly; 100001 the
+	// read-only one.
+	for _, status := range []int64{5, 100001} {
+		for _, reason := range []secretstore.Reason{secretstore.ReasonKeychainUnusable, ""} {
+			for _, kind := range kinds {
+				h := newNativeHarness(t, secretstore.InteractionNever)
+				if err := h.store.Save(t.Context(), "work", marked); err != nil {
+					t.Fatal(err)
 				}
-				record(err)
+				for _, op := range []secretstoretest.Op{secretstoretest.OpExists, secretstoretest.OpLoad, secretstoretest.OpSave, secretstoretest.OpDelete} {
+					h.memory.SetErr(op, coreError(kind, status, reason))
+				}
+				_, loadErr := h.store.Load(t.Context(), "work")
+				_, existsErr := h.store.Exists(t.Context(), "work")
+				saveErr := h.store.Save(t.Context(), "work", marked)
+				deleteErr := h.store.Delete(t.Context(), "work")
+				for operation, err := range map[string]error{"load": loadErr, "exists": existsErr, "save": saveErr, "delete": deleteErr} {
+					if err == nil {
+						t.Fatalf("%s with kind %v and reason %q succeeded, so the error path did not run", operation, kind, reason)
+					}
+					record(err)
+				}
 			}
 		}
 	}
@@ -585,7 +589,8 @@ func TestNativeStoreMigrateKeychainMapsRepairErrors(t *testing.T) {
 		want error
 	}{
 		{"unusable keychain", coreError(secretstore.KindUnavailable, -50, secretstore.ReasonKeychainUnusable), ErrCredentialStoreUnavailable},
-		{"read only", coreError(secretstore.KindReadOnly, 0, ""), ErrCredentialStoreReadOnly},
+		{"read only", coreError(secretstore.KindReadOnly, 100001, ""), ErrCredentialStoreReadOnly},
+		{"unrecognized write status", coreError(secretstore.KindReadOnly, -25307, ""), ErrCredentialStoreWriteRefused},
 		{"contended", coreError(secretstore.KindContended, 0, ""), ErrCredentialStoreContended},
 		{"canceled", coreError(secretstore.KindCanceled, 0, ""), ErrKeychainMigrationCanceled},
 		{"interaction required", coreError(secretstore.KindInteractionRequired, 0, ""), ErrInteractionNotAllowed},
@@ -909,5 +914,44 @@ func TestNativeStoreBackendRechecksContextAfterWaitingForTheOpener(t *testing.T)
 	}
 	if _, err := store.Exists(t.Context(), "work"); !errors.Is(err, ErrCredentialStoreUnavailable) {
 		t.Fatalf("later live caller = %v, want the cached open failure", err)
+	}
+}
+
+func TestMapNativeErrorSplitsReadOnlyByStatus(t *testing.T) {
+	tests := []struct {
+		name         string
+		status       int64
+		wantReadOnly bool
+	}{
+		{"sandbox-exec file-write denial", 100001, true},
+		{"errSecWrPerm", -61, true},
+		{"errSecReadOnly", -25292, true},
+		{"missing default keychain", -25307, false},
+		{"i/o error", -36, false},
+		{"errSecNotAvailable-style -50", -50, false},
+		{"no status", 0, false},
+		{"arbitrary positive status", 77, false},
+	}
+	for _, test := range tests {
+		for _, operation := range []string{"save", "delete", "repair"} {
+			t.Run(test.name+"/"+operation, func(t *testing.T) {
+				got := mapNativeError(operation, coreError(secretstore.KindReadOnly, test.status, ""))
+				if errors.Is(got, ErrCredentialStoreReadOnly) != test.wantReadOnly {
+					t.Fatalf("mapped = %v; read-only = %v, want %v", got, !test.wantReadOnly, test.wantReadOnly)
+				}
+				if errors.Is(got, ErrCredentialStoreWriteRefused) == test.wantReadOnly {
+					t.Fatalf("mapped = %v; write-refused = %v, want %v", got, test.wantReadOnly, !test.wantReadOnly)
+				}
+				if !errors.Is(got, ErrCredentialStoreUnavailable) && !test.wantReadOnly {
+					t.Fatalf("mapped = %v, want it to satisfy ErrCredentialStoreUnavailable", got)
+				}
+				if errors.Is(got, ErrNotFound) || errors.Is(got, ErrCredentialStoreInternal) {
+					t.Fatalf("mapped = %v, must not read as missing or internal", got)
+				}
+			})
+		}
+	}
+	if strings.Contains(ErrCredentialStoreWriteRefused.Error(), "read-only") {
+		t.Fatalf("sentinel text %q must not say read-only", ErrCredentialStoreWriteRefused)
 	}
 }

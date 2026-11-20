@@ -187,6 +187,20 @@ func (s *NativeStore) MigrateKeychain(ctx context.Context, profileName string) e
 	return nil
 }
 
+// readOnlyStatuses are the write statuses that mean a read-only or sandboxed
+// store. Core labels every unrecognized write status KindReadOnly, so the kind
+// alone proves nothing; a status outside this set (a missing default keychain,
+// an I/O error, -50) is reported as a refused write, without sandbox advice.
+var readOnlyStatuses = map[int64]struct{}{
+	// 100001 is the file-write denial observed under sandbox-exec; see
+	// keychain_sandbox_integration_darwin_test.go in core/secretstore.
+	100001: {},
+	// errSecWrPerm.
+	-61: {},
+	// errSecReadOnly.
+	-25292: {},
+}
+
 // mapNativeError turns a core/secretstore failure into this package's
 // sentinels. The reason is checked before the kind, so a keychain that cannot
 // be used from this process is never read as a missing or expired credential.
@@ -207,7 +221,10 @@ func mapNativeError(operation string, err error) error {
 	case secretstore.KindUnavailable:
 		return fmt.Errorf("%w: %v", ErrCredentialStoreUnavailable, err)
 	case secretstore.KindReadOnly:
-		return fmt.Errorf("%w: %v", ErrCredentialStoreReadOnly, err)
+		if _, known := readOnlyStatuses[storeErr.Status]; known {
+			return fmt.Errorf("%w: %v", ErrCredentialStoreReadOnly, err)
+		}
+		return fmt.Errorf("%w: %v", ErrCredentialStoreWriteRefused, err)
 	case secretstore.KindContended:
 		return fmt.Errorf("%w: %v", ErrCredentialStoreContended, err)
 	case secretstore.KindNotFound:

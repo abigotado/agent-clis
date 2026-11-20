@@ -78,6 +78,7 @@ func TestRefreshPrecheckStopsBeforeTheTokenEndpoint(t *testing.T) {
 	}{
 		{"store unavailable", auth.ErrCredentialStoreUnavailable, "CREDENTIAL_STORE_UNAVAILABLE", errx.CodePermission},
 		{"store read only", auth.ErrCredentialStoreReadOnly, "CREDENTIAL_STORE_READ_ONLY", errx.CodePermission},
+		{"store write refused", auth.ErrCredentialStoreWriteRefused, "CREDENTIAL_STORE_UNAVAILABLE", errx.CodePermission},
 		{"store contended", auth.ErrCredentialStoreContended, "CREDENTIAL_STORE_CONTENDED", errx.CodeConflict},
 		{"store internal", auth.ErrCredentialStoreInternal, "INTERNAL", errx.CodeInternal},
 		{"interaction not allowed", auth.ErrInteractionNotAllowed, "KEYCHAIN_INTERACTION_REQUIRED", errx.CodeAuth},

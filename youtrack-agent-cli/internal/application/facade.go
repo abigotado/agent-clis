@@ -544,6 +544,8 @@ func (s *Service) UninstallAgentSkill(ctx context.Context, opts SkillOptions) ([
 	return skillResultInfo(values), err
 }
 
+const credentialStoreWriteRefusedHint = "the credential store refused the write; run youtrack-agent-cli auth status --profile %s and report the failure to the operator; do not re-authenticate"
+
 const credentialStoreSandboxHint = "stop and ask the operator to run this outside the sandbox; do not change a sandbox policy yourself; do not re-authenticate"
 
 func TranslateError(err error, name string) error {
@@ -586,6 +588,11 @@ func TranslateError(err error, name string) error {
 		return errx.Permission("PROJECT_POLICY_DENIED", "the exact project ID and key are not allowlisted")
 	// The store-failure codes come first: an error that carries both a store
 	// failure and ErrNotFound must never read as a missing credential.
+	case errors.Is(err, auth.ErrCredentialStoreWriteRefused):
+		// Before the plain unavailable case: the sentinel wraps it, and this
+		// failure carries no sandbox evidence.
+		return errx.Permission("CREDENTIAL_STORE_UNAVAILABLE", "the native credential store refused the write").
+			WithHint(credentialStoreWriteRefusedHint, name)
 	case errors.Is(err, auth.ErrCredentialStoreUnavailable):
 		return errx.Permission("CREDENTIAL_STORE_UNAVAILABLE", "the native credential store is unavailable in this environment").
 			WithHint(credentialStoreSandboxHint)

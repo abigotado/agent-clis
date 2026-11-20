@@ -347,6 +347,7 @@ func TestLoginOverUnreadableCredential(t *testing.T) {
 	abort := map[string]error{
 		"unavailable":          fmt.Errorf("load: %w", ErrCredentialStoreUnavailable),
 		"read only":            fmt.Errorf("load: %w", ErrCredentialStoreReadOnly),
+		"write refused":        fmt.Errorf("load: %w", ErrCredentialStoreWriteRefused),
 		"interaction required": fmt.Errorf("load: %w", ErrInteractionNotAllowed),
 		"corrupt or too large": fmt.Errorf("stored credential is invalid: %w", ErrInvalidToken),
 		"internal":             fmt.Errorf("load: %w", ErrCredentialStoreInternal),

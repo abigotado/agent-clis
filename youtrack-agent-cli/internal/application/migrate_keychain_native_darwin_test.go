@@ -93,7 +93,8 @@ func TestServiceMigrateKeychainOutcomes(t *testing.T) {
 		{"item vanishes before repair", secretstore.InteractionAllowed, true, secretstoretest.OpRepair, coreErr(secretstore.KindNotFound, 0, ""), "NOT_FOUND_KEYCHAIN_CREDENTIAL", 3},
 		{"keychain unusable on repair", secretstore.InteractionAllowed, true, secretstoretest.OpRepair, coreErr(secretstore.KindUnavailable, -50, secretstore.ReasonKeychainUnusable), "CREDENTIAL_STORE_UNAVAILABLE", 8},
 		{"keychain unusable on exists", secretstore.InteractionAllowed, true, secretstoretest.OpExists, coreErr(secretstore.KindUnavailable, -50, secretstore.ReasonKeychainUnusable), "CREDENTIAL_STORE_UNAVAILABLE", 8},
-		{"read only", secretstore.InteractionAllowed, true, secretstoretest.OpRepair, coreErr(secretstore.KindReadOnly, 0, ""), "CREDENTIAL_STORE_READ_ONLY", 8},
+		{"read only", secretstore.InteractionAllowed, true, secretstoretest.OpRepair, coreErr(secretstore.KindReadOnly, 100001, ""), "CREDENTIAL_STORE_READ_ONLY", 8},
+		{"write refused", secretstore.InteractionAllowed, true, secretstoretest.OpRepair, coreErr(secretstore.KindReadOnly, -25307, ""), "CREDENTIAL_STORE_UNAVAILABLE", 8},
 		{"contended", secretstore.InteractionAllowed, true, secretstoretest.OpRepair, coreErr(secretstore.KindContended, 0, ""), "CREDENTIAL_STORE_CONTENDED", 9},
 		{"invalid argument", secretstore.InteractionAllowed, true, secretstoretest.OpRepair, coreErr(secretstore.KindInvalidArgument, 0, ""), "INTERNAL", 1},
 	}

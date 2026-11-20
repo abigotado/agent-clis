@@ -52,8 +52,14 @@ var (
 	ErrLoginIncomplete            = errors.New("login replaced an unreadable credential but could not save profile metadata")
 	ErrCredentialStoreUnavailable = errors.New("credential store is unavailable")
 	ErrCredentialStoreReadOnly    = errors.New("credential store is read-only")
-	ErrCredentialStoreContended   = errors.New("credential store entry was replaced concurrently")
-	ErrCredentialStoreInternal    = errors.New("credential store failed internally")
+	// ErrCredentialStoreWriteRefused means the store refused a write for a
+	// status that does not prove a read-only or sandboxed store. It wraps
+	// ErrCredentialStoreUnavailable so every fail-closed check that tests for an
+	// unavailable store holds for it too; callers that must tell the two apart
+	// test this sentinel first.
+	ErrCredentialStoreWriteRefused = fmt.Errorf("credential store refused the write: %w", ErrCredentialStoreUnavailable)
+	ErrCredentialStoreContended    = errors.New("credential store entry was replaced concurrently")
+	ErrCredentialStoreInternal     = errors.New("credential store failed internally")
 )
 
 type CredentialKind string

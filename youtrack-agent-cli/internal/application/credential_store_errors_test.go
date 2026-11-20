@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/auth"
@@ -14,6 +15,7 @@ import (
 func TestTranslateErrorCredentialStoreMapping(t *testing.T) {
 	const authHint = "run 'youtrack-agent-cli auth login --profile NAME' or rotate the API token"
 	const sandboxHint = "stop and ask the operator to run this outside the sandbox; do not change a sandbox policy yourself; do not re-authenticate"
+	const refusedHint = "the credential store refused the write; run youtrack-agent-cli auth status --profile work and report the failure to the operator; do not re-authenticate"
 	tests := []struct {
 		name   string
 		err    error
@@ -21,6 +23,8 @@ func TestTranslateErrorCredentialStoreMapping(t *testing.T) {
 		exit   int
 		hint   string
 	}{
+		{"write refused", auth.ErrCredentialStoreWriteRefused, "CREDENTIAL_STORE_UNAVAILABLE", 8, refusedHint},
+		{"write refused outranks not found", errors.Join(auth.ErrNotFound, auth.ErrCredentialStoreWriteRefused), "CREDENTIAL_STORE_UNAVAILABLE", 8, refusedHint},
 		{"unavailable", auth.ErrCredentialStoreUnavailable, "CREDENTIAL_STORE_UNAVAILABLE", 8, sandboxHint},
 		{"read only", auth.ErrCredentialStoreReadOnly, "CREDENTIAL_STORE_READ_ONLY", 8, sandboxHint},
 		{"contended", auth.ErrCredentialStoreContended, "CREDENTIAL_STORE_CONTENDED", 9,
@@ -52,6 +56,14 @@ func TestTranslateErrorCredentialStoreMapping(t *testing.T) {
 			}
 			if typed.Reason != test.reason || int(typed.Code) != test.exit || typed.Hint != test.hint {
 				t.Fatalf("got reason=%q exit=%d hint=%q", typed.Reason, typed.Code, typed.Hint)
+			}
+			if test.err == auth.ErrCredentialStoreWriteRefused {
+				lower := strings.ToLower(typed.Message + " " + typed.Hint)
+				for _, banned := range []string{"sandbox", "read-only", "read only", "login", "re-authenticate "} {
+					if strings.Contains(lower, banned) {
+						t.Errorf("write-refused text %q contains %q", lower, banned)
+					}
+				}
 			}
 		})
 	}
@@ -103,6 +115,7 @@ func TestLoginIncompleteOutranksEverySentinelTheRollbackCanFailWith(t *testing.T
 		"contended":          auth.ErrCredentialStoreContended,
 		"unavailable":        auth.ErrCredentialStoreUnavailable,
 		"read only":          auth.ErrCredentialStoreReadOnly,
+		"write refused":      auth.ErrCredentialStoreWriteRefused,
 		"internal":           auth.ErrCredentialStoreInternal,
 		"not found":          auth.ErrNotFound,
 		"interaction":        auth.ErrInteractionNotAllowed,

@@ -98,6 +98,11 @@ upgrade needs a re-login or a migrate.
 Inside a sandbox that blocks Keychain writes, commands report
 `CREDENTIAL_STORE_UNAVAILABLE` or `CREDENTIAL_STORE_READ_ONLY` with exit 8. The
 operator must run the command outside the sandbox; do not re-authenticate.
+`CREDENTIAL_STORE_READ_ONLY` is limited to the write statuses that mean a
+read-only or sandboxed store (100001, -61, -25292). Any other refused write,
+such as a missing default keychain, reports `CREDENTIAL_STORE_UNAVAILABLE` with
+a neutral hint: run `auth status --profile NAME` and report the failure to the
+operator.
 See [Homebrew](docs/homebrew.md) for support boundaries and the future Cask
 channels.
 

@@ -18,6 +18,7 @@ func TestTranslateMigrationStoreError(t *testing.T) {
 		{"canceled dialog", fmt.Errorf("repair: %w", ErrKeychainMigrationCanceled), ErrKeychainMigrationCanceled},
 		{"unsupported build", fmt.Errorf("repair: %w", ErrUnsupported), ErrKeychainMigrationUnavailable},
 		{"store unavailable", fmt.Errorf("repair: %w", ErrCredentialStoreUnavailable), ErrCredentialStoreUnavailable},
+		{"store write refused", fmt.Errorf("repair: %w", ErrCredentialStoreWriteRefused), ErrCredentialStoreWriteRefused},
 		{"store read only", fmt.Errorf("repair: %w", ErrCredentialStoreReadOnly), ErrCredentialStoreReadOnly},
 		{"store contended", fmt.Errorf("repair: %w", ErrCredentialStoreContended), ErrCredentialStoreContended},
 		{"store internal", fmt.Errorf("repair: %w", ErrCredentialStoreInternal), ErrCredentialStoreInternal},

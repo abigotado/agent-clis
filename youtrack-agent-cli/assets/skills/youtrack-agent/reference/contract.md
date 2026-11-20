@@ -83,7 +83,8 @@ store; the three `CREDENTIAL_STORE_*` codes never mean the credential is absent 
 | `error.code` | Exit | Recovery |
 | --- | ---: | --- |
 | `CREDENTIAL_STORE_UNAVAILABLE` | 8 | The Keychain cannot be used from this process, as in a sandbox. Stop, ask the operator to run the command outside the sandbox, and do not re-authenticate. |
-| `CREDENTIAL_STORE_READ_ONLY` | 8 | The Keychain refuses writes here, including an unrecognized write status. Same recovery: the operator runs the command outside the sandbox; never re-authenticate. |
+| `CREDENTIAL_STORE_READ_ONLY` | 8 | The Keychain refuses writes because the store is read-only or sandboxed (write statuses 100001, -61 and -25292 only). Same recovery: the operator runs the command outside the sandbox; never re-authenticate. |
+| `CREDENTIAL_STORE_UNAVAILABLE` (write refused) | 8 | The Keychain refused a write for any other status, such as a missing default keychain or an I/O error. The hint is neutral: run `auth status --profile NAME` and report the failure to the operator; no sandbox advice; never re-authenticate. |
 | `CREDENTIAL_STORE_CONTENDED` | 9 | Another process replaced the stored credential. Run `auth status --profile NAME`, then retry. |
 | `LOGIN_INCOMPLETE` | 5 | A confirmed login replaced an unreadable credential but could not save profile metadata; the previous credential is gone. Ask the operator to run `auth login --profile NAME --yes` (or `auth import-token --profile NAME --interactive --yes`) again for that profile. |
 
@@ -96,7 +97,7 @@ Reclassified from earlier source builds:
 - A stored credential inside the Codex sandbox reported `CREDENTIAL_NOT_FOUND` / 5 and now reports `CREDENTIAL_STORE_UNAVAILABLE` / 8.
 - An ad hoc or unsigned rebuild now reports `CONFIRMATION_REQUIRED` / 7. Its hint names `auth migrate-keychain --profile NAME --yes --timeout 5m` or a fresh login (`auth login --profile NAME --yes`).
 - When `auth migrate-keychain` itself is denied access to the stored credential, it reports `CONFIRMATION_REQUIRED` / 7 and its hint names `auth login --profile NAME --yes` or `auth import-token --profile NAME --interactive --yes`. Do not rerun migrate in that case.
-- An unrecognized Keychain write status reports `CREDENTIAL_STORE_READ_ONLY` / 8 instead of `INTERNAL` / 1.
+- An unrecognized Keychain write status reports `CREDENTIAL_STORE_UNAVAILABLE` / 8 with a neutral hint instead of `INTERNAL` / 1. Only write statuses 100001, -61 and -25292 report `CREDENTIAL_STORE_READ_ONLY` / 8.
 - OSStatus -25293 while the Keychain lock state is unconfirmed reports `KEYCHAIN_INTERACTION_REQUIRED` / 5 instead of `INTERNAL` / 1. -25308 already reported that code; with a confirmed-unlocked Keychain it is now an access denial (`CONFIRMATION_REQUIRED` / 7).
 - A failure to lower the core-dump limit at start-up now fails every invocation, `--help` and `--version` included, with `INTERNAL` / 1 and the hint `report this with the error message; do not retry unchanged`.
 - A credential-store failure during the pre-refresh re-save used to report `OAUTH_TOKEN_EXCHANGE_FAILED` / 5 after the token request. It now reports the store's own code before any token request: `CREDENTIAL_STORE_*` (8 or 9), `KEYCHAIN_INTERACTION_REQUIRED` / 5, `CONFIRMATION_REQUIRED` / 7, `INTERNAL` / 1, or `CANCELED` / `TIMEOUT` / 6.
