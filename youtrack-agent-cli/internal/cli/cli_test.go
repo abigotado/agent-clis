@@ -15,14 +15,52 @@ import (
 	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/profile"
 )
 
-type migrationCredentials struct{ calls int }
+// migrationCredentials is the repair store: the migrate flow may ask whether
+// the item exists and repair it, and nothing else.
+type migrationCredentials struct {
+	calls int
+	// misuse counts Load, Save and Delete, which migrate must never call.
+	misuse int
+}
 
 func (*migrationCredentials) Exists(context.Context, string) (bool, error) { return true, nil }
-func (*migrationCredentials) Load(context.Context, string) (auth.Credential, error) {
+func (store *migrationCredentials) Load(context.Context, string) (auth.Credential, error) {
+	store.misuse++
 	return auth.Credential{}, auth.ErrNotFound
 }
-func (*migrationCredentials) Save(context.Context, string, auth.Credential) error { return nil }
-func (*migrationCredentials) Delete(context.Context, string) error                { return nil }
+func (store *migrationCredentials) Save(context.Context, string, auth.Credential) error {
+	store.misuse++
+	return nil
+}
+func (store *migrationCredentials) Delete(context.Context, string) error {
+	store.misuse++
+	return nil
+}
+
+// forbiddenCredentials is the ordinary store, which migrate must not touch at
+// all: any call is recorded.
+type forbiddenCredentials struct{ calls int }
+
+func (store *forbiddenCredentials) Exists(context.Context, string) (bool, error) {
+	store.calls++
+	return false, nil
+}
+func (store *forbiddenCredentials) Load(context.Context, string) (auth.Credential, error) {
+	store.calls++
+	return auth.Credential{}, auth.ErrNotFound
+}
+func (store *forbiddenCredentials) Save(context.Context, string, auth.Credential) error {
+	store.calls++
+	return nil
+}
+func (store *forbiddenCredentials) Delete(context.Context, string) error {
+	store.calls++
+	return nil
+}
+func (store *forbiddenCredentials) MigrateKeychain(context.Context, string) error {
+	store.calls++
+	return nil
+}
 func (store *migrationCredentials) MigrateKeychain(context.Context, string) error {
 	store.calls++
 	return nil
@@ -257,17 +295,23 @@ func TestKeychainMigrationRequiresConfirmationAndValidOutputFirst(t *testing.T) 
 	}{
 		{"confirmation", []string{"auth", "migrate-keychain", "--profile", "work", "-o", "json"}, errx.CodeConfirm, 0},
 		{"output validation", []string{"auth", "migrate-keychain", "--profile", "work", "--yes", "-o", "raw", "--fields", "profile"}, errx.CodeUsage, 0},
+		{"dry run refused", []string{"auth", "migrate-keychain", "--profile", "work", "--yes", "--dry-run", "-o", "json"}, errx.CodeUsage, 0},
+		{"profile required", []string{"auth", "migrate-keychain", "--yes", "-o", "json"}, errx.CodeUsage, 0},
 		{"confirmed", []string{"auth", "migrate-keychain", "--profile", "work", "--yes", "-o", "json"}, errx.CodeOK, 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			app, _, _, _, stdout, stderr := testApp(t)
 			credentials := &migrationCredentials{}
-			app.service = &application.Service{Profiles: registry, Credentials: credentials}
+			ordinary := &forbiddenCredentials{}
+			app.service = &application.Service{Profiles: registry, Credentials: ordinary, RepairCredentials: credentials}
 			if code := runApp(app, test.args...); code != test.wantCode {
 				t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout, stderr)
 			}
 			if credentials.calls != test.wantCall {
 				t.Fatalf("migration calls=%d want=%d", credentials.calls, test.wantCall)
+			}
+			if ordinary.calls != 0 || credentials.misuse != 0 {
+				t.Fatalf("migrate used the ordinary store %d times and loaded, saved or deleted %d times", ordinary.calls, credentials.misuse)
 			}
 		})
 	}

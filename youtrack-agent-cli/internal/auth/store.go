@@ -42,9 +42,24 @@ var (
 	ErrKeychainMigrationBlocked      = errors.New("keychain migration requires an interactive session")
 	ErrKeychainMigrationCanceled     = errors.New("keychain migration was canceled")
 	ErrKeychainMigrationUnavailable  = errors.New("keychain migration is unavailable")
-	ErrCredentialBindingMismatch     = errors.New("credential binding does not match profile")
-	ErrProfileChangedDuringLogin     = errors.New("profile changed during login")
-	ErrLogoutIncomplete              = errors.New("logout removed the credential but could not remove profile metadata")
+	// ErrKeychainRepairDenied means the repair itself was refused access to the
+	// item (for example a stage item this identity cannot read); repeating the
+	// repair cannot help, only a new login can.
+	ErrKeychainRepairDenied       = errors.New("keychain repair was denied access to the item")
+	ErrCredentialBindingMismatch  = errors.New("credential binding does not match profile")
+	ErrProfileChangedDuringLogin  = errors.New("profile changed during login")
+	ErrLogoutIncomplete           = errors.New("logout removed the credential but could not remove profile metadata")
+	ErrLoginIncomplete            = errors.New("login replaced an unreadable credential but could not save profile metadata")
+	ErrCredentialStoreUnavailable = errors.New("credential store is unavailable")
+	ErrCredentialStoreReadOnly    = errors.New("credential store is read-only")
+	// ErrCredentialStoreWriteRefused means the store refused a write for a
+	// status that does not prove a read-only or sandboxed store. It wraps
+	// ErrCredentialStoreUnavailable so every fail-closed check that tests for an
+	// unavailable store holds for it too; callers that must tell the two apart
+	// test this sentinel first.
+	ErrCredentialStoreWriteRefused = fmt.Errorf("credential store refused the write: %w", ErrCredentialStoreUnavailable)
+	ErrCredentialStoreContended    = errors.New("credential store entry was replaced concurrently")
+	ErrCredentialStoreInternal     = errors.New("credential store failed internally")
 )
 
 type CredentialKind string

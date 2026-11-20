@@ -544,6 +544,10 @@ func (s *Service) UninstallAgentSkill(ctx context.Context, opts SkillOptions) ([
 	return skillResultInfo(values), err
 }
 
+const credentialStoreWriteRefusedHint = "the credential store refused the write; run youtrack-agent-cli auth status --profile %s and report the failure to the operator; do not re-authenticate"
+
+const credentialStoreSandboxHint = "stop and ask the operator to run this outside the sandbox; do not change a sandbox policy yourself; do not re-authenticate"
+
 func TranslateError(err error, name string) error {
 	if err == nil {
 		return nil
@@ -557,6 +561,9 @@ func TranslateError(err error, name string) error {
 	case errors.Is(err, auth.ErrLogoutIncomplete):
 		return errx.Conflict("LOGOUT_INCOMPLETE", "credential removal succeeded but profile %q metadata could not be removed", name).
 			WithHint("inspect the profile and credential state before retrying logout")
+	case errors.Is(err, auth.ErrLoginIncomplete):
+		return errx.Auth("LOGIN_INCOMPLETE", "login replaced the unreadable credential for profile %q but could not save profile metadata; the previous credential is now absent; the new one may remain without matching profile metadata", name).
+			WithHint("ask the operator to run youtrack-agent-cli auth login --profile %s --yes for OAuth, or youtrack-agent-cli auth import-token --profile %s --interactive --yes for a permanent token", name, name)
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return errx.Translate(err)
 	case errors.Is(err, profile.ErrProfileRequired):
@@ -579,6 +586,24 @@ func TranslateError(err error, name string) error {
 		return errx.Conflict("WRITE_POLICY_STALE", "the project policy does not match the current profile identity")
 	case errors.Is(err, writepolicy.ErrProjectDenied):
 		return errx.Permission("PROJECT_POLICY_DENIED", "the exact project ID and key are not allowlisted")
+	// The store-failure codes come first: an error that carries both a store
+	// failure and ErrNotFound must never read as a missing credential.
+	case errors.Is(err, auth.ErrCredentialStoreWriteRefused):
+		// Before the plain unavailable case: the sentinel wraps it, and this
+		// failure carries no sandbox evidence.
+		return errx.Permission("CREDENTIAL_STORE_UNAVAILABLE", "the native credential store refused the write").
+			WithHint(credentialStoreWriteRefusedHint, name)
+	case errors.Is(err, auth.ErrCredentialStoreUnavailable):
+		return errx.Permission("CREDENTIAL_STORE_UNAVAILABLE", "the native credential store is unavailable in this environment").
+			WithHint(credentialStoreSandboxHint)
+	case errors.Is(err, auth.ErrCredentialStoreReadOnly):
+		return errx.Permission("CREDENTIAL_STORE_READ_ONLY", "the native credential store is read-only in this environment").
+			WithHint(credentialStoreSandboxHint)
+	case errors.Is(err, auth.ErrCredentialStoreContended):
+		return errx.Conflict("CREDENTIAL_STORE_CONTENDED", "another process replaced the stored credential for profile %q", name).
+			WithHint("another process replaced the stored credential; run youtrack-agent-cli auth status --profile %s, then retry", name)
+	case errors.Is(err, auth.ErrCredentialStoreInternal):
+		return errx.Internal("the native credential store rejected an internal request")
 	case errors.Is(err, auth.ErrNotFound):
 		return errx.Auth("CREDENTIAL_NOT_FOUND", "no stored credential exists for profile %q", name)
 	case errors.Is(err, auth.ErrCredentialBindingMismatch):
@@ -589,8 +614,12 @@ func TranslateError(err error, name string) error {
 		return errx.Auth("KEYCHAIN_UNSUPPORTED", "this build has no supported native credential store")
 	case errors.Is(err, auth.ErrInteractionNotAllowed):
 		return errx.Auth("KEYCHAIN_INTERACTION_REQUIRED", "Keychain access requires an interactive operator session")
+	case errors.Is(err, auth.ErrKeychainRepairDenied):
+		return errx.ConfirmRequired("Keychain ACL migration").
+			WithHint("the repair was denied access to the stored credential; ask the operator to run youtrack-agent-cli auth login --profile %s --yes, or auth import-token --profile %s --interactive --yes, in an interactive macOS session", name, name)
 	case errors.Is(err, auth.ErrKeychainMigrationRequired):
-		return errx.ConfirmRequired("Keychain ACL migration")
+		return errx.ConfirmRequired("Keychain ACL migration").
+			WithHint("ask the operator to run youtrack-agent-cli auth migrate-keychain --profile %s --yes --timeout 5m in an interactive macOS session, or to run youtrack-agent-cli auth login --profile %s --yes", name, name)
 	case errors.Is(err, auth.ErrKeychainEntryNotFound):
 		return errx.NotFound("keychain_credential", name, nil)
 	case errors.Is(err, auth.ErrKeychainMigrationBlocked):

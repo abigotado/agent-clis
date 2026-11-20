@@ -2,9 +2,19 @@
   "schema": 1,
   "modules": [
     {
+      "path": "github.com/abigotado/agent-clis/core",
+      "version": "v0.1.0",
+      "zip_sha256": "86d2501a0f8319ea11cdea07b24222b258b1a823b8cfe6ee620c4877547de43d"
+    },
+    {
       "path": "github.com/creack/pty",
       "version": "v1.1.24",
       "zip_sha256": "754e25253e76a5583b80d57d3add3afe68fc4d9f2a490968a9d1eda8c8fd8815"
+    },
+    {
+      "path": "github.com/godbus/dbus/v5",
+      "version": "v5.2.4",
+      "zip_sha256": "2a3a2996c274cbb735aa7f634dbcc0b292c0dff154447896d3a95955d078fb83"
     },
     {
       "path": "github.com/inconshreveable/mousetrap",

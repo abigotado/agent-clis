@@ -98,16 +98,24 @@ youtrack-agent-cli auth status --profile work --check -o json
 ```
 
 Homebrew never reads, copies, deletes, or automatically migrates a credential.
-After a Formula Cellar upgrade, macOS may require an existing Keychain item's
-ACL to be explicitly rebound to the current executable. Only when the CLI
-reports that condition, run:
+Credentials go through the shared core secret store. A credential saved by a
+build before v0.13.0 needs a one-time transition per profile. The recommended
+path is to log in again (`auth login --profile work --yes`) and revoke the old
+token; the alternative, only when the CLI reports that the existing Keychain
+item needs migration, rebind its ACL:
 
 ```bash
-youtrack-agent-cli auth migrate-keychain --profile work --yes -o json
+youtrack-agent-cli auth migrate-keychain --profile work --yes --timeout 5m -o json
 ```
 
-That command operates on exactly one selected profile and does not expose its
-secret. It is deliberately an operator action, never a post-install hook.
+The command shows one system dialog; choose Allow, never Always Allow. It
+operates on exactly one selected profile and does not expose its secret. It is
+deliberately an operator action, never a post-install hook. Until a signed
+Formula ships, the Formula is built from source with an ad hoc identity, so
+every upgrade or reinstall needs a re-login or a migrate. Later signed upgrades
+need no migration. In a sandbox that blocks Keychain writes, commands
+report `CREDENTIAL_STORE_UNAVAILABLE` or `CREDENTIAL_STORE_READ_ONLY` (exit 8);
+run them outside the sandbox and do not re-authenticate.
 
 ## Write boundaries
 

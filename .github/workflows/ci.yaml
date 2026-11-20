@@ -489,10 +489,10 @@ jobs:
   # version its go.mod pins, so a change to core cannot break a CLI unseen.
   # The list of CLIs comes from the changes job (every registered module but
   # core). The job runs when core or a CLI changed; with one CLI the youtrack
-  # flag is that CLI's own selection. No CLI imports core yet (that is M6), so
-  # today this only proves the two modules compose into one workspace; it
-  # starts to catch API breaks with the first import. Blocking by design: there
-  # is no label to excuse a break. go.work is created here and never committed.
+  # flag is that CLI's own selection. youtrack-agent-cli imports core
+  # (darwin && cgo), so a core API break fails here before core is tagged.
+  # Blocking by design: there is no label to excuse a break. go.work is
+  # created here and never committed.
   core-compat:
     name: core compat (${{ matrix.cli }}, ${{ matrix.os }})
     needs: changes
@@ -608,7 +608,15 @@ jobs:
         run: |
           set -euo pipefail
           CGO_ENABLED=1 go build -o "${RUNNER_TEMP}/youtrack-agent-cli-native" ./cmd/youtrack-agent-cli
-          CGO_ENABLED=1 go list -f '{{join .CgoFiles "\n"}}' ./internal/auth \
+          # native_darwin.go has no import "C", so it is a GoFile; the cgo file
+          # that talks to Security.framework lives in core.
+          CGO_ENABLED=1 go list -f '{{join .GoFiles "\n"}}' ./internal/auth \
+            | grep -Fxq 'native_darwin.go'
+          if CGO_ENABLED=1 go list -f '{{join .GoFiles "\n"}}' ./internal/auth | grep -Fxq 'keychain_unsupported.go'; then
+            echo "::error::cgo Darwin build selected the unsupported credential store"
+            exit 1
+          fi
+          CGO_ENABLED=1 go list -f '{{join .CgoFiles "\n"}}' github.com/abigotado/agent-clis/core/secretstore \
             | grep -Fxq 'keychain_darwin.go'
           otool -L "${RUNNER_TEMP}/youtrack-agent-cli-native" | grep -Fq '/Security.framework/'
           if grep -aFq '/usr/bin/security' "${RUNNER_TEMP}/youtrack-agent-cli-native"; then
@@ -618,6 +626,10 @@ jobs:
           CGO_ENABLED=0 go build -o "${RUNNER_TEMP}/youtrack-agent-cli-unsupported" ./cmd/youtrack-agent-cli
           CGO_ENABLED=0 go list -f '{{join .GoFiles "\n"}}' ./internal/auth \
             | grep -Fxq 'keychain_unsupported.go'
+          if CGO_ENABLED=0 go list -f '{{join .GoFiles "\n"}}' ./internal/auth | grep -Fxq 'native_darwin.go'; then
+            echo "::error::no-cgo Darwin build selected the native credential store"
+            exit 1
+          fi
 
       - name: macOS identity-only developer build modes
         if: runner.os == 'macOS'
@@ -693,7 +705,7 @@ jobs:
           deps="$(go list -tags portable_readonly -deps ./cmd/youtrack-agent-cli)"
           test -n "${deps}"
           rc=0
-          forbidden="$(grep -E '^net/http(/|$)|/internal/(approval|auth|application|intent|journal|mutation|oauth|oauthrecovery|operatorwrite|writepolicy|youtrack)(/|$)' <<<"${deps}")" || rc=$?
+          forbidden="$(grep -E '^net/http(/|$)|/internal/(approval|auth|application|intent|journal|mutation|oauth|oauthrecovery|operatorwrite|writepolicy|youtrack)(/|$)|^github\.com/abigotado/agent-clis/core(/|$)|^github\.com/godbus/' <<<"${deps}")" || rc=$?
           test "${rc}" -le 1
           if [ -n "${forbidden}" ]; then echo "portable build links forbidden packages:" >&2; echo "${forbidden}" >&2; exit 1; fi
           go build -tags portable_readonly -o "${RUNNER_TEMP}/portable-readonly" ./cmd/youtrack-agent-cli
