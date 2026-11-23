@@ -38,8 +38,8 @@
     },
     {
       "path": "golang.org/x/term",
-      "version": "v0.47.0",
-      "zip_sha256": "d990d5ab94dfa41ba980645b721bba7490064337a01bb03e6cacace70e8df0bf"
+      "version": "v0.48.0",
+      "zip_sha256": "3f6dfe1b6031005d556ad54027c191636299aa4496fd631d1b1dcd23ada8bec7"
     }
   ]
 }
