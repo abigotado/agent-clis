@@ -140,8 +140,11 @@ the tool is waiting for a line.
 
 ## The work directory
 
-The tool prints the work directory (a new `sign-release-*` directory under
-`TMPDIR`, mode 0700) and keeps it after the run. It holds the release files and
+The tool prints the work directory (a new `sign-release-*` directory, mode 0700, under
+`<home>/Library/Caches/sign-release/work`; the account's home comes from the
+account database, and neither `TMPDIR` nor `HOME` is read. That parent is
+created 0700 if missing and refused unless it is a real directory, not a
+symbolic link, owned by the current user, with mode 0700) and keeps it after the run. It holds the release files and
 the signed binaries, and no secrets: the downloaded archives and
 `checksums-darwin.txt` (the originals) at the top, one directory per
 architecture with the extracted files, the machodigest streams and `signed/`
@@ -196,7 +199,9 @@ gh attestation verify <archive> \
   --signer-workflow abigotado/agent-clis/.github/workflows/release.yaml \
   --source-ref refs/tags/youtrack-agent-cli/v0.13.0 \
   --source-digest <tag commit> \
-  --deny-self-hosted-runners --format json --hostname github.com
+  --deny-self-hosted-runners \
+  --predicate-type https://slsa.dev/provenance/v1 \
+  --format json --hostname github.com
 ```
 
 The output is a JSON array. In every entry,

@@ -141,3 +141,64 @@ func TestAcquireForHomeIgnoresTheParentEnvironment(t *testing.T) {
 		}
 	}
 }
+
+func TestMkWorkDirIgnoresTMPDIRAndHOME(t *testing.T) {
+	home := t.TempDir()
+	envTmp, envHome := t.TempDir(), t.TempDir()
+	t.Setenv("TMPDIR", envTmp)
+	t.Setenv("HOME", envHome)
+
+	dir, err := MkWorkDir(home)
+	if err != nil {
+		t.Fatalf("MkWorkDir() error = %v", err)
+	}
+	if filepath.Dir(dir) != WorkRoot(home) || !strings.HasPrefix(filepath.Base(dir), "sign-release-") {
+		t.Fatalf("work dir = %q, want a sign-release-* child of %q", dir, WorkRoot(home))
+	}
+	if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("work dir mode = %v (err %v), want 0700", info.Mode().Perm(), err)
+	}
+	for _, other := range []string{envTmp, envHome} {
+		if entries, err := os.ReadDir(other); err != nil || len(entries) != 0 {
+			t.Fatalf("%s holds %d entries (err %v), want it untouched", other, len(entries), err)
+		}
+	}
+}
+
+func TestMkWorkDirRefusesAnUnsafeParent(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, root string)
+	}{
+		{"symlink", func(t *testing.T, root string) {
+			// The target is itself private and ours, so only the link is wrong.
+			target := filepath.Join(t.TempDir(), "target")
+			if err := os.Mkdir(target, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, root); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"wrong mode", func(t *testing.T, root string) {
+			if err := os.Mkdir(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			if err := os.MkdirAll(Dir(home), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			tt.setup(t, WorkRoot(home))
+			if dir, err := MkWorkDir(home); err == nil {
+				t.Fatalf("MkWorkDir() = %q, want an error", dir)
+			}
+		})
+	}
+}

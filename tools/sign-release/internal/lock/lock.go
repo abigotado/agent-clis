@@ -73,3 +73,8 @@ func Dir(home string) string {
 func AcquireForHome(home, repo, tag string) (*Lock, error) {
 	return Acquire(Dir(home), repo, tag)
 }
+
+// WorkRoot is the validated parent of every work directory, inside Dir(home).
+func WorkRoot(home string) string {
+	return filepath.Join(Dir(home), "work")
+}

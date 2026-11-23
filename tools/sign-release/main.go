@@ -54,10 +54,16 @@ func main() {
 			}
 			return r, nil
 		},
-		// MkdirTemp creates the directory 0700.
-		MkWorkDir: func() (string, error) { return os.MkdirTemp("", "sign-release-") },
-		Stdin:     os.Stdin,
-		Stderr:    os.Stderr,
+		// Under the account's validated cache directory, never TMPDIR.
+		MkWorkDir: func() (string, error) {
+			home, err := homeDir()
+			if err != nil {
+				return "", err
+			}
+			return lock.MkWorkDir(home)
+		},
+		Stdin:  os.Stdin,
+		Stderr: os.Stderr,
 	})
 	stop()
 	os.Exit(code)

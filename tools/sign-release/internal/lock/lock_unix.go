@@ -14,15 +14,8 @@ func acquire(dir, name string) (*Lock, error) {
 	if !filepath.IsAbs(dir) {
 		return nil, fmt.Errorf("lock directory %q is not absolute", dir)
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("create lock directory: %w", err)
-	}
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return nil, fmt.Errorf("stat lock directory: %w", err)
-	}
-	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("lock directory %s must be a real directory that only its owner can use", dir)
+	if err := ensurePrivateDir(dir); err != nil {
+		return nil, err
 	}
 	// O_NOFOLLOW refuses a symbolic link in the file's place; the directory is
 	// private, so nobody else can plant one.
@@ -55,6 +48,41 @@ func acquire(dir, name string) (*Lock, error) {
 		}
 		return nil
 	}}, nil
+}
+
+// ensurePrivateDir creates dir with mode 0700 when it is missing, then requires
+// that Lstat shows a real directory (not a symbolic link) owned by the current
+// user with mode exactly 0700.
+func ensurePrivateDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create directory %s: %w", dir, err)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("stat directory %s: %w", dir, err)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !info.IsDir() || info.Mode().Perm() != 0o700 || !ok || int(st.Uid) != os.Getuid() {
+		return fmt.Errorf("directory %s must be a real directory, owned by the current user, with mode 0700", dir)
+	}
+	return nil
+}
+
+// MkWorkDir creates a new 0700 work directory inside WorkRoot(home), after
+// validating that parent. The temp directory and TMPDIR play no part.
+func MkWorkDir(home string) (string, error) {
+	root := WorkRoot(home)
+	if !filepath.IsAbs(root) {
+		return "", fmt.Errorf("work root %q is not absolute", root)
+	}
+	if err := ensurePrivateDir(root); err != nil {
+		return "", err
+	}
+	dir, err := os.MkdirTemp(root, "sign-release-")
+	if err != nil {
+		return "", fmt.Errorf("create work directory: %w", err)
+	}
+	return dir, nil
 }
 
 func closeQuietly(f *os.File) {
