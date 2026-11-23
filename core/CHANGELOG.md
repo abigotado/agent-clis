@@ -5,7 +5,9 @@ All notable changes to the `core` module are listed here. Tags are
 
 ## Unreleased
 
-### v0.1.1
+Nothing yet.
+
+## v0.1.1
 
 - macOS: `KindReadOnly` is now reported only for the write statuses that say the
   store refused a write while reads work: OSStatus 100001 (the status a
@@ -19,7 +21,7 @@ All notable changes to the `core` module are listed here. Tags are
   probe failure are unchanged. The exported API is unchanged; only the
   `KindReadOnly` doc comment is reworded.
 
-### v0.1.0
+## v0.1.0
 
 - Add `secretstore`: one secret per (service, account) pair in the operating
   system's credential store, with a typed `Error` whose `Kind` names the
