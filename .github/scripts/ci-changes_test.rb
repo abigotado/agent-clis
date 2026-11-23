@@ -8,10 +8,13 @@ require "tmpdir"
 class CiChangesTest < Minitest::Test
   SCRIPT = File.join(__dir__, "ci-changes.sh")
   CLIS = '["youtrack-agent-cli"]'.freeze
-  ALL = { "youtrack" => "false", "core" => "false", "clis" => CLIS, "all" => "true" }.freeze
-  YOUTRACK_ONLY = { "youtrack" => "true", "core" => "false", "clis" => CLIS, "all" => "false" }.freeze
-  CORE_ONLY = { "youtrack" => "false", "core" => "true", "clis" => CLIS, "all" => "false" }.freeze
-  CORE_AND_YOUTRACK = { "youtrack" => "true", "core" => "true", "clis" => CLIS, "all" => "false" }.freeze
+  ALL = { "youtrack" => "false", "core" => "false", "tools" => "false", "clis" => CLIS, "all" => "true" }.freeze
+  YOUTRACK_ONLY = { "youtrack" => "true", "core" => "false", "tools" => "false", "clis" => CLIS, "all" => "false" }.freeze
+  CORE_ONLY = { "youtrack" => "false", "core" => "true", "tools" => "false", "clis" => CLIS, "all" => "false" }.freeze
+  CORE_AND_YOUTRACK = { "youtrack" => "true", "core" => "true", "tools" => "false", "clis" => CLIS, "all" => "false" }.freeze
+  TOOLS_ONLY = { "youtrack" => "false", "core" => "false", "tools" => "true", "clis" => CLIS, "all" => "false" }.freeze
+  TOOLS_AND_YOUTRACK = { "youtrack" => "true", "core" => "false", "tools" => "true", "clis" => CLIS, "all" => "false" }.freeze
+  OUTPUT_KEYS = %w[youtrack core tools clis all].freeze
 
   def git(repo, *args)
     stdout, stderr, status = Open3.capture3("git", "-C", repo, *args)
@@ -35,6 +38,7 @@ class CiChangesTest < Minitest::Test
       git(repo, "config", "user.email", "test@example.invalid")
       git(repo, "config", "user.name", "test")
       write(repo, "core/go.mod", "module example\n")
+      write(repo, "tools/sign-release/go.mod", "module example\n")
       write(repo, "youtrack-agent-cli/go.mod", "module example\n")
       write(repo, "top.txt")
       git(repo, "add", "-A")
@@ -56,7 +60,7 @@ class CiChangesTest < Minitest::Test
       lines = File.exist?(output) ? File.readlines(output, chomp: true) : nil
       if lines
         keys = lines.map { |line| line.split("=", 2).first }
-        raise "output keys not written exactly once, in order: #{keys.inspect}" unless keys == %w[youtrack core clis all]
+        raise "output keys not written exactly once, in order: #{keys.inspect}" unless keys == OUTPUT_KEYS
       end
       pairs = lines&.to_h { |line| line.split("=", 2) }
       [status.success?, pairs, combined]
@@ -73,6 +77,33 @@ class CiChangesTest < Minitest::Test
     success, pairs, stderr = select { |repo| write(repo, "core/secretstore/a.go") }
     assert success, stderr
     assert_equal CORE_ONLY, pairs
+  end
+
+  def test_only_sign_release_paths_select_only_the_tools_job
+    success, pairs, stderr = select { |repo| write(repo, "tools/sign-release/internal/a.go") }
+    assert success, stderr
+    assert_equal TOOLS_ONLY, pairs
+  end
+
+  def test_sign_release_and_cli_paths_select_both_without_everything
+    success, pairs, stderr = select do |repo|
+      write(repo, "tools/sign-release/main.go")
+      write(repo, "youtrack-agent-cli/internal/a.go")
+    end
+    assert success, stderr
+    assert_equal TOOLS_AND_YOUTRACK, pairs
+  end
+
+  def test_the_tools_module_never_joins_the_cli_list
+    success, pairs, stderr = select { |repo| write(repo, "tools/sign-release/main.go") }
+    assert success, stderr
+    assert_equal CLIS, pairs.fetch("clis")
+  end
+
+  def test_a_rename_into_the_tools_directory_selects_everything
+    success, pairs, stderr = select { |repo| git(repo, "mv", "top.txt", "tools/sign-release/top.txt") }
+    assert success, stderr
+    assert_equal ALL, pairs
   end
 
   def test_core_and_cli_paths_select_both_without_everything
@@ -99,7 +130,7 @@ class CiChangesTest < Minitest::Test
     assert_equal ALL, pairs
   end
 
-  def test_output_is_written_once_with_exactly_four_keys
+  def test_output_is_written_once_with_exactly_five_keys
     Dir.mktmpdir("ci-changes-keys") do |dir|
       repo = File.join(dir, "repo")
       FileUtils.mkdir_p(repo)
@@ -107,18 +138,19 @@ class CiChangesTest < Minitest::Test
       git(repo, "config", "user.email", "test@example.invalid")
       git(repo, "config", "user.name", "test")
       write(repo, "core/go.mod", "module example\n")
+      write(repo, "tools/sign-release/go.mod", "module example\n")
       write(repo, "youtrack-agent-cli/go.mod", "module example\n")
       git(repo, "add", "-A")
       git(repo, "commit", "-q", "-m", "base")
       output = File.join(dir, "output")
       _, status = Open3.capture2e({ "EVENT_NAME" => "push", "GITHUB_OUTPUT" => output }, SCRIPT, chdir: repo)
       assert status.success?
-      assert_equal %w[youtrack core clis all], File.readlines(output, chomp: true).map { |line| line.split("=", 2).first }
+      assert_equal OUTPUT_KEYS, File.readlines(output, chomp: true).map { |line| line.split("=", 2).first }
     end
   end
 
   def test_shared_paths_select_everything
-    [".agents/rules/x.md", ".github/workflows/x.yaml", ".githooks/pre-push", "tools/x", "README.md", "unknown/x"].each do |path|
+    [".agents/rules/x.md", ".github/workflows/x.yaml", ".githooks/pre-push", "tools/x", "tools/other/main.go", "README.md", "unknown/x"].each do |path|
       success, pairs, stderr = select { |repo| write(repo, path) }
       assert success, stderr
       assert_equal ALL, pairs, path
