@@ -150,6 +150,10 @@ the signed binaries, and no secrets: the downloaded archives and
 architecture with the extracted files, the machodigest streams and `signed/`
 with the three uploaded files.
 
+The tool checks owners and mode bits on the home path and its ancestors, but it
+cannot see ACLs: no ACL on the home path or its ancestors may grant another user
+write access. The operator controls this, and `ls -le` shows ACLs.
+
 Keep it until the release is published and re-read successfully. After a
 failure that left the draft changed it holds the originals needed to restore
 the draft, so keep it until that is done. Delete it afterwards.

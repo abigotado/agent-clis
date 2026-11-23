@@ -54,7 +54,8 @@ func acquire(dir, name string) (*Lock, error) {
 // ensurePrivateDir creates dir with mode 0700 when it is missing, then walks
 // every component from the root down with Lstat. An ancestor must be a real
 // directory (not a symbolic link), owned by root or the current user, and not
-// writable by group or others, so no other user can swap a component. The leaf
+// writable by group or others (a root-owned sticky directory excepted), so no
+// other user can swap a component. The leaf
 // must be owned by the current user with mode exactly 0700. dir must be
 // absolute and already resolved: a path that EvalSymlinks changes is refused.
 func ensurePrivateDir(dir string) error {
@@ -91,6 +92,15 @@ func ensurePrivateDir(dir string) error {
 			if info.Mode().Perm() != 0o700 || st.Uid != uid {
 				return fmt.Errorf("directory %s must be owned by the current user with mode 0700", current)
 			}
+			continue
+		}
+		// A root-owned sticky directory (/tmp, /private/tmp) is accepted even
+		// though others can write it: in a sticky directory another user can
+		// neither rename nor delete an entry it does not own, and a name it
+		// pre-creates is owned by that user, so the owner checks on the next
+		// component refuse it. Any other ancestor must not be writable by
+		// group or others.
+		if st.Uid == 0 && info.Mode()&os.ModeSticky != 0 {
 			continue
 		}
 		if (st.Uid != 0 && st.Uid != uid) || info.Mode().Perm()&0o022 != 0 {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -215,12 +216,13 @@ func tempDir(t *testing.T) string {
 }
 
 func TestEnsurePrivateDirRefusesUnsafeAncestors(t *testing.T) {
+	// Each case adds one hostile component under a clean base that must pass
+	// first, so a refusal is about that component alone.
 	tests := []struct {
 		name  string
-		build func(t *testing.T) string
+		build func(t *testing.T, base string) string
 	}{
-		{"symlinked ancestor", func(t *testing.T) string {
-			base := tempDir(t)
+		{"symlinked ancestor", func(t *testing.T, base string) string {
 			real := filepath.Join(base, "real")
 			if err := os.Mkdir(real, 0o755); err != nil {
 				t.Fatal(err)
@@ -229,35 +231,84 @@ func TestEnsurePrivateDirRefusesUnsafeAncestors(t *testing.T) {
 			if err := os.Symlink(real, link); err != nil {
 				t.Fatal(err)
 			}
-			return filepath.Join(link, "sign-release")
+			return link
 		}},
-		{"group-writable ancestor", func(t *testing.T) string {
-			base := filepath.Join(tempDir(t), "shared")
-			if err := os.Mkdir(base, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chmod(base, 0o775); err != nil {
-				t.Fatal(err)
-			}
-			return filepath.Join(base, "sign-release")
+		{"group-writable ancestor", func(t *testing.T, base string) string {
+			return chmodedDir(t, base, "shared", 0o775)
 		}},
-		{"world-writable ancestor", func(t *testing.T) string {
-			base := filepath.Join(tempDir(t), "open")
-			if err := os.Mkdir(base, 0o755); err != nil {
-				t.Fatal(err)
+		{"non-sticky world-writable ancestor", func(t *testing.T, base string) string {
+			return chmodedDir(t, base, "open", 0o777)
+		}},
+		{"sticky ancestor owned by the current user", func(t *testing.T, base string) string {
+			if os.Getuid() == 0 {
+				t.Skip("the current user is root, so a sticky directory it owns is accepted")
 			}
-			if err := os.Chmod(base, 0o757); err != nil {
-				t.Fatal(err)
-			}
-			return filepath.Join(base, "sign-release")
+			return chmodedDir(t, base, "mine", 0o777|os.ModeSticky)
 		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := ensurePrivateDir(tt.build(t)); err == nil {
+			base := filepath.Join(tempDir(t), "base")
+			if err := ensurePrivateDir(filepath.Join(base, "sign-release")); err != nil {
+				t.Fatalf("clean base: ensurePrivateDir() error = %v", err)
+			}
+			hostile := tt.build(t, base)
+			if err := ensurePrivateDir(filepath.Join(hostile, "sign-release")); err == nil {
 				t.Fatal("ensurePrivateDir() = nil, want a refusal")
 			}
 		})
+	}
+}
+
+func chmodedDir(t *testing.T, base, name string, mode os.FileMode) string {
+	t.Helper()
+	dir := filepath.Join(base, name)
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, mode); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestEnsurePrivateDirAcceptsARootOwnedStickyAncestor(t *testing.T) {
+	base, err := filepath.EvalSymlinks("/tmp")
+	if err != nil {
+		t.Skipf("no /tmp: %v", err)
+	}
+	info, err := os.Lstat(base)
+	if err != nil {
+		t.Skipf("cannot stat %s: %v", base, err)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || st.Uid != 0 || info.Mode()&os.ModeSticky == 0 || !info.IsDir() {
+		t.Skipf("%s is not a root-owned sticky directory", base)
+	}
+	work, err := os.MkdirTemp(base, "sign-release-lock-test-")
+	if err != nil {
+		t.Skipf("cannot create a directory in %s: %v", base, err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(work); err != nil {
+			t.Errorf("remove %s: %v", work, err)
+		}
+	})
+	if err := ensurePrivateDir(filepath.Join(work, "clean")); err != nil {
+		t.Fatalf("clean directory below a sticky ancestor: ensurePrivateDir() error = %v", err)
+	}
+	// The sticky directory itself is an ancestor of the leaf here.
+	leaf, err := os.MkdirTemp(base, "sign-release-lock-leaf-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(leaf); err != nil {
+			t.Errorf("remove %s: %v", leaf, err)
+		}
+	})
+	if err := ensurePrivateDir(leaf); err != nil {
+		t.Fatalf("ensurePrivateDir(%s) error = %v", leaf, err)
 	}
 }
 
