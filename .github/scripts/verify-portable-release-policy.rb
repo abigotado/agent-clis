@@ -185,7 +185,9 @@ SCAN_EXEMPT = %w[
   .github/scripts/verify-portable-release-policy_test.rb
 ].freeze
 # Files under tools/sign-release that drive `gh` to upload and publish, by exact
-# path, exempt from the publication-action scan only: every other scan still
+# path, exempt from the `gh api|release` alternative of the publication-action
+# scan only (goreleaser release, action-gh-release and upload-artifact@ still
+# apply to them): every other scan still
 # applies to them. They are the tool's own publisher (it signs on the operator's
 # Mac and publishes the draft that release.yaml made), its runbook, and the
 # tests and comments that name its `gh` commands. A deliberate guard change
@@ -321,7 +323,8 @@ surface.each do |candidate|
   next if SCAN_EXEMPT.include?(relative)
   content = File.binread(candidate).force_encoding(Encoding::UTF_8).scrub
   errors << "#{relative} contains a Homebrew or quarantine bypass" if content.match?(/(?:\bbrew\s+(?:tap|tap-new|create|bump)|\bxattr\b|com\.apple\.quarantine|spctl\s+--master-disable)/i)
-  errors << "#{relative} contains a publication action" if !PUBLICATION_EXEMPT.include?(relative) && content.match?(/(?:\bgoreleaser\s+release\b|\bgh\s+(?:api|release)\b|action-gh-release|\/upload-artifact@)/i)
+  publication = PUBLICATION_EXEMPT.include?(relative) ? /(?:\bgoreleaser\s+release\b|action-gh-release|\/upload-artifact@)/i : /(?:\bgoreleaser\s+release\b|\bgh\s+(?:api|release)\b|action-gh-release|\/upload-artifact@)/i
+  errors << "#{relative} contains a publication action" if content.match?(publication)
   # Every line that mentions GoReleaser must be an approved line. A pattern for
   # "has --config" can be dodged by continuations, prefixes or comments; without
   # --config, GoReleaser prefers .config/goreleaser.y*ml or .goreleaser.yml.

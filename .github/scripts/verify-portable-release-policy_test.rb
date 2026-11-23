@@ -338,6 +338,19 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
     end
   end
 
+  def test_a_publication_exemption_covers_only_gh_api_and_release
+    path = publication_exempt_paths.first
+    [
+      "goreleaser release --clean\n",
+      "uses: softprops/action-gh-release@v2\n",
+      "uses: actions/upload-artifact@v4\n",
+    ].each do |content|
+      success, stderr = verify(CONFIG, { path => "gh release upload v1\n#{content}" })
+      refute success, content
+      assert_includes stderr, "#{path} contains a publication action"
+    end
+  end
+
   def test_an_unlisted_file_under_sign_release_naming_gh_release_is_still_refused
     paths = publication_exempt_paths
     [

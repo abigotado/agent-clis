@@ -19,26 +19,27 @@ import (
 )
 
 func main() {
+	// The account database, not $HOME: os/user reads it on darwin with or
+	// without cgo.
+	homeDir := func() (string, error) {
+		u, err := user.Current()
+		if err != nil {
+			return "", err
+		}
+		return u.HomeDir, nil
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	code := app.Main(ctx, app.Deps{
 		ConfigJSON: configJSON,
 		Args:       os.Args[1:],
 		Environ:    os.Environ,
-		// The account database, not $HOME: os/user reads it on darwin with or
-		// without cgo.
-		HomeDir: func() (string, error) {
-			u, err := user.Current()
-			if err != nil {
-				return "", err
-			}
-			return u.HomeDir, nil
-		},
+		HomeDir:    homeDir,
 		Lock: func(repo, tag string) (func() error, error) {
-			cache, err := os.UserCacheDir()
+			home, err := homeDir()
 			if err != nil {
 				return nil, err
 			}
-			l, err := lock.Acquire(filepath.Join(cache, "sign-release"), repo, tag)
+			l, err := lock.AcquireForHome(home, repo, tag)
 			if err != nil {
 				return nil, err
 			}

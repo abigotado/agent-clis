@@ -2,7 +2,8 @@
 // holds an exclusive advisory lock for its whole length, so a second run of the
 // same release refuses at once instead of racing the first on the draft.
 //
-// The lock is a file in a private directory of the operator's cache. It guards
+// The lock is a file in a private directory of the operator's cache, named from
+// the account's home directory and never from $HOME or $XDG_CACHE_HOME. It guards
 // against a second run by the same operator, not against another process of the
 // same account that chooses to ignore it.
 package lock
@@ -12,6 +13,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 )
 
 // ErrLocked reports that another run holds the lock.
@@ -59,4 +61,15 @@ func Acquire(dir, repo, tag string) (*Lock, error) {
 		return nil, fmt.Errorf("lock %s %s: %w", repo, tag, err)
 	}
 	return l, nil
+}
+
+// Dir is the lock directory under an account home: the macOS user cache. It
+// reads no environment variable, so a parent environment cannot move the lock.
+func Dir(home string) string {
+	return filepath.Join(home, "Library", "Caches", "sign-release")
+}
+
+// AcquireForHome takes the lock for repo and tag in Dir(home).
+func AcquireForHome(home, repo, tag string) (*Lock, error) {
+	return Acquire(Dir(home), repo, tag)
 }

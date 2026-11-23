@@ -110,3 +110,34 @@ func TestAcquireRefusesAnOpenDirectoryAndEmptyKeys(t *testing.T) {
 		t.Fatal("Acquire() accepted a relative directory")
 	}
 }
+
+func TestAcquireForHomeIgnoresTheParentEnvironment(t *testing.T) {
+	home := t.TempDir()
+	envHome := t.TempDir()
+	envCache := t.TempDir()
+	t.Setenv("HOME", envHome)
+	t.Setenv("XDG_CACHE_HOME", envCache)
+
+	want := filepath.Join(home, "Library", "Caches", "sign-release")
+	if got := Dir(home); got != want {
+		t.Fatalf("Dir() = %q, want %q", got, want)
+	}
+	l, err := AcquireForHome(home, "owner/repo", "cli/v1.0.0")
+	if err != nil {
+		t.Fatalf("AcquireForHome() error = %v", err)
+	}
+	defer func() {
+		if err := l.Release(); err != nil {
+			t.Errorf("Release() error = %v", err)
+		}
+	}()
+	if _, err := os.Stat(filepath.Join(want, fileName("owner/repo", "cli/v1.0.0"))); err != nil {
+		t.Fatalf("lock file not under the injected home: %v", err)
+	}
+	for _, other := range []string{envHome, envCache} {
+		entries, err := os.ReadDir(other)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("%s holds %d entries (err %v), want an untouched directory", other, len(entries), err)
+		}
+	}
+}

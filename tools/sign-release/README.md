@@ -17,7 +17,8 @@ version has no leading `v`. The release tag is `youtrack-agent-cli/v0.13.0`. The
 configuration (`config.json`) is embedded in the binary. The tool exits 0 on
 success, 1 on any failure or refusal, and 2 on a wrong command line. One run
 at a time holds an exclusive lock for the repository and tag (a file in
-`sign-release` under the user cache directory); a second run of the same
+`Library/Caches/sign-release` under the account's home directory, taken from the
+account database, not `$HOME`); a second run of the same
 release refuses at once.
 
 ## What it does and never does
