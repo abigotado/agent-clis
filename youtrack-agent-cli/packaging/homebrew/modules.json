@@ -3,8 +3,8 @@
   "modules": [
     {
       "path": "github.com/abigotado/agent-clis/core",
-      "version": "v0.1.0",
-      "zip_sha256": "86d2501a0f8319ea11cdea07b24222b258b1a823b8cfe6ee620c4877547de43d"
+      "version": "v0.1.1",
+      "zip_sha256": "e80d33d80c402a7b795848d05624c72f3f1e9c8bf0894457df933dfc11ac963b"
     },
     {
       "path": "github.com/creack/pty",

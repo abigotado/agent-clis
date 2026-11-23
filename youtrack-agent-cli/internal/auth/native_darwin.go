@@ -188,7 +188,7 @@ func (s *NativeStore) MigrateKeychain(ctx context.Context, profileName string) e
 }
 
 // isReadOnlyStatus reports whether a write status means a read-only or
-// sandboxed store. Core labels every unrecognized write status KindReadOnly, so
+// sandboxed store. Core v0.1.0 labelled every unrecognized write status KindReadOnly, so
 // the kind alone proves nothing; a status outside this set (a missing default
 // keychain, an I/O error, -50) is reported as a refused write, without sandbox
 // advice.
@@ -245,6 +245,24 @@ func mapNativeError(operation string, err error) error {
 	case secretstore.KindInvalidArgument:
 		return fmt.Errorf("%w: %v", ErrCredentialStoreInternal, err)
 	default:
+		// Core v0.1.1 reports an unrecognized write status as KindOther with
+		// its Status kept; v0.1.0 reported it as KindReadOnly. Both reach the
+		// same refused-write outcome. A read, or a status of 0, keeps the
+		// plain status error.
+		if storeErr.Kind == secretstore.KindOther && storeErr.Status != 0 && isWriteOperation(operation) {
+			return fmt.Errorf("%w: %v", ErrCredentialStoreWriteRefused, err)
+		}
 		return &StatusError{Operation: operation, Status: storeErr.Status}
+	}
+}
+
+// isWriteOperation reports whether a mapNativeError operation name is one of
+// the callers that mutate the store.
+func isWriteOperation(operation string) bool {
+	switch operation {
+	case "save", "delete", "repair":
+		return true
+	default:
+		return false
 	}
 }

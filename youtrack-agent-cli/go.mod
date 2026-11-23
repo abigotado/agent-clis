@@ -3,7 +3,7 @@ module github.com/abigotado/agent-clis/youtrack-agent-cli
 go 1.27.4
 
 require (
-	github.com/abigotado/agent-clis/core v0.1.0
+	github.com/abigotado/agent-clis/core v0.1.1
 	github.com/creack/pty v1.1.24
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.1.0

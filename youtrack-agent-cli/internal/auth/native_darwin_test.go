@@ -502,9 +502,10 @@ func TestNativeStoreNeverLeaksATokenMarker(t *testing.T) {
 	// The reason outranks the kind in mapNativeError, so each kind is injected
 	// once with a reason (the unusable-keychain branch) and once without, which
 	// reaches every kind branch with the marked credential stored.
-	// Status 5 reaches the write-refused branch of KindReadOnly; 100001 the
-	// read-only one.
-	for _, status := range []int64{5, 100001} {
+	// Status 5 reaches the write-refused branch of KindReadOnly and, for
+	// KindOther, of save and delete; 100001 the read-only one; 0 the plain
+	// status error of KindOther.
+	for _, status := range []int64{0, 5, 100001} {
 		for _, reason := range []secretstore.Reason{secretstore.ReasonKeychainUnusable, ""} {
 			for _, kind := range kinds {
 				h := newNativeHarness(t, secretstore.InteractionNever)
@@ -609,9 +610,13 @@ func TestNativeStoreMigrateKeychainMapsRepairErrors(t *testing.T) {
 	}
 	h := newNativeHarness(t, secretstore.InteractionAllowed)
 	h.memory.SetErr(secretstoretest.OpRepair, coreError(secretstore.KindOther, 77, ""))
+	if err := h.store.MigrateKeychain(t.Context(), "work"); !errors.Is(err, ErrCredentialStoreWriteRefused) {
+		t.Fatalf("MigrateKeychain(other, 77) = %v, want ErrCredentialStoreWriteRefused", err)
+	}
+	h.memory.SetErr(secretstoretest.OpRepair, coreError(secretstore.KindOther, 0, ""))
 	var status *StatusError
-	if err := h.store.MigrateKeychain(t.Context(), "work"); !errors.As(err, &status) || status.Operation != "repair" || status.Status != 77 {
-		t.Fatalf("MigrateKeychain(other) = %v, want a repair StatusError", err)
+	if err := h.store.MigrateKeychain(t.Context(), "work"); !errors.As(err, &status) || status.Operation != "repair" || status.Status != 0 {
+		t.Fatalf("MigrateKeychain(other, 0) = %v, want a repair StatusError", err)
 	}
 }
 
@@ -953,5 +958,58 @@ func TestMapNativeErrorSplitsReadOnlyByStatus(t *testing.T) {
 	}
 	if strings.Contains(ErrCredentialStoreWriteRefused.Error(), "read-only") {
 		t.Fatalf("sentinel text %q must not say read-only", ErrCredentialStoreWriteRefused)
+	}
+}
+
+// Core v0.1.1 reports an unrecognized write status as KindOther with the
+// status kept; the outward result must match what v0.1.0's KindReadOnly gave.
+func TestMapNativeErrorRefusesUnrecognizedKindOtherWrites(t *testing.T) {
+	tests := []struct {
+		name        string
+		operation   string
+		status      int64
+		wantRefused bool
+	}{}
+	for _, operation := range []string{"save", "delete", "repair"} {
+		for _, status := range []int64{-25307, -36, -50, 7} {
+			tests = append(tests, struct {
+				name        string
+				operation   string
+				status      int64
+				wantRefused bool
+			}{fmt.Sprintf("%s/%d", operation, status), operation, status, true})
+		}
+		tests = append(tests, struct {
+			name        string
+			operation   string
+			status      int64
+			wantRefused bool
+		}{operation + "/status 0", operation, 0, false})
+	}
+	for _, operation := range []string{"load", "exists", "open"} {
+		tests = append(tests, struct {
+			name        string
+			operation   string
+			status      int64
+			wantRefused bool
+		}{operation + "/-25307", operation, -25307, false})
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := mapNativeError(test.operation, coreError(secretstore.KindOther, test.status, ""))
+			if errors.Is(got, ErrCredentialStoreWriteRefused) != test.wantRefused {
+				t.Fatalf("mapped = %v; write-refused = %v, want %v", got, !test.wantRefused, test.wantRefused)
+			}
+			if test.wantRefused {
+				if !errors.Is(got, ErrCredentialStoreUnavailable) || errors.Is(got, ErrCredentialStoreReadOnly) || errors.Is(got, ErrCredentialStoreInternal) {
+					t.Fatalf("mapped = %v, want unavailable and neither read-only nor internal", got)
+				}
+				return
+			}
+			var status *StatusError
+			if !errors.As(got, &status) || status.Operation != test.operation || status.Status != test.status {
+				t.Fatalf("mapped = %v, want the unchanged StatusError", got)
+			}
+		})
 	}
 }

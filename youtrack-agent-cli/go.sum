@@ -1,5 +1,5 @@
-github.com/abigotado/agent-clis/core v0.1.0 h1:s6fXc8bRz5NOtJePvS0JQMPgRAU4U1qfHBG2oZHsuOY=
-github.com/abigotado/agent-clis/core v0.1.0/go.mod h1:/YRljIBcIP5ebN5g/LIStt88HhiiHa7+L0KpjM8K91k=
+github.com/abigotado/agent-clis/core v0.1.1 h1:DRQFL1ZfthOzDeyVUJuQt2T2V7+TPbOWWVRW4z3Nxpg=
+github.com/abigotado/agent-clis/core v0.1.1/go.mod h1:/YRljIBcIP5ebN5g/LIStt88HhiiHa7+L0KpjM8K91k=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=

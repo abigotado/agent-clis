@@ -27,34 +27,43 @@ func TestNativeStoreFailuresReachTheEnvelopeCodes(t *testing.T) {
 		core   error
 		reason string
 		exit   int
+		// writeReason and writeExit override the expectation for save and
+		// delete when set.
+		writeReason string
+		writeExit   int
 	}{
-		{"unusable keychain", unusable, "CREDENTIAL_STORE_UNAVAILABLE", 8},
-		{"unavailable", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindUnavailable}, "CREDENTIAL_STORE_UNAVAILABLE", 8},
-		{"read only", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly, Status: 100001}, "CREDENTIAL_STORE_READ_ONLY", 8},
-		{"read only -61", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly, Status: -61}, "CREDENTIAL_STORE_READ_ONLY", 8},
-		{"read only -25292", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly, Status: -25292}, "CREDENTIAL_STORE_READ_ONLY", 8},
-		{"write refused -25307", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly, Status: -25307}, "CREDENTIAL_STORE_UNAVAILABLE", 8},
-		{"write refused -36", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly, Status: -36}, "CREDENTIAL_STORE_UNAVAILABLE", 8},
-		{"write refused -50", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly, Status: -50}, "CREDENTIAL_STORE_UNAVAILABLE", 8},
-		{"write refused no status", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly}, "CREDENTIAL_STORE_UNAVAILABLE", 8},
-		{"write refused positive", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly, Status: 77}, "CREDENTIAL_STORE_UNAVAILABLE", 8},
-		{"contended", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindContended}, "CREDENTIAL_STORE_CONTENDED", 9},
-		{"not found", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindNotFound}, "CREDENTIAL_NOT_FOUND", 5},
-		{"access denied", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindAccessDenied}, "CONFIRMATION_REQUIRED", 7},
-		{"interaction required", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindInteractionRequired}, "KEYCHAIN_INTERACTION_REQUIRED", 5},
-		{"canceled", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindCanceled}, "CONFIRMATION_REQUIRED", 7},
-		{"invalid argument", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindInvalidArgument}, "INTERNAL", 1},
-		{"other", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindOther, Status: 7}, "INTERNAL", 1},
+		{"unusable keychain", unusable, "CREDENTIAL_STORE_UNAVAILABLE", 8, "", 0},
+		{"unavailable", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindUnavailable}, "CREDENTIAL_STORE_UNAVAILABLE", 8, "", 0},
+		{"read only", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly, Status: 100001}, "CREDENTIAL_STORE_READ_ONLY", 8, "", 0},
+		{"read only -61", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly, Status: -61}, "CREDENTIAL_STORE_READ_ONLY", 8, "", 0},
+		{"read only -25292", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly, Status: -25292}, "CREDENTIAL_STORE_READ_ONLY", 8, "", 0},
+		{"write refused -25307", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly, Status: -25307}, "CREDENTIAL_STORE_UNAVAILABLE", 8, "", 0},
+		{"write refused -36", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly, Status: -36}, "CREDENTIAL_STORE_UNAVAILABLE", 8, "", 0},
+		{"write refused -50", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly, Status: -50}, "CREDENTIAL_STORE_UNAVAILABLE", 8, "", 0},
+		{"write refused no status", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly}, "CREDENTIAL_STORE_UNAVAILABLE", 8, "", 0},
+		{"write refused positive", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindReadOnly, Status: 77}, "CREDENTIAL_STORE_UNAVAILABLE", 8, "", 0},
+		{"contended", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindContended}, "CREDENTIAL_STORE_CONTENDED", 9, "", 0},
+		{"not found", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindNotFound}, "CREDENTIAL_NOT_FOUND", 5, "", 0},
+		{"access denied", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindAccessDenied}, "CONFIRMATION_REQUIRED", 7, "", 0},
+		{"interaction required", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindInteractionRequired}, "KEYCHAIN_INTERACTION_REQUIRED", 5, "", 0},
+		{"canceled", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindCanceled}, "CONFIRMATION_REQUIRED", 7, "", 0},
+		{"invalid argument", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindInvalidArgument}, "INTERNAL", 1, "", 0},
+		{"other", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindOther, Status: 7}, "INTERNAL", 1, "CREDENTIAL_STORE_UNAVAILABLE", 8},
+		{"other -25307", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindOther, Status: -25307}, "INTERNAL", 1, "CREDENTIAL_STORE_UNAVAILABLE", 8},
+		{"other -36", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindOther, Status: -36}, "INTERNAL", 1, "CREDENTIAL_STORE_UNAVAILABLE", 8},
+		{"other -50", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindOther, Status: -50}, "INTERNAL", 1, "CREDENTIAL_STORE_UNAVAILABLE", 8},
+		{"other no status", &secretstore.Error{Op: "load", Backend: "keychain", Kind: secretstore.KindOther}, "INTERNAL", 1, "", 0},
 	}
 	operations := []struct {
-		name string
-		op   secretstoretest.Op
-		call func(*auth.NativeStore) error
+		name  string
+		op    secretstoretest.Op
+		call  func(*auth.NativeStore) error
+		write bool
 	}{
-		{"exists", secretstoretest.OpExists, func(s *auth.NativeStore) error { _, err := s.Exists(t.Context(), "work"); return err }},
-		{"load", secretstoretest.OpLoad, func(s *auth.NativeStore) error { _, err := s.Load(t.Context(), "work"); return err }},
-		{"delete", secretstoretest.OpDelete, func(s *auth.NativeStore) error { return s.Delete(t.Context(), "work") }},
-		{"save", secretstoretest.OpSave, func(s *auth.NativeStore) error { return s.Save(t.Context(), "work", saveCredential()) }},
+		{"exists", secretstoretest.OpExists, func(s *auth.NativeStore) error { _, err := s.Exists(t.Context(), "work"); return err }, false},
+		{"load", secretstoretest.OpLoad, func(s *auth.NativeStore) error { _, err := s.Load(t.Context(), "work"); return err }, false},
+		{"delete", secretstoretest.OpDelete, func(s *auth.NativeStore) error { return s.Delete(t.Context(), "work") }, true},
+		{"save", secretstoretest.OpSave, func(s *auth.NativeStore) error { return s.Save(t.Context(), "work", saveCredential()) }, true},
 	}
 	for _, test := range tests {
 		for _, operation := range operations {
@@ -68,8 +77,17 @@ func TestNativeStoreFailuresReachTheEnvelopeCodes(t *testing.T) {
 				if !errors.As(TranslateError(operation.call(store), "work"), &typed) {
 					t.Fatal("not a typed error")
 				}
-				if typed.Reason != test.reason || int(typed.Code) != test.exit {
-					t.Fatalf("reason=%q exit=%d, want %q/%d", typed.Reason, typed.Code, test.reason, test.exit)
+				wantReason, wantExit := test.reason, test.exit
+				if operation.write && test.writeReason != "" {
+					wantReason, wantExit = test.writeReason, test.writeExit
+				}
+				if typed.Reason != wantReason || int(typed.Code) != wantExit {
+					t.Fatalf("reason=%q exit=%d, want %q/%d", typed.Reason, typed.Code, wantReason, wantExit)
+				}
+				if operation.write && test.writeReason == "CREDENTIAL_STORE_UNAVAILABLE" && test.reason != "CREDENTIAL_STORE_UNAVAILABLE" {
+					if want := "the credential store refused the write; run youtrack-agent-cli auth status --profile work and report the failure to the operator; do not re-authenticate"; typed.Hint != want {
+						t.Fatalf("hint=%q, want the neutral write-refused hint", typed.Hint)
+					}
 				}
 			})
 		}
