@@ -26,6 +26,8 @@ func TestStatusLiteralsMatchSecurityFramework(t *testing.T) {
 		{"errSecDuplicateItem", statusDuplicateItem, cStatusDuplicateItem},
 		{"errSecUserCanceled", statusUserCanceled, cStatusUserCanceled},
 		{"errSecParam", statusParam, cStatusParam},
+		{"errSecWrPerm", statusWritePermission, cStatusWritePermission},
+		{"errSecReadOnly", statusReadOnly, cStatusReadOnly},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.literal != tt.c {
@@ -37,11 +39,13 @@ func TestStatusLiteralsMatchSecurityFramework(t *testing.T) {
 	want := map[string]int64{
 		"not found": -25300, "auth failed": -25293, "interaction not allowed": -25308,
 		"duplicate": -25299, "user canceled": -128, "param": -50,
+		"write permission": -61, "read only": -25292,
 	}
 	got := map[string]int64{
 		"not found": cStatusItemNotFound, "auth failed": cStatusAuthFailed,
 		"interaction not allowed": cStatusInteractionNotAllowed, "duplicate": cStatusDuplicateItem,
 		"user canceled": cStatusUserCanceled, "param": cStatusParam,
+		"write permission": cStatusWritePermission, "read only": cStatusReadOnly,
 	}
 	for name, status := range want {
 		if got[name] != status {
@@ -427,6 +431,29 @@ func TestRepairAccessStageLookup(t *testing.T) {
 		err := newTestKeychainStore(f, InteractionAllowed).RepairAccess(t.Context(), fakeKey)
 		wantError(t, err, "repair", KindOther, other)
 		keep(t, f)
+	})
+
+	t.Run("a save refused as read-only or for another reason is relabelled", func(t *testing.T) {
+		for _, tt := range []struct {
+			name   string
+			status int64
+			want   Kind
+		}{
+			{"sandbox write denial", statusSandboxWriteDenied, KindReadOnly},
+			{"missing default keychain", -25307, KindOther},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				f := setup()
+				f.before = func(call string) error {
+					if call == "add stage" {
+						return &statusError{status: tt.status}
+					}
+					return nil
+				}
+				err := newTestKeychainStore(f, InteractionAllowed).RepairAccess(t.Context(), fakeKey)
+				wantError(t, err, "repair", tt.want, tt.status)
+			})
+		}
 	})
 
 	t.Run("a readable stage proceeds", func(t *testing.T) {

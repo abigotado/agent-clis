@@ -5,6 +5,20 @@ All notable changes to the `core` module are listed here. Tags are
 
 ## Unreleased
 
+### v0.1.1
+
+- macOS: `KindReadOnly` is now reported only for the write statuses that say the
+  store refused a write while reads work: OSStatus 100001 (the status a
+  `sandbox-exec` profile that denies file writes produces, with a working
+  probe), -61 (`errSecWrPerm`) and -25292 (`errSecReadOnly`). Any other
+  unrecognised status on a write, such as a missing default keychain (-25307),
+  an I/O error (-36), or a -50 from the primitive with a working probe, is now
+  `KindOther` with its `Status` kept, and no longer matches `ErrReadOnly`. This
+  replaces the temporary rule of v0.1.0, which reported every unlisted write
+  status as read-only. Reads and the `KindUnavailable` / `keychain-unusable`
+  probe failure are unchanged. The exported API is unchanged; only the
+  `KindReadOnly` doc comment is reworded.
+
 ### v0.1.0
 
 - Add `secretstore`: one secret per (service, account) pair in the operating
