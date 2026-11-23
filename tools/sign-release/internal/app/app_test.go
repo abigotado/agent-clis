@@ -36,6 +36,11 @@ type harness struct {
 	out  *bytes.Buffer
 
 	lookups, symlinks, runners, workdirs int
+	locks, unlocks, homes                int
+	lockRepo, lockTag                    string
+	lockErr                              error
+	home                                 string
+	homeErr                              error
 	gotEnv                               []string
 	gotPrograms                          []string
 	gotMax                               int64
@@ -65,17 +70,30 @@ func newHarness(t *testing.T, args ...string) *harness {
 		out:      &bytes.Buffer{},
 		rec:      &recorder{err: errors.New("stop here")},
 		lookPath: "/usr/local/bin/gh",
+		home:     "/Users/account",
 		resolved: testGH,
 		environ: []string{
-			"PATH=/usr/bin", "HOME=/home/op", "LANG=en_US.UTF-8",
+			"PATH=/usr/bin", "HOME=/evil/home", "LANG=en_US.UTF-8",
 			"GH_TOKEN=" + sentinel, "GITHUB_TOKEN=" + sentinel, "GH_HOST=evil.example.com",
-			"HTTPS_PROXY=http://proxy.invalid", "GH_REPO=evil/repo", "GH_CONFIG_DIR=/home/op/.config/gh",
+			"HTTPS_PROXY=http://proxy.invalid", "GH_REPO=evil/repo", "GH_CONFIG_DIR=/evil/gh", "XDG_CONFIG_HOME=/evil/xdg",
 		},
 	}
 	h.deps = Deps{
 		ConfigJSON: shippedConfig(t, true),
 		Args:       args,
 		Environ:    func() []string { return h.environ },
+		HomeDir: func() (string, error) {
+			h.homes++
+			return h.home, h.homeErr
+		},
+		Lock: func(repo, tag string) (func() error, error) {
+			h.locks++
+			h.lockRepo, h.lockTag = repo, tag
+			if h.lockErr != nil {
+				return nil, h.lockErr
+			}
+			return func() error { h.unlocks++; return nil }, nil
+		},
 		LookPath: func(file string) (string, error) {
 			h.lookups++
 			if file != "gh" {
@@ -112,34 +130,119 @@ func (h *harness) run() int { return Main(h.t.Context(), h.deps) }
 
 func (h *harness) wantNoMachineAccess() {
 	h.t.Helper()
-	if h.lookups+h.symlinks+h.runners+h.workdirs != 0 || len(h.rec.calls) != 0 {
-		h.t.Fatalf("lookups=%d symlinks=%d runners=%d workdirs=%d calls=%q, want none", h.lookups, h.symlinks, h.runners, h.workdirs, h.rec.calls)
+	if h.lookups+h.symlinks+h.runners+h.workdirs+h.locks+h.homes != 0 || len(h.rec.calls) != 0 {
+		h.t.Fatalf("lookups=%d symlinks=%d runners=%d workdirs=%d locks=%d homes=%d calls=%q, want none", h.lookups, h.symlinks, h.runners, h.workdirs, h.locks, h.homes, h.rec.calls)
 	}
 }
 
 // TestMainBuildsTheRunnerFromMinimalEnv shows that the environment a program
-// gets is runner.MinimalEnv of the parent's and never the parent's itself.
+// gets is runner.MinimalEnv of the parent's with HOME from the account lookup,
+// and never the parent's itself.
 func TestMainBuildsTheRunnerFromMinimalEnv(t *testing.T) {
 	h := newHarness(t, "youtrack-agent-cli", "0.13.0")
 	if code := h.run(); code != ExitFailure {
 		t.Fatalf("Main() = %d, want %d (the fake runner stops the run)", code, ExitFailure)
 	}
-	if want := runner.MinimalEnv(h.environ); !slices.Equal(h.gotEnv, want) {
+	if want := runner.MinimalEnv(h.environ, h.home); !slices.Equal(h.gotEnv, want) {
 		t.Fatalf("runner env = %q, want MinimalEnv of the parent = %q", h.gotEnv, want)
 	}
+	if !slices.Contains(h.gotEnv, "HOME=/Users/account") {
+		t.Fatalf("runner env %q lacks HOME from the account lookup", h.gotEnv)
+	}
 	for _, kv := range h.gotEnv {
-		for _, banned := range []string{"GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "HTTPS_PROXY", "GH_REPO", sentinel} {
+		for _, banned := range []string{"GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "HTTPS_PROXY", "GH_REPO", "GH_CONFIG_DIR", "XDG_CONFIG_HOME", "/evil", sentinel} {
 			if strings.Contains(kv, banned) {
 				t.Fatalf("runner env holds %q", kv)
 			}
 		}
 	}
-	if !slices.Contains(h.gotEnv, "GH_CONFIG_DIR=/home/op/.config/gh") {
-		t.Fatalf("runner env %q lost the variable gh needs to find its login", h.gotEnv)
-	}
 	if strings.Contains(h.out.String(), sentinel) {
 		t.Fatal("stderr holds a token")
 	}
+}
+
+func TestMainSaysWhichConfigVariablesAreIgnored(t *testing.T) {
+	tests := []struct {
+		name    string
+		environ []string
+		want    string // empty means no such line
+	}{
+		{"both set", []string{"GH_CONFIG_DIR=/a", "XDG_CONFIG_HOME=/b"}, "ignoring GH_CONFIG_DIR and XDG_CONFIG_HOME from the environment; gh's default config under the account's home (/Users/account/.config/gh) is used"},
+		{"one set", []string{"XDG_CONFIG_HOME=/b"}, "ignoring XDG_CONFIG_HOME from the environment;"},
+		{"set but empty", []string{"GH_CONFIG_DIR="}, "ignoring GH_CONFIG_DIR from the environment;"},
+		{"neither", []string{"PATH=/usr/bin", "XDG_CONFIG_HOMEX=/b"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, "youtrack-agent-cli", "0.13.0")
+			h.environ = tt.environ
+			h.run()
+			got := h.out.String()
+			if tt.want == "" {
+				if strings.Contains(got, "ignoring") {
+					t.Fatalf("stderr = %q, want no ignored-variables line", got)
+				}
+				return
+			}
+			if strings.Count(got, "ignoring") != 1 || !strings.Contains(got, tt.want) {
+				t.Fatalf("stderr = %q, want exactly one line containing %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMainRefusesAnUnusableHome(t *testing.T) {
+	tests := []struct {
+		name string
+		home string
+		err  error
+	}{
+		{"lookup fails", "", errors.New("no such user")},
+		{"empty", "", nil},
+		{"relative", "home/u", nil},
+		{"unclean", "/Users/../etc", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, "youtrack-agent-cli", "0.13.0")
+			h.home, h.homeErr = tt.home, tt.err
+			if code := h.run(); code != ExitFailure {
+				t.Fatalf("Main() = %d, want %d", code, ExitFailure)
+			}
+			if h.runners != 0 || h.workdirs != 0 || len(h.rec.calls) != 0 {
+				t.Fatalf("runners=%d workdirs=%d calls=%q, want none", h.runners, h.workdirs, h.rec.calls)
+			}
+		})
+	}
+}
+
+// TestMainLocksBeforeAnyGHCall shows the whole-run lock is taken for the
+// repository and tag before gh is even located, that a held lock stops the run
+// at once, and that the lock is given up when the run ends.
+func TestMainLocksBeforeAnyGHCall(t *testing.T) {
+	t.Run("held by another run", func(t *testing.T) {
+		h := newHarness(t, "youtrack-agent-cli", "0.13.0")
+		h.lockErr = errors.New("another sign-release run holds the lock")
+		if code := h.run(); code != ExitFailure {
+			t.Fatalf("Main() = %d, want %d", code, ExitFailure)
+		}
+		if h.lookups+h.symlinks+h.homes+h.runners+h.workdirs != 0 || len(h.rec.calls) != 0 {
+			t.Fatalf("lookups=%d homes=%d runners=%d workdirs=%d calls=%q, want none after a refused lock", h.lookups, h.homes, h.runners, h.workdirs, h.rec.calls)
+		}
+		if !strings.Contains(h.out.String(), "another sign-release run holds the lock") {
+			t.Fatalf("stderr = %q, want the lock message", h.out.String())
+		}
+	})
+	t.Run("taken for the release and released at the end", func(t *testing.T) {
+		h := newHarness(t, "youtrack-agent-cli", "0.13.0")
+		h.run()
+		if h.locks != 1 || h.lockRepo != "abigotado/agent-clis" || h.lockTag != "youtrack-agent-cli/v0.13.0" {
+			t.Fatalf("locks=%d repo=%q tag=%q, want one lock for the repository and tag", h.locks, h.lockRepo, h.lockTag)
+		}
+		if h.unlocks != 1 {
+			t.Fatalf("%d unlocks, want 1", h.unlocks)
+		}
+	})
 }
 
 func TestMainBuildsTheRunnerForGHAndCodesignOnly(t *testing.T) {

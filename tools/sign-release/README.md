@@ -15,7 +15,10 @@ from `tools/sign-release`. Use a clean checkout of `main`: the configuration
 it embeds, including the pinned certificate, comes from that checkout. The
 version has no leading `v`. The release tag is `youtrack-agent-cli/v0.13.0`. The
 configuration (`config.json`) is embedded in the binary. The tool exits 0 on
-success, 1 on any failure or refusal, and 2 on a wrong command line.
+success, 1 on any failure or refusal, and 2 on a wrong command line. One run
+at a time holds an exclusive lock for the repository and tag (a file in
+`sign-release` under the user cache directory); a second run of the same
+release refuses at once.
 
 ## What it does and never does
 
@@ -30,18 +33,31 @@ success, 1 on any failure or refusal, and 2 on a wrong command line.
 - It publishes only after every check passed and you typed the tag twice. A
   failure at any step stops the run before the one request that publishes.
 
+The tool defends against a wrong or tampered release, not against another
+process of the same account: a process running as you can read the work
+directory, change the files `gh` uploads, edit `gh`'s config or take the
+Keychain prompt. That is outside the threat model, as it is for the rest of
+this repository. The tool narrows the window (it compares the upload files with
+the verified bytes right before `gh` reads them, and checks the digests after)
+but does not claim protection against such a process.
+
 ## Prerequisites
 
 - macOS with the `Developer ID Application` identity in the login keychain.
   `cert_sha1` in `config.json` must hold the 40-hex SHA-1 of that certificate;
   the tool refuses to start while it is empty or malformed.
 - `gh` logged in to `github.com` through its own stored login
-  (`gh auth login`). The tool starts `gh` with a minimal environment (`HOME`,
-  `PATH`, `TMPDIR`, `USER`, the locale, `XDG_CONFIG_HOME`, `GH_CONFIG_DIR`).
-  `GH_TOKEN`, `GITHUB_TOKEN`, `GH_HOST`, `GH_REPO`, proxy variables and the
-  rest are ignored on purpose, so nothing in the environment can redirect a
-  call or replace the login. A network that needs a proxy therefore fails
-  closed.
+  (`gh auth login`). The tool starts `gh` with a minimal environment: `PATH`,
+  `TMPDIR`, `USER`, the locale, and a `HOME` taken from the account database
+  (not from the `HOME` variable). `GH_TOKEN`, `GITHUB_TOKEN`, `GH_HOST`,
+  `GH_REPO`, `GH_CONFIG_DIR`, `XDG_CONFIG_HOME`, proxy variables and the rest are
+  ignored on purpose, so nothing in the environment can redirect a call,
+  replace the login or point `gh` at another configuration. If
+  `GH_CONFIG_DIR` or `XDG_CONFIG_HOME` is set, the tool prints one line saying
+  it is ignored and that `gh`'s default config under the account's home is
+  used. A network that needs a proxy therefore fails closed.
+  `gh`'s own config file (for example `http_unix_socket`) is trusted: whoever
+  can write it controls where `gh` sends its requests.
 - Immutable releases enabled on the repository (a repository-wide setting).
   Published assets of an immutable release cannot be changed.
 - The draft release that CI produced for the `youtrack-agent-cli/vX.Y.Z` tag:
@@ -50,13 +66,14 @@ success, 1 on any failure or refusal, and 2 on a wrong command line.
 
 ## The run, in order
 
-Progress lines go to stderr, one after each group of steps. Any mismatch is a refusal that names the
-step; nothing is published after one.
+Progress lines go to stderr, one after each group of steps. Any mismatch is a
+refusal that names the step; nothing is published after one.
 
 1. **Checks before any command.** The configuration parses, the CLI is ready
    to sign (certificate hash set) and the version is a plain semantic version.
-   Then `gh` is located on `PATH` once and its symbolic links are resolved, and
-   `gh auth status --hostname github.com` must pass.
+   The whole-run lock for the repository and tag is taken. Then the account's
+   home is looked up, `gh` is located on `PATH` once and its symbolic links are
+   resolved, and `gh auth status --hostname github.com` must pass.
 2. **Resolve.** The release list is read; exactly one release has the tag, it
    is a draft and it carries exactly the expected assets.
 3. **Download and checksum.** `checksums-darwin.txt` and both darwin archives
@@ -67,10 +84,14 @@ step; nothing is published after one.
 5. **Attestations.** `gh attestation verify` runs for both archives, then (after
    the archives are unpacked and checked) for both machodigest streams, with
    the repository, the `release.yaml` signer workflow, the tag as source ref,
-   the commit as source digest and `--deny-self-hosted-runners`. The tool also
-   compares the printed certificate itself: the OIDC issuer, the build signer
-   URI (the workflow at the tag), the build signer digest, a GitHub-hosted
-   runner, the source repository URI, the source ref and the source commit.
+   the commit as source digest, `--deny-self-hosted-runners` and
+   `--predicate-type https://slsa.dev/provenance/v1`. The tool also compares the
+   printed certificate itself: the OIDC issuer, the build signer URI (the
+   workflow at the tag), the build signer digest, the build config URI (equal to
+   the signer URI), a GitHub-hosted runner, the source repository URI, the
+   source ref and the source commit. It binds each attestation to the bytes in
+   use: the predicate type is SLSA provenance and a subject's sha256 equals the
+   sha256 of the archive or stream the tool holds in memory.
 6. **Unpack and parse.** Each archive holds exactly the entries in
    `archive_entries`, all plain regular files with bounded sizes. Each binary
    is a thin Mach-O of the expected CPU. Nothing is written until both pass.
@@ -93,14 +114,19 @@ step; nothing is published after one.
     committer date, modes 0755 for the binary and 0644 for the rest, a fixed
     gzip header) with a new `checksums-darwin.txt`.
 11. **First confirmation.** Type the tag. The answer must match exactly.
-12. **Upload.** `gh release upload <tag> <files> --clobber --repo
-    github.com/<repo>` replaces the three darwin assets. The release is read
-    again by ID: still a draft, exactly the same asset set, the Linux assets
+12. **Upload.** The releases are listed: exactly one has the tag and it is the
+    pinned release, still a draft. Each file in `signed/` is read again and must
+    equal the bytes built and verified. Then `gh release upload <tag> <files>
+    --clobber --repo github.com/<repo>` replaces the three darwin assets, and
+    the releases are listed again with the same requirement. The release is
+    read again by ID: still a draft, exactly the same asset set, the Linux assets
     untouched, and each darwin asset's `digest` equals the local sha256 (an
     asset without a `digest` is downloaded and hashed).
 13. **Tag check.** The tag must still point at the attested commit.
-14. **Second confirmation.** Type the tag again. The tag is checked once more
-    right after the answer.
+14. **Second confirmation.** Type the tag again. Right after the answer the tag
+    is checked once more, the release is read again by ID (still a draft, the
+    exact asset set, the digests, the Linux asset IDs) and immutable releases
+    must still be enabled.
 15. **Publish.** `gh api -X PATCH repos/<repo>/releases/<id> --input -` with the
     body `{"draft":false}`. There is no `tag_name` and no `target_commitish`.
 16. **Re-read.** The release is read by ID: not a draft, `immutable` is true,
@@ -129,10 +155,10 @@ the draft, so keep it until that is done. Delete it afterwards.
 - **Before the upload (steps 1 to 11).** Nothing on GitHub changed. Fix the
   cause and run again; the tool starts from the beginning in a new work
   directory.
-- **After the upload, before the publish (steps 12 to 14).** The draft now
-  carries signed darwin assets that no attestation covers, so a re-run refuses
-  it. The error names the work directory. Restore the originals, then run
-  again:
+- **After the upload, before the publish (steps 12 to 14).** The draft may now
+  carry signed darwin assets that no attestation covers, and a re-run refuses
+  such a draft. The error names the work directory. Restore the originals, then
+  run again:
 
   ```bash
   gh release upload youtrack-agent-cli/v0.13.0 \
@@ -143,7 +169,10 @@ the draft, so keep it until that is done. Delete it afterwards.
   ```
 
   These are the downloaded originals at the top of the work directory, not the
-  files in `signed/`. `--clobber` deletes an existing asset before it uploads,
+  files in `signed/`. If the refusal says it is not proven that the pinned
+  release took the files (a second release with the tag appeared, or the pinned
+  one was replaced), list the releases of the tag with their IDs and restore
+  the originals on every draft that carries signed assets. `--clobber` deletes an existing asset before it uploads,
   which is acceptable only on a draft.
 - **The PATCH fails.** The release may or may not be public. Read it before
   anything else: `gh api --hostname github.com repos/abigotado/agent-clis/releases/<id>`.
@@ -177,10 +206,15 @@ The output is a JSON array. In every entry,
 | `issuer` | `https://token.actions.githubusercontent.com` |
 | `buildSignerURI` | `https://github.com/abigotado/agent-clis/.github/workflows/release.yaml@refs/tags/youtrack-agent-cli/v0.13.0` |
 | `buildSignerDigest` | the tag commit |
+| `buildConfigURI` | the same as `buildSignerURI` |
 | `runnerEnvironment` | `github-hosted` |
 | `sourceRepositoryURI` | `https://github.com/abigotado/agent-clis` |
 | `sourceRepositoryRef` | `refs/tags/youtrack-agent-cli/v0.13.0` |
 | `sourceRepositoryDigest` | the tag commit |
+
+In every entry, `verificationResult.statement` must have
+`predicateType` `https://slsa.dev/provenance/v1` and a `subject` whose
+`digest.sha256` is the sha256 of the archive you verified (`shasum -a 256`).
 
 If a field name or value differs, the tool refuses at the attestation step.
 Report it. Do not change the tool or the check to get past it.

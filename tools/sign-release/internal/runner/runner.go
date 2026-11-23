@@ -44,18 +44,20 @@ const waitDelay = 10 * time.Second
 
 // envKeep is the set of variable names MinimalEnv copies; names starting with
 // LC_ are kept as well.
-var envKeep = []string{"HOME", "PATH", "TMPDIR", "USER", "LANG", "XDG_CONFIG_HOME", "GH_CONFIG_DIR"}
+var envKeep = []string{"PATH", "TMPDIR", "USER", "LANG"}
 
-// MinimalEnv builds the environment a gh run gets from the parent's: only the
-// variables gh needs to find its own login (HOME, PATH, TMPDIR, USER, the
-// locale, XDG_CONFIG_HOME and GH_CONFIG_DIR). Everything else is dropped, so
-// GH_HOST, GH_REPO, GH_TOKEN, GITHUB_TOKEN, the enterprise tokens, GH_DEBUG,
-// GH_PAGER and the colour switches cannot redirect a call, override the
-// operator's stored login or change the output. Malformed entries are dropped;
-// for a repeated name the last value wins, as for a process. The result is
-// sorted by name.
-func MinimalEnv(parent []string) []string {
-	kept := map[string]string{}
+// MinimalEnv builds the environment a gh run gets from the parent's: PATH,
+// TMPDIR, USER, LANG and the LC_ variables, plus HOME set to home. home is the
+// account's home directory from the account database, never the parent's HOME,
+// and it is the only place gh looks for its login: GH_CONFIG_DIR and
+// XDG_CONFIG_HOME are dropped with everything else, so the environment cannot
+// point gh at another configuration. GH_HOST, GH_REPO, GH_TOKEN, GITHUB_TOKEN,
+// the enterprise tokens, GH_DEBUG, GH_PAGER and the colour switches are
+// dropped too, so they cannot redirect a call, override the operator's stored
+// login or change the output. Malformed entries are dropped; for a repeated
+// name the last value wins, as for a process. The result is sorted by name.
+func MinimalEnv(parent []string, home string) []string {
+	kept := map[string]string{"HOME": home}
 	for _, kv := range parent {
 		name, value, ok := strings.Cut(kv, "=")
 		if !ok || name == "" {

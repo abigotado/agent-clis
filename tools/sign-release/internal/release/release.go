@@ -101,7 +101,7 @@ func Run(ctx context.Context, r runner.Runner, p Params) (Result, error) {
 	// Provenance first: nothing is parsed, extracted or written until both
 	// archives carry a verified attestation for the tag's commit.
 	for _, arc := range archives {
-		if err := verifyFile(ctx, r, p.GH, pl, arc.path, res.Commit); err != nil {
+		if err := verifyFile(ctx, r, p.GH, pl, arc.path, res.Commit, arc.data); err != nil {
 			return Result{}, err
 		}
 	}
@@ -122,7 +122,7 @@ func Run(ctx context.Context, r runner.Runner, p Params) (Result, error) {
 		}
 	}
 	for _, a := range artifacts {
-		if err := verifyFile(ctx, r, p.GH, pl, a.StreamPath, res.Commit); err != nil {
+		if err := verifyFile(ctx, r, p.GH, pl, a.StreamPath, res.Commit, a.stream); err != nil {
 			return Result{}, err
 		}
 	}

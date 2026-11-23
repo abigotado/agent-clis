@@ -10,18 +10,40 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 
 	"github.com/abigotado/agent-clis/tools/sign-release/internal/app"
+	"github.com/abigotado/agent-clis/tools/sign-release/internal/lock"
 	"github.com/abigotado/agent-clis/tools/sign-release/internal/runner"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	code := app.Main(ctx, app.Deps{
-		ConfigJSON:   configJSON,
-		Args:         os.Args[1:],
-		Environ:      os.Environ,
+		ConfigJSON: configJSON,
+		Args:       os.Args[1:],
+		Environ:    os.Environ,
+		// The account database, not $HOME: os/user reads it on darwin with or
+		// without cgo.
+		HomeDir: func() (string, error) {
+			u, err := user.Current()
+			if err != nil {
+				return "", err
+			}
+			return u.HomeDir, nil
+		},
+		Lock: func(repo, tag string) (func() error, error) {
+			cache, err := os.UserCacheDir()
+			if err != nil {
+				return nil, err
+			}
+			l, err := lock.Acquire(filepath.Join(cache, "sign-release"), repo, tag)
+			if err != nil {
+				return nil, err
+			}
+			return l.Release, nil
+		},
 		LookPath:     exec.LookPath,
 		EvalSymlinks: filepath.EvalSymlinks,
 		NewRunner: func(maxStdout int64, env []string, programs ...string) (runner.Runner, error) {

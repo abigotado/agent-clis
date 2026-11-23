@@ -47,7 +47,9 @@ func TestTextStatesTheOperatorContract(t *testing.T) {
 		{name: "gh uses its own stored login", want: "gh must be logged in through its own stored login"},
 		{name: "GH_TOKEN is ignored", want: "GH_TOKEN"},
 		{name: "GH_HOST is ignored", want: "GH_HOST"},
-		{name: "proxy variables are ignored", want: "proxy variables are ignored on purpose"},
+		{name: "proxy variables are ignored", want: "and proxy\nvariables are ignored on purpose"},
+		{name: "config location variables are ignored", want: "GH_CONFIG_DIR, XDG_CONFIG_HOME"},
+		{name: "gh's config comes from the account's home", want: "the account's own home directory"},
 		{name: "one Keychain prompt per binary", want: "one Keychain prompt per binary"},
 		{name: "Allow", want: "choose Allow, never\nAlways Allow"},
 	}

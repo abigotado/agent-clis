@@ -165,3 +165,20 @@ func TestRunFailuresExitOne(t *testing.T) {
 		t.Fatalf("existing output = %q, %v, want it untouched", got, err)
 	}
 }
+
+// TestRunMapsAPanicToExitOne shows a panic is exit 1 and never the exit 2 a Go
+// panic gives on its own, which means usage here.
+func TestRunMapsAPanicToExitOne(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	code := runWith([]string{"-o", "stream", "binary"}, &stdout, &stderr, func(string, string) ([32]byte, error) {
+		panic("boom")
+	})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "internal error: boom") {
+		t.Fatalf("stdout = %q, stderr = %q, want an empty stdout and the internal error", stdout.String(), stderr.String())
+	}
+}

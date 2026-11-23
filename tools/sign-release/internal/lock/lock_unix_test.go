@@ -1,0 +1,112 @@
+//go:build unix
+
+package lock
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestAcquireIsExclusivePerRepositoryAndTag(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "sign-release")
+	first, err := Acquire(dir, "owner/repo", "cli/v1.0.0")
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+
+	tests := []struct {
+		name, repo, tag string
+		wantLocked      bool
+	}{
+		{"same repository and tag", "owner/repo", "cli/v1.0.0", true},
+		{"other tag", "owner/repo", "cli/v1.0.1", false},
+		{"other repository", "owner/other", "cli/v1.0.0", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l, err := Acquire(dir, tt.repo, tt.tag)
+			if tt.wantLocked {
+				if !errors.Is(err, ErrLocked) || !strings.Contains(err.Error(), tt.repo) || !strings.Contains(err.Error(), tt.tag) {
+					t.Fatalf("Acquire() error = %v, want ErrLocked naming the repository and tag", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Acquire() error = %v", err)
+			}
+			if err := l.Release(); err != nil {
+				t.Fatalf("Release() error = %v", err)
+			}
+		})
+	}
+
+	if err := first.Release(); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+	if err := first.Release(); err != nil {
+		t.Fatalf("second Release() error = %v, want nil", err)
+	}
+	again, err := Acquire(dir, "owner/repo", "cli/v1.0.0")
+	if err != nil {
+		t.Fatalf("Acquire() after Release error = %v", err)
+	}
+	if err := again.Release(); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+}
+
+func TestAcquireUsesPrivateFilesAndRefusesALink(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "sign-release")
+	l, err := Acquire(dir, "owner/repo", "cli/v1.0.0")
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if err := l.Release(); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+	if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("directory mode = %v (err %v), want 0700", info.Mode().Perm(), err)
+	}
+	path := filepath.Join(dir, fileName("owner/repo", "cli/v1.0.0"))
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("lock file mode = %v (err %v), want 0600", info.Mode().Perm(), err)
+	}
+
+	// A symbolic link in the file's place is refused, not followed.
+	target := filepath.Join(t.TempDir(), "elsewhere")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove lock file: %v", err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if l, err := Acquire(dir, "owner/repo", "cli/v1.0.0"); err == nil {
+		_ = l.Release() // test cleanup after the assertion below fails
+		t.Fatal("Acquire() followed a symbolic link")
+	}
+}
+
+func TestAcquireRefusesAnOpenDirectoryAndEmptyKeys(t *testing.T) {
+	open := filepath.Join(t.TempDir(), "open")
+	if err := os.Mkdir(open, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chmod(open, 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if _, err := Acquire(open, "owner/repo", "cli/v1.0.0"); err == nil {
+		t.Fatal("Acquire() accepted a group- or world-accessible directory")
+	}
+	if _, err := Acquire(t.TempDir(), "", "tag"); err == nil {
+		t.Fatal("Acquire() accepted an empty repository")
+	}
+	if _, err := Acquire("relative/dir", "owner/repo", "tag"); err == nil {
+		t.Fatal("Acquire() accepted a relative directory")
+	}
+}

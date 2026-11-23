@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 
 	"github.com/abigotado/agent-clis/tools/sign-release/internal/codesign"
 	"github.com/abigotado/agent-clis/tools/sign-release/internal/config"
@@ -36,6 +37,12 @@ type Deps struct {
 	// Environ returns the parent environment. Main passes it through
 	// runner.MinimalEnv and never hands it to a program as it is.
 	Environ func() []string
+	// HomeDir returns the account's home directory from the account database.
+	// It becomes HOME for gh; the parent's HOME is never used.
+	HomeDir func() (string, error)
+	// Lock takes the whole-run lock for a repository and tag and returns the
+	// function that gives it up. It fails at once when another run holds it.
+	Lock func(repo, tag string) (release func() error, err error)
 	// LookPath finds a program on PATH.
 	LookPath func(file string) (string, error)
 	// EvalSymlinks resolves the symbolic links of a path.
@@ -57,6 +64,8 @@ func (d Deps) validate() error {
 	}{
 		{"ConfigJSON", len(d.ConfigJSON) > 0},
 		{"Environ", d.Environ != nil},
+		{"HomeDir", d.HomeDir != nil},
+		{"Lock", d.Lock != nil},
 		{"LookPath", d.LookPath != nil},
 		{"EvalSymlinks", d.EvalSymlinks != nil},
 		{"NewRunner", d.NewRunner != nil},
@@ -104,7 +113,7 @@ func Main(ctx context.Context, d Deps) (code int) {
 	return ExitOK
 }
 
-func run(ctx context.Context, d Deps, cliName, version string, say func(string, ...any)) error {
+func run(ctx context.Context, d Deps, cliName, version string, say func(string, ...any)) (err error) {
 	// Everything that needs no command runs first: the configuration, the CLI,
 	// its readiness to sign (a certificate hash must be set) and the version.
 	cfg, err := config.Parse(d.ConfigJSON)
@@ -122,15 +131,36 @@ func run(ctx context.Context, d Deps, cliName, version string, say func(string, 
 	if _, err := config.ExpandName("x-"+config.VersionPlaceholder, version); err != nil {
 		return err
 	}
+	// One run per repository and tag, before the first gh call.
+	unlock, err := d.Lock(cfg.Repository, cli.TagPrefix+version)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if uerr := unlock(); uerr != nil {
+			say("sign-release: release the lock: %v", uerr)
+		}
+	}()
 	say("config: %s %s, identifier %s, team %s, certificate %s", cliName, version, exp.Identifier, exp.Team, exp.CertSHA1)
 
 	gh, err := resolveGH(d)
 	if err != nil {
 		return err
 	}
+	home, err := d.HomeDir()
+	if err != nil {
+		return fmt.Errorf("find the account's home directory: %w", err)
+	}
+	if !filepath.IsAbs(home) || filepath.Clean(home) != home {
+		return fmt.Errorf("the account's home directory %q is not a clean absolute path", home)
+	}
+	environ := d.Environ()
+	if ignored := ignoredConfigVars(environ); len(ignored) > 0 {
+		say("ignoring %s from the environment; gh's default config under the account's home (%s) is used", strings.Join(ignored, " and "), filepath.Join(home, ".config", "gh"))
+	}
 	limits := release.DefaultLimits()
 	// The stdout bound is the archive bound: gh prints a whole archive.
-	r, err := d.NewRunner(limits.MaxArchive, runner.MinimalEnv(d.Environ()), gh, release.CodesignPath)
+	r, err := d.NewRunner(limits.MaxArchive, runner.MinimalEnv(environ, home), gh, release.CodesignPath)
 	if err != nil {
 		return fmt.Errorf("build the runner: %w", err)
 	}
@@ -157,6 +187,21 @@ func run(ctx context.Context, d Deps, cliName, version string, say func(string, 
 		say("  %s  %s", a.SHA256, a.Name)
 	}
 	return nil
+}
+
+// ignoredConfigVars names the variables that would move gh's configuration and
+// are set in the parent environment, in a fixed order.
+func ignoredConfigVars(environ []string) []string {
+	var out []string
+	for _, name := range []string{"GH_CONFIG_DIR", "XDG_CONFIG_HOME"} {
+		for _, kv := range environ {
+			if got, _, ok := strings.Cut(kv, "="); ok && got == name {
+				out = append(out, name)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // resolveGH finds gh on PATH once and resolves its symbolic links; the result

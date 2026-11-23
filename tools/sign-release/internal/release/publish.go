@@ -2,6 +2,7 @@ package release
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -201,6 +202,48 @@ func checkAssetSet(ctx context.Context, r runner.Runner, gh string, pl plan, lim
 		}
 		if a.Digest != want {
 			return refuse(step, "asset %q has the digest %q, uploaded %q", name, a.Digest, want)
+		}
+	}
+	return nil
+}
+
+// checkIdentity lists the releases and requires exactly one with the tag, the
+// pinned one, still a draft. gh release upload finds its target by tag, so a
+// second release with the tag, or the pinned one replaced, could take the
+// files; the refusal names the IDs found.
+func checkIdentity(ctx context.Context, r runner.Runner, gh string, pl plan, id int64, when string) error {
+	releases, err := listReleases(ctx, r, gh, pl.repo)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	draft := false
+	for _, rel := range releases {
+		if rel.TagName == pl.tag {
+			ids = append(ids, rel.ID)
+			draft = rel.Draft
+		}
+	}
+	if len(ids) != 1 || ids[0] != id {
+		return refuse(StepUpload, "%s the releases with the tag %q have the IDs %v, want exactly the pinned release %d", when, pl.tag, ids, id)
+	}
+	if !draft {
+		return refuse(StepUpload, "%s the pinned release %d is not a draft", when, id)
+	}
+	return nil
+}
+
+// recheckFiles requires every file of the upload set to still hold the bytes
+// the tool built and verified. gh reads the files itself, so this is the last
+// look before it does; the digest check after the upload remains.
+func recheckFiles(files []outputFile, limit int64) error {
+	for _, f := range files {
+		data, err := readRegular(StepUpload, f.path, limit)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(data, f.data) {
+			return refuse(StepUpload, "%s changed on disk after it was built", f.path)
 		}
 	}
 	return nil

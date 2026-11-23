@@ -94,6 +94,7 @@ func TestRunCommandsAreExact(t *testing.T) {
 			"--source-ref", "refs/tags/youtrack-agent-cli/v0.13.0",
 			"--source-digest", testCommit,
 			"--deny-self-hosted-runners",
+			"--predicate-type", "https://slsa.dev/provenance/v1",
 			"--format", "json",
 			"--hostname", "github.com",
 		}
@@ -298,6 +299,29 @@ func TestRunRefusals(t *testing.T) {
 		{name: "a certificate member is absent", mutate: func(s *scenario) {
 			s.verifyOut[amd64Archive] = certWith(func(c *certificateJSON) { c.RunnerEnvironment = "" })
 		}, step: StepAttest, reason: "runner environment"},
+		{name: "subject digest of other bytes", mutate: func(s *scenario) {
+			s.verifyOut[amd64Archive] = "[" + verifyEntryFor(goodCertificate(testCommit, goodRef), predicateType, strings.Repeat("0", 64)) + "]"
+		}, step: StepAttest, reason: "no subject with the sha256"},
+		{name: "stream attested with other bytes", mutate: func(s *scenario) {
+			s.verifyOut[arm64Stream] = "[" + verifyEntryFor(goodCertificate(testCommit, goodRef), predicateType, strings.Repeat("1", 64)) + "]"
+		}, step: StepAttest, reason: "no subject with the sha256"},
+		{name: "subject digest in uppercase", mutate: func(s *scenario) {
+			s.verifyOut[amd64Archive] = "[" + verifyEntryFor(goodCertificate(testCommit, goodRef), predicateType, "UPPER") + "]"
+		}, step: StepAttest, reason: "no subject with the sha256"},
+		{name: "no subject at all", mutate: func(s *scenario) {
+			s.verifyOut[amd64Archive] = strings.Replace(goodVerifyJSON(testCommit, goodRef), `"subject":[{"digest":{"sha256":"@DIGEST@"},"name":"x"}]`, `"subject":[]`, 1)
+		}, step: StepAttest, reason: "no subject with the sha256"},
+		{name: "wrong predicate type", mutate: func(s *scenario) {
+			s.verifyOut[amd64Archive] = "[" + verifyEntryFor(goodCertificate(testCommit, goodRef), "https://example.com/other/v1", digestPlaceholder) + "]"
+		}, step: StepAttest, reason: "predicate type"},
+		{name: "build config URI differs from the signer URI", mutate: func(s *scenario) {
+			s.verifyOut[amd64Archive] = certWith(func(c *certificateJSON) {
+				c.BuildConfigURI = "https://github.com/" + testRepo + "/.github/workflows/other.yaml@refs/tags/" + testTag
+			})
+		}, step: StepAttest, reason: "build config URI"},
+		{name: "build config URI missing", mutate: func(s *scenario) {
+			s.verifyOut[arm64Archive] = certWith(func(c *certificateJSON) { c.BuildConfigURI = "" })
+		}, step: StepAttest, reason: "build config URI"},
 		{name: "verify prints no attestation", mutate: func(s *scenario) { s.verifyOut[amd64Archive] = "[]" }, step: StepAttest, reason: "no verified attestation"},
 		{name: "verify prints something that is not an array", mutate: func(s *scenario) { s.verifyOut[amd64Archive] = `{"ok":true}` }, step: StepAttest, reason: "not a JSON array"},
 		{name: "verify prints data after the array", mutate: func(s *scenario) {

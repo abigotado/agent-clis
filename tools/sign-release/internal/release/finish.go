@@ -85,18 +85,32 @@ func Finish(ctx context.Context, r runner.Runner, p Params, res Result, c Consol
 		return Published{}, err
 	}
 
-	// From the start of the upload to the PATCH, a failure leaves the draft
-	// holding signed assets no attestation covers.
-	// restoreSteps is the one text of how to put the originals back; the two
-	// notes below share it so they cannot drift.
+	// restoreSteps is the one text of how to put the originals back; the notes
+	// below share it so they cannot drift.
 	restoreSteps := fmt.Sprintf("restore the originals from %s (both darwin archives and %s, as downloaded) with `gh release upload %s <files> --clobber --repo %s`, then run again",
 		p.WorkDir, pl.checksums, pl.tag, uploadRepo(pl))
+	// From the start of the upload to the PATCH, a failure may leave the draft
+	// holding signed assets no attestation covers.
 	restore := func(err error) error {
-		return fmt.Errorf("%w; the draft release %d now carries signed darwin assets that no attestation covers, so a re-run will refuse it; %s",
+		return fmt.Errorf("%w; the upload may have changed the draft release %d: if it now carries signed darwin assets that no attestation covers, a re-run will refuse it, and then %s",
 			err, res.ReleaseID, restoreSteps)
+	}
+	// After an identity failure it is not proven which release took the files.
+	restoreUnproven := func(err error) error {
+		return fmt.Errorf("%w; gh uploads to the release it finds for the tag, so it is not proven that release %d took the files: list the releases of %s and, for each draft that carries signed darwin assets (a re-run will refuse it), %s",
+			err, res.ReleaseID, pl.tag, restoreSteps)
+	}
+	if err := checkIdentity(ctx, r, p.GH, pl, res.ReleaseID, "before the upload,"); err != nil {
+		return Published{}, err
+	}
+	if err := recheckFiles(files, res.limits.MaxArchive); err != nil {
+		return Published{}, err
 	}
 	if err := uploadFiles(ctx, r, p.GH, pl, files); err != nil {
 		return Published{}, restore(err)
+	}
+	if err := checkIdentity(ctx, r, p.GH, pl, res.ReleaseID, "after the upload,"); err != nil {
+		return Published{}, restoreUnproven(err)
 	}
 	rel, err := readRelease(ctx, r, p.GH, pl, res.ReleaseID, StepUpload)
 	if err != nil {
@@ -119,9 +133,22 @@ func Finish(ctx context.Context, r runner.Runner, p Params, res Result, c Consol
 	if err := ask.confirm(question, pl.tag); err != nil {
 		return Published{}, restore(err)
 	}
-	// The prompt can take as long as the operator likes; look at the tag once
-	// more right before the PATCH.
+	// The prompt can take as long as the operator likes; look at the tag and
+	// the release once more right before the PATCH.
 	if err := checkTag(ctx, r, p.GH, pl, res.Commit); err != nil {
+		return Published{}, restore(err)
+	}
+	current, err := readRelease(ctx, r, p.GH, pl, res.ReleaseID, StepPublish)
+	if err != nil {
+		return Published{}, restore(err)
+	}
+	if !current.Draft {
+		return Published{}, restore(refuse(StepPublish, "release %d is no longer a draft just before the PATCH", res.ReleaseID))
+	}
+	if err := checkAssetSet(ctx, r, p.GH, pl, res.limits, StepPublish, current, res.AssetIDs, files); err != nil {
+		return Published{}, restore(err)
+	}
+	if err := checkImmutable(ctx, r, p.GH, pl); err != nil {
 		return Published{}, restore(err)
 	}
 	if err := publish(ctx, r, p.GH, pl, res.ReleaseID); err != nil {

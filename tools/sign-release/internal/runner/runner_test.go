@@ -144,22 +144,28 @@ func TestMinimalEnv(t *testing.T) {
 	tests := []struct {
 		name   string
 		parent []string
+		home   string
 		want   []string
 	}{
-		{name: "keeps what gh needs, sorted", parent: []string{"PATH=/usr/bin", "HOME=/home/u", "USER=u", "TMPDIR=/t", "LANG=en_US.UTF-8", "LC_ALL=C", "LC_CTYPE=UTF-8", "XDG_CONFIG_HOME=/x", "GH_CONFIG_DIR=/g"},
-			want: []string{"GH_CONFIG_DIR=/g", "HOME=/home/u", "LANG=en_US.UTF-8", "LC_ALL=C", "LC_CTYPE=UTF-8", "PATH=/usr/bin", "TMPDIR=/t", "USER=u", "XDG_CONFIG_HOME=/x"}},
-		{name: "drops host, repo, token and output switches",
-			parent: []string{"HOME=/h", "GH_HOST=evil.example", "GH_REPO=a/b", "GH_TOKEN=secret", "GITHUB_TOKEN=secret", "GH_ENTERPRISE_TOKEN=secret", "GITHUB_ENTERPRISE_TOKEN=secret", "GH_FORCE_TTY=1", "CLICOLOR_FORCE=1", "GH_DEBUG=api", "GH_PAGER=cat", "NO_COLOR=1", "HTTPS_PROXY=http://p", "SSH_AUTH_SOCK=/s", "GH_PROMPT_DISABLED=1"},
+		{name: "keeps what gh needs, sorted", home: "/acct",
+			parent: []string{"PATH=/usr/bin", "USER=u", "TMPDIR=/t", "LANG=en_US.UTF-8", "LC_ALL=C", "LC_CTYPE=UTF-8"},
+			want:   []string{"HOME=/acct", "LANG=en_US.UTF-8", "LC_ALL=C", "LC_CTYPE=UTF-8", "PATH=/usr/bin", "TMPDIR=/t", "USER=u"}},
+		{name: "HOME is the account's, never the parent's", home: "/acct", parent: []string{"HOME=/evil", "HOME=/evil2"}, want: []string{"HOME=/acct"}},
+		{name: "config location variables never reach gh", home: "/acct",
+			parent: []string{"XDG_CONFIG_HOME=/x", "GH_CONFIG_DIR=/g", "PATH=/p"},
+			want:   []string{"HOME=/acct", "PATH=/p"}},
+		{name: "drops host, repo, token and output switches", home: "/h",
+			parent: []string{"GH_HOST=evil.example", "GH_REPO=a/b", "GH_TOKEN=secret", "GITHUB_TOKEN=secret", "GH_ENTERPRISE_TOKEN=secret", "GITHUB_ENTERPRISE_TOKEN=secret", "GH_FORCE_TTY=1", "CLICOLOR_FORCE=1", "GH_DEBUG=api", "GH_PAGER=cat", "NO_COLOR=1", "HTTPS_PROXY=http://p", "SSH_AUTH_SOCK=/s", "GH_PROMPT_DISABLED=1"},
 			want:   []string{"HOME=/h"}},
-		{name: "does not match by prefix other than LC_", parent: []string{"HOMEX=1", "XPATH=1", "LANGUAGE=en", "LCX=1", "PATHEXT=1"}, want: []string{}},
-		{name: "drops malformed entries", parent: []string{"HOME", "=x", "", "PATH=/p"}, want: []string{"PATH=/p"}},
-		{name: "last duplicate wins", parent: []string{"HOME=/a", "HOME=/b"}, want: []string{"HOME=/b"}},
-		{name: "empty value is kept", parent: []string{"LANG="}, want: []string{"LANG="}},
-		{name: "nil parent", parent: nil, want: []string{}},
+		{name: "does not match by prefix other than LC_", home: "/h", parent: []string{"HOMEX=1", "XPATH=1", "LANGUAGE=en", "LCX=1", "PATHEXT=1"}, want: []string{"HOME=/h"}},
+		{name: "drops malformed entries", home: "/h", parent: []string{"HOME", "=x", "", "PATH=/p"}, want: []string{"HOME=/h", "PATH=/p"}},
+		{name: "last duplicate wins", home: "/h", parent: []string{"PATH=/a", "PATH=/b"}, want: []string{"HOME=/h", "PATH=/b"}},
+		{name: "empty value is kept", home: "/h", parent: []string{"LANG="}, want: []string{"HOME=/h", "LANG="}},
+		{name: "nil parent", home: "/h", parent: nil, want: []string{"HOME=/h"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := MinimalEnv(tc.parent)
+			got := MinimalEnv(tc.parent, tc.home)
 			if !slices.Equal(got, tc.want) {
 				t.Fatalf("MinimalEnv() = %q, want %q", got, tc.want)
 			}

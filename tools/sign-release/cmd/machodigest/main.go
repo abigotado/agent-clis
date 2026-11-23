@@ -4,7 +4,7 @@
 //	machodigest -o <stream-file> <binary>
 //
 // The stream file must not exist. Exit status is 2 for a usage error and 1 when
-// the input is refused or a file cannot be read or written. -h and -help print
+// the input is refused, a file cannot be read or written or the program panics. -h and -help print
 // the usage to stderr and exit 0, so asking for help is not a failure.
 package main
 
@@ -29,6 +29,18 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	return runWith(args, stdout, stderr, digest)
+}
+
+// runWith is run with the digest step injected. A panic anywhere in it exits
+// 1: a Go program that panics exits 2 on its own, which here means usage.
+func runWith(args []string, stdout, stderr io.Writer, digestFn func(binary, output string) ([32]byte, error)) (code int) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			report(stderr, "machodigest: internal error: %v\n", rec)
+			code = exitFailure
+		}
+	}()
 	fs := flag.NewFlagSet("machodigest", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
@@ -47,7 +59,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	binary := fs.Arg(0)
 
-	sum, err := digest(binary, *output)
+	sum, err := digestFn(binary, *output)
 	if err != nil {
 		report(stderr, "machodigest: %v\n", err)
 		return exitFailure

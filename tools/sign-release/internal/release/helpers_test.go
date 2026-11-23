@@ -125,6 +125,7 @@ type scenario struct {
 
 	rel    releaseJSON
 	others []releaseJSON
+	after  []releaseJSON // listed after the release under test
 	files  map[string][]byte
 	byID   map[int64]string
 
@@ -148,11 +149,26 @@ type scenario struct {
 // verifyEntry is one entry of gh attestation verify --format json, built
 // from the certificate members the tool compares.
 func verifyEntry(c certificateJSON) string {
+	return verifyEntryFor(c, predicateType, digestPlaceholder)
+}
+
+// digestPlaceholder in a verify reply stands for the sha256 of the file being
+// verified, which the fake fills in when it answers.
+const digestPlaceholder = "@DIGEST@"
+
+// verifyEntryFor builds an entry with the given predicate type and subject
+// digest.
+func verifyEntryFor(c certificateJSON, predicate, digest string) string {
 	data, err := json.Marshal(map[string]any{
 		"attestation": map[string]any{"bundle": map[string]any{}},
 		"verificationResult": map[string]any{
 			"mediaType": "x",
 			"signature": map[string]any{"certificate": c},
+			"statement": map[string]any{
+				"_type":         "https://in-toto.io/Statement/v1",
+				"predicateType": predicate,
+				"subject":       []any{map[string]any{"name": "x", "digest": map[string]any{"sha256": digest}}},
+			},
 		},
 	})
 	if err != nil {
@@ -166,6 +182,7 @@ func goodCertificate(commit, ref string) certificateJSON {
 		Issuer:                 "https://token.actions.githubusercontent.com",
 		BuildSignerURI:         "https://github.com/" + testRepo + "/.github/workflows/release.yaml@refs/tags/" + testTag,
 		BuildSignerDigest:      testCommit,
+		BuildConfigURI:         "https://github.com/" + testRepo + "/.github/workflows/release.yaml@refs/tags/" + testTag,
 		RunnerEnvironment:      "github-hosted",
 		SourceRepositoryURI:    "https://github.com/" + testRepo,
 		SourceRepositoryDigest: commit,
@@ -274,7 +291,7 @@ func (s *scenario) setReportedSize(name string, size int64) {
 }
 
 func (s *scenario) pages() string {
-	all := append(slices.Clone(s.others), s.rel)
+	all := append(append(slices.Clone(s.others), s.rel), s.after...)
 	var out strings.Builder
 	for _, r := range all {
 		data, err := json.Marshal([]releaseJSON{r})
@@ -337,10 +354,16 @@ func (s *scenario) Run(_ context.Context, argv []string, stdin []byte) ([]byte, 
 		if err := s.verifyErr[base]; err != nil {
 			return nil, []byte("verification failed"), err
 		}
-		if out, ok := s.verifyOut[base]; ok {
-			return []byte(out), nil, nil
+		out, ok := s.verifyOut[base]
+		if !ok {
+			out = goodVerifyJSON(testCommit, "refs/tags/"+testTag)
 		}
-		return []byte(goodVerifyJSON(testCommit, "refs/tags/"+testTag)), nil, nil
+		data, err := os.ReadFile(argv[3])
+		if err != nil {
+			return fail()
+		}
+		sum := sha256.Sum256(data)
+		return []byte(strings.ReplaceAll(out, digestPlaceholder, hex.EncodeToString(sum[:]))), nil, nil
 	}
 	return fail()
 }

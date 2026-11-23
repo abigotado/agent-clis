@@ -3,6 +3,8 @@ package release
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -81,10 +83,14 @@ func verifyArgv(gh string, pl plan, file, commit string) []string {
 		"--source-ref", "refs/tags/" + pl.tag,
 		"--source-digest", commit,
 		"--deny-self-hosted-runners",
+		"--predicate-type", predicateType,
 		"--format", "json",
 		"--hostname", ghHost,
 	}
 }
+
+// predicateType is the only predicate the tool accepts: SLSA build provenance.
+const predicateType = "https://slsa.dev/provenance/v1"
 
 // certificateJSON is verificationResult.signature.certificate as gh
 // (sigstore-go) prints it. Only the members the tool compares are read.
@@ -92,10 +98,21 @@ type certificateJSON struct {
 	Issuer                 string `json:"issuer"`
 	BuildSignerURI         string `json:"buildSignerURI"`
 	BuildSignerDigest      string `json:"buildSignerDigest"`
+	BuildConfigURI         string `json:"buildConfigURI"`
 	RunnerEnvironment      string `json:"runnerEnvironment"`
 	SourceRepositoryURI    string `json:"sourceRepositoryURI"`
 	SourceRepositoryDigest string `json:"sourceRepositoryDigest"`
 	SourceRepositoryRef    string `json:"sourceRepositoryRef"`
+}
+
+// statementJSON is verificationResult.statement, the in-toto statement gh
+// verified: what the attestation is about.
+type statementJSON struct {
+	PredicateType string `json:"predicateType"`
+	Subject       []struct {
+		Name   string            `json:"name"`
+		Digest map[string]string `json:"digest"`
+	} `json:"subject"`
 }
 
 type verifyResult struct {
@@ -103,6 +120,7 @@ type verifyResult struct {
 		Signature struct {
 			Certificate certificateJSON `json:"certificate"`
 		} `json:"signature"`
+		Statement statementJSON `json:"statement"`
 	} `json:"verificationResult"`
 }
 
@@ -118,6 +136,7 @@ func checkCertificate(i int, file string, c certificateJSON, pl plan, commit str
 		{"certificate issuer", c.Issuer, oidcIssuer},
 		{"build signer URI", c.BuildSignerURI, "https://github.com/" + pl.signer + "@" + ref},
 		{"build signer digest", c.BuildSignerDigest, commit},
+		{"build config URI", c.BuildConfigURI, c.BuildSignerURI},
 		{"runner environment", c.RunnerEnvironment, "github-hosted"},
 		{"source repository URI", c.SourceRepositoryURI, "https://github.com/" + pl.repo},
 		{"source ref", c.SourceRepositoryRef, ref},
@@ -130,9 +149,27 @@ func checkCertificate(i int, file string, c certificateJSON, pl plan, commit str
 	return nil
 }
 
+// checkStatement binds an attestation to the bytes the tool uses: the
+// predicate is SLSA provenance and one subject carries the sha256 of data, the
+// copy held in memory that the later steps work from, not the file gh read.
+func checkStatement(i int, file string, st statementJSON, data []byte) error {
+	if st.PredicateType != predicateType {
+		return refuse(StepAttest, "attestation %d of %s has the predicate type %q, want %q", i, file, st.PredicateType, predicateType)
+	}
+	sum := sha256.Sum256(data)
+	want := hex.EncodeToString(sum[:])
+	for _, subject := range st.Subject {
+		if subject.Digest["sha256"] == want {
+			return nil
+		}
+	}
+	return refuse(StepAttest, "attestation %d of %s has no subject with the sha256 %s of the bytes in use", i, file, want)
+}
+
 // verifyFile runs gh attestation verify for file and requires every verified
-// attestation to match the expected certificate.
-func verifyFile(ctx context.Context, r runner.Runner, gh string, pl plan, file, commit string) error {
+// attestation to match the expected certificate and to be about data, the
+// bytes the tool holds for that file.
+func verifyFile(ctx context.Context, r runner.Runner, gh string, pl plan, file, commit string, data []byte) error {
 	stdout, _, err := r.Run(ctx, verifyArgv(gh, pl, file, commit), nil)
 	if err != nil {
 		// A cancelled run reports as cancelled, not as a failed verification.
@@ -158,6 +195,9 @@ func verifyFile(ctx context.Context, r runner.Runner, gh string, pl plan, file, 
 	}
 	for i, res := range results {
 		if err := checkCertificate(i, file, res.VerificationResult.Signature.Certificate, pl, commit); err != nil {
+			return err
+		}
+		if err := checkStatement(i, file, res.VerificationResult.Statement, data); err != nil {
 			return err
 		}
 	}

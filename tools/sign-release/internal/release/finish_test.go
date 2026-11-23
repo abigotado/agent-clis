@@ -49,12 +49,16 @@ func TestFinishHappyPathCommandsAreExact(t *testing.T) {
 	signed := filepath.Join(work, "signed")
 	ref := []string{testGH, "api", "--hostname", "github.com", "repos/" + testRepo + "/git/ref/tags/" + testTag}
 	rel := []string{testGH, "api", "--hostname", "github.com", "repos/" + testRepo + "/releases/4242"}
+	list := []string{testGH, "api", "--hostname", "github.com", "--paginate", "repos/" + testRepo + "/releases"}
 	want = append(want,
 		[]string{testGH, "api", "--hostname", "github.com", "repos/" + testRepo + "/git/commits/" + testCommit},
+		list,
 		[]string{testGH, "release", "upload", testTag,
 			filepath.Join(signed, p.s.darwin[0]), filepath.Join(signed, p.s.darwin[1]), filepath.Join(signed, p.s.checksum),
 			"--clobber", "--repo", "github.com/" + testRepo},
-		rel, ref, ref,
+		list,
+		rel, ref, ref, rel,
+		[]string{testGH, "api", "--hostname", "github.com", "repos/" + testRepo + "/immutable-releases"},
 		[]string{testGH, "api", "--hostname", "github.com", "-X", "PATCH", "repos/" + testRepo + "/releases/4242", "--input", "-"},
 		rel, ref,
 	)
@@ -568,9 +572,10 @@ func TestFinishVerifiesByDownloadWhenTheDigestIsMissing(t *testing.T) {
 			downloads++
 		}
 	}
-	// Three darwin assets, read back after the upload and again after the publish.
-	if downloads != 6 {
-		t.Fatalf("%d downloads after the upload, want 6", downloads)
+	// Three darwin assets, read back after the upload, before the PATCH and
+	// after the publish.
+	if downloads != 9 {
+		t.Fatalf("%d downloads after the upload, want 9", downloads)
 	}
 }
 
@@ -622,7 +627,7 @@ func TestFinishRequiresAPublishedImmutableRelease(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p := newPub(t)
 			p.tweak = func(read int, rel map[string]any) {
-				if read == 2 {
+				if read == 3 {
 					tt.mutate(p, rel)
 				}
 			}
@@ -806,7 +811,7 @@ func TestFinishNamesTheRecoveryAfterAnUpload(t *testing.T) {
 		{"second confirmation refused three times", func(p *pub) {}, testTag + "\n" + wrongTimes("no", 3)},
 		{"still a draft after the PATCH", func(p *pub) {
 			p.tweak = func(read int, rel map[string]any) {
-				if read == 2 {
+				if read == 3 {
 					rel["draft"] = true
 				}
 			}
@@ -865,12 +870,12 @@ func TestFinishAdviceAfterThePatchDependsOnTheRead(t *testing.T) {
 		setup    func(p *pub)
 		wantRead bool // the read did not complete
 	}{
-		{"read fails", func(p *pub) { p.relReadFail = map[int]string{2: "error"} }, true},
-		{"read answers with garbage", func(p *pub) { p.relReadFail = map[int]string{2: "garbage"} }, true},
+		{"read fails", func(p *pub) { p.relReadFail = map[int]string{3: "error"} }, true},
+		{"read answers with garbage", func(p *pub) { p.relReadFail = map[int]string{3: "garbage"} }, true},
 		{"read succeeds and a check fails", func(p *pub) { p.immutableAfter = false }, false},
 		{"read succeeds and the tag changed", func(p *pub) {
 			p.tweak = func(read int, rel map[string]any) {
-				if read == 2 {
+				if read == 3 {
 					rel["tag_name"] = "youtrack-agent-cli/v9.9.9"
 				}
 			}
@@ -962,5 +967,235 @@ func TestFinishPatchFailureNamesTheRestore(t *testing.T) {
 	// The draft-state sentence of the upload-window note is not true here.
 	if strings.Contains(err.Error(), restoreNote) {
 		t.Fatalf("error %q claims the draft carries unattested assets", err)
+	}
+}
+
+// secondDraft adds a second draft with the tag to the release list.
+func secondDraft(p *pub) {
+	p.s.others = append(p.s.others, releaseJSON{ID: 777, TagName: testTag, Draft: true})
+}
+
+// TestFinishChecksTheReleaseIdentityAroundTheUpload covers a second release
+// with the tag appearing, or the pinned one being replaced: gh finds its
+// target by tag, so the run refuses naming the IDs found. Before the upload
+// nothing is uploaded; after it the note does not claim the pinned release
+// took the files.
+func TestFinishChecksTheReleaseIdentityAroundTheUpload(t *testing.T) {
+	tests := []struct {
+		name        string
+		onList      func(p *pub, n int)
+		wantUploads int
+		wantReason  string
+	}{
+		{"second draft before the upload", func(p *pub, n int) {
+			if n == 2 {
+				secondDraft(p)
+			}
+		}, 0, "before the upload"},
+		{"second draft listed after the pinned one, before the upload", func(p *pub, n int) {
+			if n == 2 {
+				p.s.after = append(p.s.after, releaseJSON{ID: 777, TagName: testTag, Draft: true})
+			}
+		}, 0, "before the upload"},
+		{"second draft after the upload", func(p *pub, n int) {
+			if n == 3 {
+				secondDraft(p)
+			}
+		}, 1, "after the upload"},
+		{"pinned release replaced before the upload", func(p *pub, n int) {
+			if n == 2 {
+				p.s.rel.ID = 999
+			}
+		}, 0, "before the upload"},
+		{"pinned release replaced after the upload", func(p *pub, n int) {
+			if n == 3 {
+				p.s.rel.ID = 999
+			}
+		}, 1, "after the upload"},
+		{"pinned release published before the upload", func(p *pub, n int) {
+			if n == 2 {
+				p.s.rel.Draft = false
+			}
+		}, 0, "not a draft"},
+		{"tag vanished after the upload", func(p *pub, n int) {
+			if n == 3 {
+				p.s.rel.TagName = "other"
+			}
+		}, 1, "have the IDs []"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newPub(t)
+			p.onList = func(n int) { tt.onList(p, n) }
+			res, err := p.s.run()
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			c, _ := p.console(goodAnswers)
+			_, err = Finish(t.Context(), p.s, p.s.params, res, c)
+			wantRefusal(t, err, StepUpload, tt.wantReason)
+			if p.uploadCount() != tt.wantUploads {
+				t.Fatalf("%d uploads, want %d", p.uploadCount(), tt.wantUploads)
+			}
+			wantNoPatch(t, p)
+			msg := err.Error()
+			if strings.Contains(msg, "now carries") {
+				t.Fatalf("error %q claims the pinned release carries the signed assets", msg)
+			}
+			if tt.wantUploads == 1 && !strings.Contains(msg, "not proven that release 4242 took the files") {
+				t.Fatalf("error %q lacks the unproven-target note", msg)
+			}
+			if tt.wantUploads == 0 && strings.Contains(msg, restoreNote) {
+				t.Fatalf("error %q gives restore advice before anything was uploaded", msg)
+			}
+		})
+	}
+}
+
+func TestFinishNamesBothIDsOfASecondDraft(t *testing.T) {
+	p := newPub(t)
+	p.onList = func(n int) {
+		if n == 3 {
+			secondDraft(p)
+		}
+	}
+	_, err := p.finish(goodAnswers)
+	if err == nil || !strings.Contains(err.Error(), "[777 4242]") && !strings.Contains(err.Error(), "[4242 777]") {
+		t.Fatalf("Finish() error = %v, want both IDs 4242 and 777", err)
+	}
+}
+
+// TestFinishChecksTheReleaseJustBeforeThePatch is B2: after the second
+// confirmation the release is read again by ID and the immutable releases
+// setting once more, and any difference stops the run before the PATCH.
+func TestFinishChecksTheReleaseJustBeforeThePatch(t *testing.T) {
+	zeros := "sha256:" + strings.Repeat("0", 64)
+	tests := []struct {
+		name   string
+		setup  func(p *pub)
+		step   Step
+		reason string
+	}{
+		{"published by someone else", func(p *pub) {
+			p.tweak = func(read int, rel map[string]any) {
+				if read == 2 {
+					rel["draft"] = false
+				}
+			}
+		}, StepPublish, "no longer a draft"},
+		{"digest changed", func(p *pub) {
+			p.tweak = func(read int, rel map[string]any) {
+				if read == 2 {
+					setAsset(rel, p.s.darwin[1], "digest", zeros)
+				}
+			}
+		}, StepPublish, "digest"},
+		{"extra asset", func(p *pub) {
+			p.tweak = func(read int, rel map[string]any) {
+				if read == 2 {
+					editAssets(rel, func(a []any) []any { return append(a, map[string]any{"id": 9, "name": "evil.tar.gz", "size": 1}) })
+				}
+			}
+		}, StepPublish, "unexpected asset"},
+		{"asset missing", func(p *pub) {
+			p.tweak = func(read int, rel map[string]any) {
+				if read == 2 {
+					editAssets(rel, func(a []any) []any {
+						return slices.DeleteFunc(a, func(x any) bool { return x.(map[string]any)["name"] == p.s.checksum })
+					})
+				}
+			}
+		}, StepPublish, "lacks the asset"},
+		{"linux asset replaced", func(p *pub) {
+			p.tweak = func(read int, rel map[string]any) {
+				if read == 2 {
+					for _, a := range p.s.rel.Assets {
+						if strings.Contains(a.Name, "linux_arm64") {
+							setAsset(rel, a.Name, "id", 778)
+						}
+					}
+				}
+			}
+		}, StepPublish, "was replaced"},
+		{"immutable releases turned off", func(p *pub) {
+			p.immutableOutAt = map[int]string{2: `{"enabled":false}`}
+		}, StepImmutable, "immutable releases"},
+		{"immutable releases answer without enabled", func(p *pub) {
+			p.immutableOutAt = map[int]string{2: `{"message":"Forbidden"}`}
+		}, StepImmutable, "immutable releases"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newPub(t)
+			tt.setup(p)
+			_, err := p.finish(goodAnswers)
+			wantRefusal(t, err, tt.step, tt.reason)
+			wantNoPatch(t, p)
+			if !strings.Contains(err.Error(), restoreNote) {
+				t.Fatalf("error %q lacks the restore note", err)
+			}
+		})
+	}
+}
+
+// tamperingReader runs fn when the first prompt is answered, which is after
+// the files were written and before the upload.
+type tamperingReader struct {
+	in   io.Reader
+	fn   func()
+	done bool
+}
+
+func (r *tamperingReader) Read(b []byte) (int, error) {
+	if !r.done {
+		r.done = true
+		r.fn()
+	}
+	return r.in.Read(b)
+}
+
+// TestFinishRefusesAFileChangedBeforeTheUpload is B4: the files gh uploads are
+// read from disk by gh, so the tool compares them with the bytes it built right
+// before the command.
+func TestFinishRefusesAFileChangedBeforeTheUpload(t *testing.T) {
+	tests := []struct {
+		name   string
+		file   func(p *pub) string
+		change func(p *pub, path string) error
+	}{
+		{"an archive is overwritten", func(p *pub) string { return p.s.darwin[0] }, func(_ *pub, path string) error {
+			return os.WriteFile(path, []byte("evil"), 0o600)
+		}},
+		{"the checksums file is overwritten", func(p *pub) string { return p.s.checksum }, func(_ *pub, path string) error {
+			return os.WriteFile(path, []byte("evil"), 0o600)
+		}},
+		{"an archive is replaced by a link", func(p *pub) string { return p.s.darwin[1] }, func(p *pub, path string) error {
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+			return os.Symlink(filepath.Join(filepath.Dir(path), p.s.darwin[0]), path)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newPub(t)
+			res, err := p.s.run()
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			path := filepath.Join(p.s.params.WorkDir, "signed", tt.file(p))
+			in := &tamperingReader{in: strings.NewReader(goodAnswers), fn: func() {
+				if err := tt.change(p, path); err != nil {
+					t.Errorf("tamper with %s: %v", path, err)
+				}
+			}}
+			var out bytes.Buffer
+			_, err = Finish(t.Context(), p.s, p.s.params, res, Console{In: in, Out: &out})
+			wantRefusal(t, err, StepUpload, "")
+			if p.uploadCount() != 0 {
+				t.Fatalf("%d uploads ran with a changed file", p.uploadCount())
+			}
+			wantNoPatch(t, p)
+		})
 	}
 }

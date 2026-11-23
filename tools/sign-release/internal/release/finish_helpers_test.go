@@ -57,6 +57,12 @@ type pub struct {
 	noDigest      bool
 	tweak         func(read int, rel map[string]any)
 	moveTagAtRead int // the nth read of the tag ref moves the tag; 0 never
+	// onList runs on the nth release list (Run's own is the first) before it
+	// answers.
+	onList func(n int)
+	// immutableOutAt replaces the immutable releases answer on the nth read.
+	immutableOutAt        map[int]string
+	lists, immutableReads int
 	// failDownload makes the digest-fallback downloads, those after the upload,
 	// exit non-zero: "beforePatch" or "afterPatch".
 	failDownload string
@@ -140,6 +146,13 @@ func (p *pub) intercept(argv []string, stdin []byte) ([]byte, []byte, error, boo
 			return nil, []byte("HTTP 502"), exitErr(1), true
 		}
 	}
+	if len(argv) == 6 && argv[1] == "api" && argv[4] == "--paginate" {
+		p.lists++
+		if p.onList != nil {
+			p.onList(p.lists)
+		}
+		return nil, nil, nil, false
+	}
 	if p.isTagRef(argv) {
 		if p.failTagReadAfterPatch && p.published {
 			return nil, nil, errFake, true
@@ -154,6 +167,10 @@ func (p *pub) intercept(argv []string, stdin []byte) ([]byte, []byte, error, boo
 	case argv[0] == CodesignPath:
 		return p.codesign(argv)
 	case len(argv) == 5 && argv[1] == "api" && argv[4] == "repos/"+testRepo+"/immutable-releases":
+		p.immutableReads++
+		if out, ok := p.immutableOutAt[p.immutableReads]; ok {
+			return []byte(out), nil, p.immutableErr, true
+		}
 		return []byte(p.immutableOut), nil, p.immutableErr, true
 	case len(argv) == 5 && argv[1] == "api" && argv[4] == "repos/"+testRepo+"/git/commits/"+testCommit:
 		return []byte(fmt.Sprintf(`{"sha":%q,"committer":{"date":%q}}`, p.commitSHA, p.commitDate)), nil, nil, true
