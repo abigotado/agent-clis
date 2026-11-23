@@ -832,13 +832,17 @@ jobs:
       - name: Module is stdlib-only
         run: |
           set -euo pipefail
-          requires="$(go mod edit -json | jq -r '.Require // [] | .[].Path')"
-          if [ -n "${requires}" ]; then
-            echo "::error::tools/sign-release must have no requirements, found: ${requires//$'\n'/, }"
+          # The module file may hold only the module path and the go directive:
+          # no Require, Toolchain, Godebug, Tool, Replace, Exclude or Ignore.
+          keys="$(go mod edit -json | jq -r 'keys | join(",")')"
+          if [ "${keys}" != "Go,Module" ]; then
+            echo "::error::tools/sign-release go.mod must have only a module path and a go directive, found: ${keys}"
             exit 1
           fi
           for target_os in linux darwin windows; do
-            outside="$(GOOS="${target_os}" go list -deps -test -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | awk 'NF' | grep -Ev '^github\.com/abigotado/agent-clis/tools/sign-release(/| |\.test$|$)' || true)"
+            # Captured first, so a go list that fails fails the step.
+            listed="$(GOOS="${target_os}" go list -deps -test -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./...)"
+            outside="$(printf '%s\n' "${listed}" | awk 'NF' | grep -Ev '^github\.com/abigotado/agent-clis/tools/sign-release(/| |\.test$|$)' || true)"
             if [ -n "${outside}" ]; then
               echo "::error::tools/sign-release imports non-standard packages for GOOS=${target_os}: ${outside//$'\n'/, }"
               exit 1

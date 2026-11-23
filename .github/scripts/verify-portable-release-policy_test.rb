@@ -277,6 +277,86 @@ class VerifyPortableReadOnlyReleasePolicyTest < Minitest::Test
     end
   end
 
+  def publication_exempt_paths
+    source = File.read(VERIFIER, encoding: "UTF-8")
+    listed = source[/PUBLICATION_EXEMPT = %w\[\n(.*?)\n\]\.freeze/m, 1]
+    refute_nil listed
+    listed.split
+  end
+
+  # The real repository, with its real config, passes the real checker. CI runs
+  # the same command; this keeps the failure in the unit test run.
+  def test_the_real_repository_passes
+    stdout, stderr, status = Open3.capture3("ruby", VERIFIER, File.join(ROOT, CONFIG_PATH), ROOT)
+    assert status.success?, "#{stdout}#{stderr}"
+  end
+
+  def test_every_publication_exemption_is_exact_needed_and_publication_only
+    source = File.read(VERIFIER, encoding: "UTF-8")
+    paths = publication_exempt_paths
+    refute_empty paths
+    assert_equal paths.uniq, paths
+    paths.each do |path|
+      refute path.include?("*"), "#{path} must be an exact path"
+      assert path.start_with?("tools/sign-release/"), "#{path} is outside tools/sign-release"
+      assert File.file?(File.join(ROOT, path)), "#{path} is exempt but does not exist"
+      Dir.mktmpdir("portable-release-policy-publication") do |root|
+        FileUtils.mkdir_p(File.join(root, ".github/workflows"))
+        File.write(File.join(root, ".github/workflows/ci.yaml"), MINIMAL_CI)
+        File.write(File.join(root, ".github/workflows/release.yaml"), RELEASE)
+        config_path = File.join(root, CONFIG_PATH)
+        FileUtils.mkdir_p(File.dirname(config_path))
+        File.write(config_path, YAML.dump(CONFIG))
+        target = File.join(root, path)
+        FileUtils.mkdir_p(File.dirname(target))
+        FileUtils.cp(File.join(ROOT, path), target)
+        # Listed: the real file passes.
+        _stdout, stderr, status = Open3.capture3("ruby", VERIFIER, config_path, root)
+        assert status.success?, "#{path}: #{stderr}"
+        # Not listed: the same file is refused for its publication action, so an
+        # entry that is not needed fails here as stale.
+        stripped = File.join(root, "verifier.rb")
+        File.write(stripped, source.sub("  #{path}\n", ""))
+        _stdout, stderr, status = Open3.capture3("ruby", stripped, config_path, root)
+        refute status.success?, "#{path} would pass the scan without its exemption"
+        assert_includes stderr, "#{path} contains a publication action"
+      end
+    end
+  end
+
+  def test_a_publication_exemption_does_not_lift_the_other_scans
+    path = publication_exempt_paths.first
+    {
+      "brew tap someone/else\n" => "contains a Homebrew or quarantine bypass",
+      "xattr -d com.apple.quarantine f\n" => "contains a Homebrew or quarantine bypass",
+      "goreleaser check --config .goreleaser.yaml\n" => "mentions GoReleaser outside the approved lines",
+    }.each do |content, message|
+      success, stderr = verify(CONFIG, { path => "gh release upload v1\n#{content}" })
+      refute success, content
+      assert_includes stderr, message
+      refute_includes stderr, "#{path} contains a publication action"
+    end
+  end
+
+  def test_an_unlisted_file_under_sign_release_naming_gh_release_is_still_refused
+    paths = publication_exempt_paths
+    [
+      "tools/sign-release/internal/release/new.go",
+      "tools/sign-release/internal/release/finish.go.orig",
+      "tools/sign-release/internal/release/sub/finish.go",
+      "tools/sign-release/internal/app/app.go",
+      "tools/sign-release/main.go",
+      "tools/sign-release/RUNBOOK.md",
+    ].each do |script|
+      refute_includes paths, script
+      ["gh release upload v1\n", "gh api -X PATCH repos/o/r/releases/1\n"].each do |content|
+        success, stderr = verify(CONFIG, { script => content })
+        refute success, script
+        assert_includes stderr, "#{script} contains a publication action"
+      end
+    end
+  end
+
   def test_rejects_a_release_workflow_that_restores_the_go_cache
     changed = RELEASE.gsub("cache: false", "cache: true")
     refute_equal RELEASE, changed
