@@ -11,7 +11,7 @@ import (
 )
 
 func TestAcquireIsExclusivePerRepositoryAndTag(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "sign-release")
+	dir := filepath.Join(tempDir(t), "sign-release")
 	first, err := Acquire(dir, "owner/repo", "cli/v1.0.0")
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
@@ -59,7 +59,7 @@ func TestAcquireIsExclusivePerRepositoryAndTag(t *testing.T) {
 }
 
 func TestAcquireUsesPrivateFilesAndRefusesALink(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "sign-release")
+	dir := filepath.Join(tempDir(t), "sign-release")
 	l, err := Acquire(dir, "owner/repo", "cli/v1.0.0")
 	if err != nil {
 		t.Fatalf("Acquire() error = %v", err)
@@ -76,7 +76,7 @@ func TestAcquireUsesPrivateFilesAndRefusesALink(t *testing.T) {
 	}
 
 	// A symbolic link in the file's place is refused, not followed.
-	target := filepath.Join(t.TempDir(), "elsewhere")
+	target := filepath.Join(tempDir(t), "elsewhere")
 	if err := os.WriteFile(target, nil, 0o600); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestAcquireUsesPrivateFilesAndRefusesALink(t *testing.T) {
 }
 
 func TestAcquireRefusesAnOpenDirectoryAndEmptyKeys(t *testing.T) {
-	open := filepath.Join(t.TempDir(), "open")
+	open := filepath.Join(tempDir(t), "open")
 	if err := os.Mkdir(open, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestAcquireRefusesAnOpenDirectoryAndEmptyKeys(t *testing.T) {
 	if _, err := Acquire(open, "owner/repo", "cli/v1.0.0"); err == nil {
 		t.Fatal("Acquire() accepted a group- or world-accessible directory")
 	}
-	if _, err := Acquire(t.TempDir(), "", "tag"); err == nil {
+	if _, err := Acquire(tempDir(t), "", "tag"); err == nil {
 		t.Fatal("Acquire() accepted an empty repository")
 	}
 	if _, err := Acquire("relative/dir", "owner/repo", "tag"); err == nil {
@@ -112,9 +112,9 @@ func TestAcquireRefusesAnOpenDirectoryAndEmptyKeys(t *testing.T) {
 }
 
 func TestAcquireForHomeIgnoresTheParentEnvironment(t *testing.T) {
-	home := t.TempDir()
-	envHome := t.TempDir()
-	envCache := t.TempDir()
+	home := tempDir(t)
+	envHome := tempDir(t)
+	envCache := tempDir(t)
 	t.Setenv("HOME", envHome)
 	t.Setenv("XDG_CACHE_HOME", envCache)
 
@@ -143,8 +143,8 @@ func TestAcquireForHomeIgnoresTheParentEnvironment(t *testing.T) {
 }
 
 func TestMkWorkDirIgnoresTMPDIRAndHOME(t *testing.T) {
-	home := t.TempDir()
-	envTmp, envHome := t.TempDir(), t.TempDir()
+	home := tempDir(t)
+	envTmp, envHome := tempDir(t), tempDir(t)
 	t.Setenv("TMPDIR", envTmp)
 	t.Setenv("HOME", envHome)
 
@@ -172,7 +172,7 @@ func TestMkWorkDirRefusesAnUnsafeParent(t *testing.T) {
 	}{
 		{"symlink", func(t *testing.T, root string) {
 			// The target is itself private and ours, so only the link is wrong.
-			target := filepath.Join(t.TempDir(), "target")
+			target := filepath.Join(tempDir(t), "target")
 			if err := os.Mkdir(target, 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -191,7 +191,7 @@ func TestMkWorkDirRefusesAnUnsafeParent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			home := t.TempDir()
+			home := tempDir(t)
 			if err := os.MkdirAll(Dir(home), 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -200,5 +200,69 @@ func TestMkWorkDirRefusesAnUnsafeParent(t *testing.T) {
 				t.Fatalf("MkWorkDir() = %q, want an error", dir)
 			}
 		})
+	}
+}
+
+// tempDir is t.TempDir with its symbolic links resolved: on macOS the temp tree
+// sits under /var, a link to /private/var, which the production rule refuses.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestEnsurePrivateDirRefusesUnsafeAncestors(t *testing.T) {
+	tests := []struct {
+		name  string
+		build func(t *testing.T) string
+	}{
+		{"symlinked ancestor", func(t *testing.T) string {
+			base := tempDir(t)
+			real := filepath.Join(base, "real")
+			if err := os.Mkdir(real, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			link := filepath.Join(base, "link")
+			if err := os.Symlink(real, link); err != nil {
+				t.Fatal(err)
+			}
+			return filepath.Join(link, "sign-release")
+		}},
+		{"group-writable ancestor", func(t *testing.T) string {
+			base := filepath.Join(tempDir(t), "shared")
+			if err := os.Mkdir(base, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(base, 0o775); err != nil {
+				t.Fatal(err)
+			}
+			return filepath.Join(base, "sign-release")
+		}},
+		{"world-writable ancestor", func(t *testing.T) string {
+			base := filepath.Join(tempDir(t), "open")
+			if err := os.Mkdir(base, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(base, 0o757); err != nil {
+				t.Fatal(err)
+			}
+			return filepath.Join(base, "sign-release")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ensurePrivateDir(tt.build(t)); err == nil {
+				t.Fatal("ensurePrivateDir() = nil, want a refusal")
+			}
+		})
+	}
+}
+
+func TestEnsurePrivateDirAcceptsASafeTree(t *testing.T) {
+	if err := ensurePrivateDir(filepath.Join(tempDir(t), "a", "b")); err != nil {
+		t.Fatalf("ensurePrivateDir() error = %v", err)
 	}
 }

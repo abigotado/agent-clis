@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -50,20 +51,51 @@ func acquire(dir, name string) (*Lock, error) {
 	}}, nil
 }
 
-// ensurePrivateDir creates dir with mode 0700 when it is missing, then requires
-// that Lstat shows a real directory (not a symbolic link) owned by the current
-// user with mode exactly 0700.
+// ensurePrivateDir creates dir with mode 0700 when it is missing, then walks
+// every component from the root down with Lstat. An ancestor must be a real
+// directory (not a symbolic link), owned by root or the current user, and not
+// writable by group or others, so no other user can swap a component. The leaf
+// must be owned by the current user with mode exactly 0700. dir must be
+// absolute and already resolved: a path that EvalSymlinks changes is refused.
 func ensurePrivateDir(dir string) error {
+	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
+		return fmt.Errorf("directory %q must be an absolute, clean path", dir)
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create directory %s: %w", dir, err)
 	}
-	info, err := os.Lstat(dir)
+	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return fmt.Errorf("stat directory %s: %w", dir, err)
+		return fmt.Errorf("resolve directory %s: %w", dir, err)
 	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !info.IsDir() || info.Mode().Perm() != 0o700 || !ok || int(st.Uid) != os.Getuid() {
-		return fmt.Errorf("directory %s must be a real directory, owned by the current user, with mode 0700", dir)
+	if resolved != dir {
+		return fmt.Errorf("directory %s resolves to %s through a symbolic link; use the resolved path", dir, resolved)
+	}
+	uid := uint32(os.Getuid())
+	current := string(filepath.Separator)
+	parts := strings.Split(strings.TrimPrefix(dir, current), current)
+	for i := -1; i < len(parts); i++ {
+		if i >= 0 {
+			current = filepath.Join(current, parts[i])
+		}
+		leaf := i == len(parts)-1
+		info, err := os.Lstat(current)
+		if err != nil {
+			return fmt.Errorf("stat directory %s: %w", current, err)
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || !info.IsDir() {
+			return fmt.Errorf("%s must be a real directory, not a symbolic link", current)
+		}
+		if leaf {
+			if info.Mode().Perm() != 0o700 || st.Uid != uid {
+				return fmt.Errorf("directory %s must be owned by the current user with mode 0700", current)
+			}
+			continue
+		}
+		if (st.Uid != 0 && st.Uid != uid) || info.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("directory %s, an ancestor of %s, must be owned by root or the current user and not writable by group or others", current, dir)
+		}
 	}
 	return nil
 }

@@ -14,37 +14,27 @@ import (
 	"path/filepath"
 
 	"github.com/abigotado/agent-clis/tools/sign-release/internal/app"
-	"github.com/abigotado/agent-clis/tools/sign-release/internal/lock"
 	"github.com/abigotado/agent-clis/tools/sign-release/internal/runner"
 )
 
 func main() {
 	// The account database, not $HOME: os/user reads it on darwin with or
 	// without cgo.
-	homeDir := func() (string, error) {
+	accountHome := func() (string, error) {
 		u, err := user.Current()
 		if err != nil {
 			return "", err
 		}
 		return u.HomeDir, nil
 	}
+	seams := app.NewHomeSeams(accountHome)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	code := app.Main(ctx, app.Deps{
-		ConfigJSON: configJSON,
-		Args:       os.Args[1:],
-		Environ:    os.Environ,
-		HomeDir:    homeDir,
-		Lock: func(repo, tag string) (func() error, error) {
-			home, err := homeDir()
-			if err != nil {
-				return nil, err
-			}
-			l, err := lock.AcquireForHome(home, repo, tag)
-			if err != nil {
-				return nil, err
-			}
-			return l.Release, nil
-		},
+		ConfigJSON:   configJSON,
+		Args:         os.Args[1:],
+		Environ:      os.Environ,
+		HomeDir:      seams.HomeDir,
+		Lock:         seams.Lock,
 		LookPath:     exec.LookPath,
 		EvalSymlinks: filepath.EvalSymlinks,
 		NewRunner: func(maxStdout int64, env []string, programs ...string) (runner.Runner, error) {
@@ -54,16 +44,9 @@ func main() {
 			}
 			return r, nil
 		},
-		// Under the account's validated cache directory, never TMPDIR.
-		MkWorkDir: func() (string, error) {
-			home, err := homeDir()
-			if err != nil {
-				return "", err
-			}
-			return lock.MkWorkDir(home)
-		},
-		Stdin:  os.Stdin,
-		Stderr: os.Stderr,
+		MkWorkDir: seams.MkWorkDir,
+		Stdin:     os.Stdin,
+		Stderr:    os.Stderr,
 	})
 	stop()
 	os.Exit(code)
