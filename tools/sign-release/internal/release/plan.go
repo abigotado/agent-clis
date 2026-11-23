@@ -1,9 +1,11 @@
-// Package release implements steps 1 to 6 of the sign-release design: it
-// resolves the draft release, downloads and checks the darwin assets, unpacks
-// the archives, parses the binaries and verifies their attestations. Every
-// external command goes through a runner.Runner, and nothing downloaded or
-// extracted is ever executed: the only programs the tool starts are gh and, in
-// later steps, /usr/bin/codesign.
+// Package release implements the sign-release design. Run covers steps 1 to 5:
+// it resolves the draft release, downloads and checks the darwin assets,
+// unpacks the archives, parses the binaries and verifies their attestations.
+// Finish covers steps 6 to 11: it signs and verifies the binaries, repackages
+// the archives deterministically, uploads them to the draft, checks the tag and
+// publishes. Every external command goes through a runner.Runner, and nothing
+// downloaded, extracted or signed is ever executed: the only programs the tool
+// starts are gh and /usr/bin/codesign.
 package release
 
 import (

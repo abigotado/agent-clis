@@ -14,6 +14,14 @@ const (
 	StepExtract   Step = "extract"
 	StepMachO     Step = "macho"
 	StepAttest    Step = "attest"
+	StepSign      Step = "sign"
+	StepVerify    Step = "verify"
+	StepRepackage Step = "repackage"
+	StepImmutable Step = "immutable"
+	StepConfirm   Step = "confirm"
+	StepUpload    Step = "upload"
+	StepTag       Step = "tag"
+	StepPublish   Step = "publish"
 )
 
 // Refusal reports input the tool will not sign: the release, an asset, an

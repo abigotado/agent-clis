@@ -23,6 +23,13 @@ type Artifact struct {
 	BinaryPath string
 	// StreamPath is the machodigest stream of the binary.
 	StreamPath string
+
+	// stream is the machodigest stream the attestation covers, kept in memory so
+	// signing is compared against what was verified and not against a file a
+	// later step could find changed.
+	stream []byte
+	// members are the verified archive members, by name, as attested.
+	members map[string][]byte
 }
 
 // Result is what steps 1 to 6 hand to the signing step.
@@ -37,6 +44,10 @@ type Result struct {
 	ChecksumsPath string
 	AMD64         Artifact
 	ARM64         Artifact
+
+	// pl and limits are what the later steps need and a caller must not change.
+	pl     plan
+	limits Limits
 }
 
 // Run performs steps 1 to 6. Every command goes through r, and none of them
@@ -54,7 +65,7 @@ func Run(ctx context.Context, r runner.Runner, p Params) (Result, error) {
 		return Result{}, err
 	}
 
-	res := Result{ReleaseID: rel.id, Tag: pl.tag, AssetIDs: make(map[string]int64, len(rel.assets))}
+	res := Result{ReleaseID: rel.id, Tag: pl.tag, AssetIDs: make(map[string]int64, len(rel.assets)), pl: pl, limits: limits}
 	for name, a := range rel.assets {
 		res.AssetIDs[name] = a.ID
 	}
@@ -158,5 +169,7 @@ func store(workDir string, pl plan, ap archivePlan, arc downloaded, u unpacked) 
 		ExtractDir:  dir,
 		BinaryPath:  filepath.Join(dir, pl.cli),
 		StreamPath:  streamPath,
+		stream:      u.stream,
+		members:     u.files,
 	}, nil
 }

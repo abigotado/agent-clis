@@ -139,6 +139,10 @@ type scenario struct {
 	authErr    error
 	onVerify   func() // called when a verify command arrives
 	calls      [][]string
+
+	// intercept sees every command after it is recorded and before the default
+	// answers; handled reports that it answered.
+	intercept func(argv []string, stdin []byte) (stdout, stderr []byte, err error, handled bool)
 }
 
 // verifyEntry is one entry of gh attestation verify --format json, built
@@ -284,8 +288,13 @@ func (s *scenario) pages() string {
 
 func (s *scenario) record(argv []string) { s.calls = append(s.calls, slices.Clone(argv)) }
 
-func (s *scenario) Run(_ context.Context, argv []string, _ []byte) ([]byte, []byte, error) {
+func (s *scenario) Run(_ context.Context, argv []string, stdin []byte) ([]byte, []byte, error) {
 	s.record(argv)
+	if s.intercept != nil {
+		if out, errOut, err, handled := s.intercept(argv, stdin); handled {
+			return out, errOut, err
+		}
+	}
 	fail := func() ([]byte, []byte, error) {
 		s.t.Errorf("unexpected command %q", argv)
 		return nil, nil, fmt.Errorf("unexpected command %q", argv)

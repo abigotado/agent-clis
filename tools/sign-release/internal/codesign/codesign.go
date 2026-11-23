@@ -103,14 +103,31 @@ func (e Expectation) Requirement() (string, error) {
 	return "=" + expr, nil
 }
 
-// designated returns the requirement as `codesign -d -r-` prints it: the same
-// text without the leading "=".
-func (e Expectation) designated() (string, error) {
+// Expression returns the bare requirement expression, without "designated =>"
+// and without the leading "=":
+//
+//	identifier "<id>" and anchor apple generic and certificate leaf = H"<sha1>"
+//
+// `codesign --verify -R=<expression>` takes this form; the "designated =>"
+// prefix is only valid in a requirement set, as `--requirements` takes it.
+// Requirement and the text `codesign -d -r-` prints are built from it, so the
+// forms cannot drift. The hex is lowercase.
+func (e Expectation) Expression() (string, error) {
 	if err := e.Validate(); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(`designated => identifier "%s" and anchor apple generic and certificate leaf = H"%s"`,
+	return fmt.Sprintf(`identifier "%s" and anchor apple generic and certificate leaf = H"%s"`,
 		e.Identifier, strings.ToLower(e.CertSHA1)), nil
+}
+
+// designated returns the requirement as `codesign -d -r-` prints it: the same
+// text without the leading "=".
+func (e Expectation) designated() (string, error) {
+	expr, err := e.Expression()
+	if err != nil {
+		return "", err
+	}
+	return "designated => " + expr, nil
 }
 
 // Details is what `codesign -dvv` reports.

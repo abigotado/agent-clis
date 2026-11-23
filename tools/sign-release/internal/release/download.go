@@ -26,25 +26,34 @@ type downloaded struct {
 // reported size and the received bytes are both held to limit, and they must
 // agree.
 func downloadAsset(ctx context.Context, r runner.Runner, gh, repo, dir string, a asset, limit int64) (downloaded, error) {
+	data, err := fetchAsset(ctx, r, gh, repo, a, limit)
+	if err != nil {
+		return downloaded{}, err
+	}
+	path := filepath.Join(dir, a.Name)
+	if err := writeNew(path, data); err != nil {
+		return downloaded{}, err
+	}
+	return downloaded{data: data, path: path}, nil
+}
+
+// fetchAsset fetches one asset by ID through gh and holds it in memory.
+func fetchAsset(ctx context.Context, r runner.Runner, gh, repo string, a asset, limit int64) ([]byte, error) {
 	if a.Size > limit {
-		return downloaded{}, refuse(StepDownload, "asset %q reports %d bytes, over the limit %d", a.Name, a.Size, limit)
+		return nil, refuse(StepDownload, "asset %q reports %d bytes, over the limit %d", a.Name, a.Size, limit)
 	}
 	argv := apiArgv(gh, "repos/"+repo+"/releases/assets/"+strconv.FormatInt(a.ID, 10), "-H", "Accept: application/octet-stream")
 	stdout, _, err := r.Run(ctx, argv, nil)
 	if err != nil {
-		return downloaded{}, fmt.Errorf("download asset %q: %w", a.Name, err)
+		return nil, fmt.Errorf("download asset %q: %w", a.Name, err)
 	}
 	if int64(len(stdout)) > limit {
-		return downloaded{}, refuse(StepDownload, "asset %q delivered %d bytes, over the limit %d", a.Name, len(stdout), limit)
+		return nil, refuse(StepDownload, "asset %q delivered %d bytes, over the limit %d", a.Name, len(stdout), limit)
 	}
 	if int64(len(stdout)) != a.Size {
-		return downloaded{}, refuse(StepDownload, "asset %q delivered %d bytes, the release reports %d", a.Name, len(stdout), a.Size)
+		return nil, refuse(StepDownload, "asset %q delivered %d bytes, the release reports %d", a.Name, len(stdout), a.Size)
 	}
-	path := filepath.Join(dir, a.Name)
-	if err := writeNew(path, stdout); err != nil {
-		return downloaded{}, err
-	}
-	return downloaded{data: stdout, path: path}, nil
+	return stdout, nil
 }
 
 // writeNew creates path exclusively with mode 0600 and writes data. The name

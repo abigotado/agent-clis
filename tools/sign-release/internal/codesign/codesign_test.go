@@ -620,3 +620,23 @@ func assertCheck(t *testing.T, err error, want Check) {
 		t.Fatalf("check = %s, want %s (%v)", ce.Check, want, err)
 	}
 }
+
+// TestExpressionIsTheBareRequirement pins the form `codesign --verify -R=` can
+// parse, and that Requirement is built from it so the two cannot drift.
+func TestExpressionIsTheBareRequirement(t *testing.T) {
+	t.Parallel()
+
+	const goldenExpr = `identifier "dev.abigotado.youtrack-agent-cli" and anchor apple generic and certificate leaf = H"0123456789abcdef0123456789abcdef01234567"`
+	e := Expectation{Identifier: testID, Team: testTeam, CertSHA1: strings.ToUpper(testSHA1)}
+	got, err := e.Expression()
+	if err != nil || got != goldenExpr {
+		t.Fatalf("Expression() = %q, %v; want %q", got, err, goldenExpr)
+	}
+	req, err := e.Requirement()
+	if err != nil || req != "=designated => "+got {
+		t.Fatalf("Requirement() = %q, %v; want it built from the expression", req, err)
+	}
+	if _, err := (Expectation{Identifier: testID, Team: testTeam}).Expression(); err == nil {
+		t.Fatal("Expression() accepted an empty certificate hash")
+	}
+}
