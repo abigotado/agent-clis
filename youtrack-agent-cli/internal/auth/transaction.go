@@ -90,9 +90,18 @@ func loginLocked(ctx context.Context, store CredentialAccessStore, registry Prof
 		return profile.Profile{}, fmt.Errorf("%w: %s", ErrOverwriteConfirmationRequired, p.Name)
 	}
 	var previousCredential Credential
+	snapshotLoaded := false
 	if credentialExists {
 		previousCredential, credentialLookupErr = store.Load(ctx, p.Name)
-		if credentialLookupErr != nil {
+		switch {
+		case credentialLookupErr == nil:
+			snapshotLoaded = true
+		case errors.Is(credentialLookupErr, ErrKeychainMigrationRequired), errors.Is(credentialLookupErr, ErrNotFound):
+			// The confirmed overwrite may replace an item this process cannot
+			// read (its access policy denies it, or only a stage item is left).
+			// Continue without a rollback snapshot; only these two outcomes,
+			// never an unavailable, read-only, corrupt or contended store.
+		default:
 			return profile.Profile{}, fmt.Errorf("load existing credential: %w", credentialLookupErr)
 		}
 	}
@@ -126,16 +135,29 @@ func loginLocked(ctx context.Context, store CredentialAccessStore, registry Prof
 	}
 	compensationContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), compensationTimeout)
 	defer cancel()
-	rollbackErr := rollbackCredential(compensationContext, store, p.Name, previousCredential, credentialExists)
+	rollbackErr := rollbackCredential(compensationContext, store, p.Name, previousCredential, snapshotLoaded)
+	// An unreadable item was replaced, so the previous credential is gone
+	// whether or not the new one could be removed again.
+	replacedUnreadable := credentialExists && !snapshotLoaded
 	if rollbackErr != nil {
-		return profile.Profile{}, errors.Join(fmt.Errorf("save profile metadata: %w", registryErr), fmt.Errorf("rollback credential: %w", rollbackErr))
+		failure := errors.Join(fmt.Errorf("save profile metadata: %w", registryErr), fmt.Errorf("rollback credential: %w", rollbackErr))
+		if replacedUnreadable {
+			return profile.Profile{}, errors.Join(ErrLoginIncomplete, failure)
+		}
+		return profile.Profile{}, failure
+	}
+	if replacedUnreadable {
+		return profile.Profile{}, errors.Join(ErrLoginIncomplete, fmt.Errorf("save profile metadata: %w", registryErr))
 	}
 	return profile.Profile{}, fmt.Errorf("save profile metadata: %w", registryErr)
 }
 
-// MigrateKeychain changes only the access policy of the exact credential for
-// an existing profile. It never loads the credential value or contacts
-// YouTrack.
+// MigrateKeychain repairs the access of the exact credential for an existing
+// profile so the running binary can read it. The store rereads and rewrites the
+// item itself (one interactive system dialog) and the value never reaches this
+// function; it never contacts YouTrack. Pass the store opened for interaction:
+// the whole operation, Exists included, must use it, because the process
+// interaction mode is fixed by the first open.
 func MigrateKeychain(ctx context.Context, store CredentialAccessStore, registry ProfileRegistry, profileName string) error {
 	if store == nil || registry == nil {
 		return errors.New("keychain migration dependencies are required")
@@ -169,7 +191,15 @@ func translateMigrationStoreError(err error) error {
 		return fmt.Errorf("%w: %v", ErrKeychainEntryNotFound, err)
 	case errors.Is(err, ErrInteractionNotAllowed):
 		return fmt.Errorf("%w: %v", ErrKeychainMigrationBlocked, err)
-	case errors.Is(err, ErrKeychainMigrationCanceled):
+	case errors.Is(err, ErrKeychainMigrationRequired):
+		// The repair itself was denied; the general hint to migrate again would loop.
+		return fmt.Errorf("%w: %v", ErrKeychainRepairDenied, err)
+	case errors.Is(err, ErrKeychainMigrationCanceled),
+		errors.Is(err, ErrCredentialStoreUnavailable),
+		errors.Is(err, ErrCredentialStoreReadOnly),
+		errors.Is(err, ErrCredentialStoreContended),
+		errors.Is(err, ErrCredentialStoreInternal):
+		// Reported under their own codes, never as a missing migration feature.
 		return err
 	case errors.Is(err, ErrUnsupported):
 		return fmt.Errorf("%w: %v", ErrKeychainMigrationUnavailable, err)

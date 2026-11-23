@@ -15,9 +15,9 @@ distribution channels:
   official YouTrack Remote MCP with an explicit six-tool allowlist.
 - The **standard macOS edition** is available as a source-built Homebrew
   Formula. Homebrew compiles the standard CLI locally with
-  `CGO_ENABLED=1`, so OAuth credentials remain in the native
-  Security.framework Keychain. This channel needs neither an Apple Developer
-  membership nor a signed/notarized application bundle.
+  `CGO_ENABLED=1`, so OAuth credentials remain in the native macOS Keychain,
+  reached through the shared core secret store. This channel needs neither an
+  Apple Developer membership nor a signed/notarized application bundle.
 
 The portable archive has no local OAuth or token storage, REST client,
 journal, mutation command, native helper, or Homebrew package. That is a
@@ -78,15 +78,31 @@ youtrack-agent-cli auth login --profile work -o json
 youtrack-agent-cli auth status --profile work --check -o json
 ```
 
-The installer never reads, copies, or migrates credentials. After a Formula
-Cellar upgrade, an existing credential may require an explicit ACL rebind:
+The installer never reads, copies, or migrates credentials. Credentials go
+through the shared core secret store. A credential saved by a build before
+v0.13.0 needs a one-time transition per profile. The recommended path is to log
+in again (`auth login --profile work --yes`) and revoke the old token. The alternative is an explicit ACL rebind:
 
 ```bash
-youtrack-agent-cli auth migrate-keychain --profile work --yes -o json
+youtrack-agent-cli auth migrate-keychain --profile work --yes --timeout 5m -o json
 ```
 
-Run that command only for the named profile when the CLI reports that its
+That command shows one system dialog; choose **Allow**, never **Always Allow**.
+Run it only for the named profile, and only when the CLI reports that its
 existing Keychain item needs migration. It does not print the credential.
+Later signed upgrades need no migration. An ad hoc or source build
+(`go install`, `go build`, and the source-built Formula until a signed Formula
+ships) has a new identity after each rebuild, so each rebuild or Formula
+upgrade needs a re-login or a migrate.
+
+Inside a sandbox that blocks Keychain writes, commands report
+`CREDENTIAL_STORE_UNAVAILABLE` or `CREDENTIAL_STORE_READ_ONLY` with exit 8. The
+operator must run the command outside the sandbox; do not re-authenticate.
+`CREDENTIAL_STORE_READ_ONLY` is limited to the write statuses that mean a
+read-only or sandboxed store (100001, -61, -25292). Any other refused write,
+such as a missing default keychain, reports `CREDENTIAL_STORE_UNAVAILABLE` with
+a neutral hint: run `auth status --profile NAME` and report the failure to the
+operator.
 See [Homebrew](docs/homebrew.md) for support boundaries and the future Cask
 channels.
 

@@ -32,6 +32,9 @@ type oauthCredentialStore struct {
 	exists    bool
 	saveCalls int
 	saveErr   error
+	// saveErrAfter lets the first saveErrAfter Saves succeed before saveErr
+	// applies, so a test can fail the post-redemption Save only.
+	saveErrAfter int
 }
 
 func (s *oauthCredentialStore) Exists(context.Context, string) (bool, error) { return s.exists, nil }
@@ -43,7 +46,7 @@ func (s *oauthCredentialStore) Load(context.Context, string) (auth.Credential, e
 }
 func (s *oauthCredentialStore) Save(_ context.Context, _ string, value auth.Credential) error {
 	s.saveCalls++
-	if s.saveErr != nil {
+	if s.saveErr != nil && s.saveCalls > s.saveErrAfter {
 		return s.saveErr
 	}
 	s.value = value
@@ -236,7 +239,7 @@ func TestRefreshPersistsScopeWithoutReExpansion(t *testing.T) {
 			if err != nil || status.State != "valid" {
 				t.Fatalf("status=%#v err=%v", status, err)
 			}
-			if store.saveCalls != 1 || !slices.Equal(store.value.OAuthScopes, test.wantScopes) {
+			if store.saveCalls != 2 || !slices.Equal(store.value.OAuthScopes, test.wantScopes) {
 				t.Fatalf("persisted scopes=%v saves=%d", store.value.OAuthScopes, store.saveCalls)
 			}
 		})
@@ -266,7 +269,7 @@ func TestFailedRefreshKeepsStoredCredentialAndRequiresLogin(t *testing.T) {
 	if !errors.As(err, &typed) || typed.Code != errx.CodeAuth || typed.Reason != "OAUTH_TOKEN_EXCHANGE_FAILED" || typed.RetryAfter != 0 || typed.Message != "OAuth refresh failed" {
 		t.Fatalf("refresh recovery=%#v, want classified failed request", typed)
 	}
-	if requests != 1 || store.saveCalls != 0 || !reflect.DeepEqual(store.value, bound) {
+	if requests != 1 || store.saveCalls != 1 || !reflect.DeepEqual(store.value, bound) {
 		t.Fatalf("refresh requests=%d saves=%d credential changed=%t", requests, store.saveCalls, !reflect.DeepEqual(store.value, bound))
 	}
 	var stdout bytes.Buffer
@@ -307,7 +310,7 @@ func TestCanceledInflightServiceRefreshRequiresOperatorRecovery(t *testing.T) {
 	service.Now = func() time.Time { return time.Unix(1_700_000_100, 0).UTC() }
 
 	_, err = service.AuthStatus(ctx, selected.Name, true)
-	if requests != 1 || store.saveCalls != 0 || !reflect.DeepEqual(store.value, bound) {
+	if requests != 1 || store.saveCalls != 1 || !reflect.DeepEqual(store.value, bound) {
 		t.Fatalf("requests=%d saves=%d credential unchanged=%t", requests, store.saveCalls, reflect.DeepEqual(store.value, bound))
 	}
 	var stdout bytes.Buffer
@@ -407,7 +410,7 @@ func TestRefreshRejectsUnsafeTokenBeforePersistenceAndKeepsOldCredential(t *test
 	if typed.Message != "OAuth refresh failed" {
 		t.Fatalf("parser rejection misstates failure stage: %q", typed.Message)
 	}
-	if requests != 1 || store.saveCalls != 0 || !store.exists || !reflect.DeepEqual(store.value, bound) {
+	if requests != 1 || store.saveCalls != 1 || !store.exists || !reflect.DeepEqual(store.value, bound) {
 		t.Fatalf("requests=%d saves=%d credential unchanged=%t", requests, store.saveCalls, reflect.DeepEqual(store.value, bound))
 	}
 	var stdout bytes.Buffer
@@ -501,7 +504,7 @@ func TestRotatedRefreshSaveFailureRequiresOperatorRecovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			store := &oauthCredentialStore{value: bound, exists: true, saveErr: test.saveErr}
+			store := &oauthCredentialStore{value: bound, exists: true, saveErr: test.saveErr, saveErrAfter: 1}
 			requests := 0
 			transport := oauthDiagnosticTransport(func(request *http.Request) (*http.Response, error) {
 				if request.URL.Host != "hub.example.test" || request.Method != http.MethodPost {
@@ -523,7 +526,7 @@ func TestRotatedRefreshSaveFailureRequiresOperatorRecovery(t *testing.T) {
 			if err == nil {
 				t.Fatal("rotated refresh unexpectedly succeeded after credential persistence failed")
 			}
-			if requests != 1 || store.saveCalls != 1 || !store.exists || !reflect.DeepEqual(store.value, bound) {
+			if requests != 1 || store.saveCalls != 2 || !store.exists || !reflect.DeepEqual(store.value, bound) {
 				t.Fatalf("requests=%d saves=%d credential unchanged=%t", requests, store.saveCalls, reflect.DeepEqual(store.value, bound))
 			}
 			translated := TranslateError(err, selected.Name)

@@ -64,6 +64,9 @@ type Service struct {
 	// OperatorWriteSupport permits tests to supply an in-process backend. The
 	// production default is fixed by build tags, with no flag or environment bypass.
 	OperatorWriteSupport func() bool
+	// RepairCredentials is the store that may prompt the operator. Only the
+	// explicit Keychain repair flow uses it; Credentials never prompts.
+	RepairCredentials auth.CredentialAccessStore
 }
 
 // NewDefault creates the user-scoped production service without reading any
@@ -81,8 +84,9 @@ func NewDefault(logger *slog.Logger) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("locate user config directory: %w", err)
 	}
+	credentials, repairCredentials := auth.NewDefaultNativeStores()
 	return &Service{
-		Profiles: profiles, Policies: policies, Credentials: auth.KeychainStore{},
+		Profiles: profiles, Policies: policies, Credentials: credentials, RepairCredentials: repairCredentials,
 		Journal:  journal.New(filepath.Join(configDir, "youtrack-agent-cli", "journal")),
 		Approver: approval.Unsupported{}, HTTP: http.DefaultTransport, Logger: logger, Now: time.Now,
 		OperatorWrites: operatorwrite.New(filepath.Join(configDir, "youtrack-agent-cli")),
@@ -253,13 +257,16 @@ func (s *Service) Logout(ctx context.Context, name string) error {
 	return auth.Logout(ctx, s.Credentials, s.Profiles, name)
 }
 
-// MigrateKeychain rebinds one existing item to the current application ACL
-// without reading or returning its credential value.
+// MigrateKeychain repairs the access of one existing item for the current
+// signed binary without returning its credential value. It uses only
+// RepairCredentials, for the existence check too: the process fixes its
+// interaction mode at the first store open, so opening Credentials here would
+// make the repair store fail.
 func (s *Service) MigrateKeychain(ctx context.Context, name string) error {
-	if s == nil || s.Profiles == nil || s.Credentials == nil {
+	if s == nil || s.Profiles == nil || s.RepairCredentials == nil {
 		return errx.Internal("profile or credential store is unavailable")
 	}
-	return auth.MigrateKeychain(ctx, s.Credentials, s.Profiles, name)
+	return auth.MigrateKeychain(ctx, s.RepairCredentials, s.Profiles, name)
 }
 
 // GetPolicy reads an identity-bound exact project allowlist.
@@ -718,6 +725,15 @@ func (s *Service) refreshIfNeeded(ctx context.Context, selected profile.Profile,
 	if err != nil {
 		return auth.Credential{}, err
 	}
+	// Redeeming rotates the refresh token on the server, so a store that cannot
+	// be written (a sandbox, a read-only keychain) must be found out before the
+	// token endpoint, not after. Re-saving the unchanged credential proves the
+	// write path. Any failure stops here with the store's own error: nothing was
+	// redeemed, so the stored credential is still valid and no "uncertain"
+	// recovery applies.
+	if err := s.Credentials.Save(ctx, selected.Name, credential); err != nil {
+		return auth.Credential{}, fmt.Errorf("check the credential store is writable before refresh: %w", err)
+	}
 	currentScopes := credential.OAuthScopes
 	if len(currentScopes) == 0 {
 		// v1 credentials predate persisted grants. The old exchange path only
@@ -751,7 +767,7 @@ func (s *Service) refreshIfNeeded(ctx context.Context, selected profile.Profile,
 }
 
 // This path is a defensive fence after a successful token response and before
-// the first credential-store write. Never retain the rejected credential or
+// the rotated credential is written. Never retain the rejected credential or
 // the underlying validation error in logs or the user-facing error.
 func refreshPreSaveBindingFailure(err error, logger *slog.Logger) *errx.Error {
 	category := "other"

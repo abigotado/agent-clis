@@ -54,7 +54,7 @@ translation after a successful refresh could report different machine results:
 
 These local cases do not get new stable `error.code` values in `v0.2.0`;
 the hint supplies only case-specific repair prose. A local binding rejection
-happens before Save,
+happens before the rotated credential is saved,
 so the old credential remains unchanged. A Save failure leaves the persisted
 credential state unknown. This intentionally coarse
 classification preserves the published refresh contract until a durable
@@ -77,7 +77,7 @@ diagnostics while retaining the same auth/5 code. A binding mismatch directs
 the operator to inspect the local profile/credential binding; invalid token
 validation directs them to local token validation and OAuth client
 configuration. Other pre-Save validation failures direct them to inspect the
-local binding check. None of these paths called Save, so the old credential
+local binding check. None of these paths saved the rotated credential, so the old credential
 remains. Save failures keep persistence *uncertain*: the public hint identifies
 one fixed local repair area—interactive Keychain access, an operator-approved
 ACL migration, canceled Keychain authorization, an interrupted or timed-out
@@ -86,6 +86,13 @@ failure—without exposing the raw error or OSStatus. In every case the agent
 stops auth-dependent commands and refresh retries. Only after the local issue
 is addressed should an operator start a fresh interactive login and explicitly
 approve replacement if required.
+
+A refresh that is due first re-saves the current, unchanged credential. If that
+save fails, the command stops before any token request, with the store's own
+code: `CREDENTIAL_STORE_UNAVAILABLE` or `CREDENTIAL_STORE_READ_ONLY` (exit 8),
+`CREDENTIAL_STORE_CONTENDED` (9), `CONFIRMATION_REQUIRED` (7),
+`KEYCHAIN_INTERACTION_REQUIRED` (5), `INTERNAL` (1), or `CANCELED`/`TIMEOUT` (6).
+Nothing was redeemed, so no re-login is needed.
 
 A future refresh-recovery change must first add a durable fence and test it
 across separate CLI invocations.

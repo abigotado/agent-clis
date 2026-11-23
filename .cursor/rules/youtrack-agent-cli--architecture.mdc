@@ -10,7 +10,9 @@ globs: "youtrack-agent-cli/**"
 
 ## Package direction
 
-- `cmd/youtrack-agent-cli`: process entry, panic recovery, exit delivery only.
+- `cmd/youtrack-agent-cli`: process entry, panic recovery, exit delivery, and
+  process hardening (core dumps) only; it may import `core/secretstore` on
+  darwin with cgo for that alone.
 - `internal/cli`: Cobra wiring and output selection; never imports `net/http`.
 - `internal/application`: operation orchestration and one-shot write lifecycle.
 - `internal/profile`, `internal/auth`, `internal/writepolicy`: non-secret profile,
