@@ -7,7 +7,7 @@ func Text() string {
 	return `usage: sign-release <cli> <version>
 
 Signs the darwin archives of a draft release, uploads them and publishes it.
-Run it as: go run ./tools/sign-release <cli> <version>
+Run it from tools/sign-release, its own module: GOWORK=off go run . <cli> <version>
 
 gh must be logged in through its own stored login (gh auth login).
 GH_TOKEN, GH_HOST, GITHUB_TOKEN and proxy variables are ignored on purpose:

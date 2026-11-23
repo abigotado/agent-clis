@@ -16,6 +16,7 @@ func TestTextNamesTheInvocation(t *testing.T) {
 		{name: "starts with usage", want: "usage: "},
 		{name: "names the tool", want: "sign-release"},
 		{name: "names the arguments", want: "<cli> <version>"},
+		{name: "runs from the module directory", want: "Run it from tools/sign-release, its own module: GOWORK=off go run . <cli> <version>"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -24,6 +25,9 @@ func TestTextNamesTheInvocation(t *testing.T) {
 				t.Fatalf("Text() = %q, want it to contain %q", text, tt.want)
 			}
 		})
+	}
+	if strings.Contains(text, "./tools/sign-release") {
+		t.Fatalf("Text() = %q names a path the repository root cannot build: it has no go.mod", text)
 	}
 	if !strings.HasSuffix(text, "\n") {
 		t.Fatalf("Text() = %q, want a trailing newline", text)
