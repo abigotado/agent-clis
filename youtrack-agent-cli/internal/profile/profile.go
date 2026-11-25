@@ -72,6 +72,7 @@ const (
 	CapabilityIssueCreateUserFields Capability = "issue-create-user-fields"
 	CapabilityIssueLink             Capability = "issue-link"
 	CapabilityAttachmentAdd         Capability = "attachment-add"
+	CapabilityIssueUnlink           Capability = "issue-unlink"
 )
 
 type Executor string
@@ -309,12 +310,13 @@ func ValidateCapabilities(capabilities []Capability) error {
 		CapabilityCommentDelete: 4, CapabilityIssueEdit: 5, CapabilityIssueCreateUserFields: 6,
 		CapabilityIssueLink:     7,
 		CapabilityAttachmentAdd: 8,
+		CapabilityIssueUnlink:   9,
 	}
 	previous := -1
 	for _, capability := range capabilities {
 		position, ok := order[capability]
 		if !ok || position <= previous {
-			return invalid("capabilities must be a unique canonical subset ordered read, issue-create, issue-update, comment-add, comment-delete, issue-edit, issue-create-user-fields, issue-link, attachment-add")
+			return invalid("capabilities must be a unique canonical subset ordered read, issue-create, issue-update, comment-add, comment-delete, issue-edit, issue-create-user-fields, issue-link, attachment-add, issue-unlink")
 		}
 		previous = position
 	}
@@ -416,6 +418,8 @@ func capabilityRank(value Capability) int {
 		return 7
 	case CapabilityAttachmentAdd:
 		return 8
+	case CapabilityIssueUnlink:
+		return 9
 	default:
 		return 100
 	}

@@ -74,7 +74,7 @@ func PlanVersionFor(kind Kind) int {
 	switch kind {
 	case KindIssueCreate, KindCommentAdd:
 		return PlanVersion5
-	case KindIssueUpdate, KindIssueEdit, KindIssueLink, KindAttachmentAdd:
+	case KindIssueUpdate, KindIssueEdit, KindIssueLink, KindIssueUnlink, KindAttachmentAdd:
 		return PlanVersion4
 	case KindCommentDelete:
 		return PlanVersion3
@@ -103,6 +103,7 @@ const (
 	KindCommentDelete Kind = "comment.delete"
 	KindIssueEdit     Kind = "issue.edit"
 	KindIssueLink     Kind = "issue.link"
+	KindIssueUnlink   Kind = "issue.unlink"
 	// KindAttachmentAdd uploads one local file to one issue.
 	KindAttachmentAdd Kind = "attachment.add"
 )
@@ -352,11 +353,11 @@ func (s Snapshot) ProjectRef() (id, key string) {
 }
 
 // ProjectRefs lists every project the snapshot's policy check binds: the
-// primary project, and for issue.link also the target issue's project.
+// primary project, and for issue.link and issue.unlink also the target issue's project.
 func (s Snapshot) ProjectRefs() []Project {
 	id, key := s.ProjectRef()
 	refs := []Project{{ID: id, Key: key}}
-	if s.Kind == KindIssueLink && s.Link != nil && (s.Link.Target.ProjectID != id || s.Link.Target.ProjectKey != key) {
+	if (s.Kind == KindIssueLink || s.Kind == KindIssueUnlink) && s.Link != nil && (s.Link.Target.ProjectID != id || s.Link.Target.ProjectKey != key) {
 		refs = append(refs, Project{ID: s.Link.Target.ProjectID, Key: s.Link.Target.ProjectKey})
 	}
 	return refs

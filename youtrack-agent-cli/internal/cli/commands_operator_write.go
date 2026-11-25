@@ -20,7 +20,7 @@ func (view operatorWriteView) Fields() []output.Field {
 	field := output.Field{Name: "field"}
 	fields := output.Field{Name: "fields", OnRequest: true}
 	deleteTarget := view.Kind == "comment.delete"
-	linkKind := view.Kind == "issue.link"
+	linkKind := view.Kind == "issue.link" || view.Kind == "issue.unlink"
 	commentText, summary, description := "", "", ""
 	comment := output.Field{Name: "comment", OnRequest: true}
 	requiredPermission := output.Field{Name: "required_server_permission", OnRequest: true}
@@ -152,14 +152,15 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 			}
 			return false
 		}
-		if input.Kind == "issue.link" && changed("field", "value", "field-id", "value-id", "clear-value", "clear-field", "clear-field-id", "project", "comment-id") {
-			return errx.Usage("issue.link snapshot takes only --id, --target-id, a link type, --direction, and --out; no field, value, --project, or --comment-id")
+		linkFlagsKind := input.Kind == "issue.link" || input.Kind == "issue.unlink"
+		if linkFlagsKind && changed("field", "value", "field-id", "value-id", "clear-value", "clear-field", "clear-field-id", "project", "comment-id") {
+			return errx.Usage("%s snapshot takes only --id, --target-id, a link type, --direction, and --out; no field, value, --project, or --comment-id", input.Kind)
 		}
-		if input.Kind == "issue.link" && changed("link-type") && changed("link-type-id") {
-			return errx.Usage("issue.link snapshot takes exactly one of --link-type and --link-type-id")
+		if linkFlagsKind && changed("link-type") && changed("link-type-id") {
+			return errx.Usage("%s snapshot takes exactly one of --link-type and --link-type-id", input.Kind)
 		}
-		if input.Kind != "issue.link" && changed("target-id", "link-type", "link-type-id", "direction") {
-			return errx.Usage("--target-id, --link-type, --link-type-id, and --direction are accepted only with --kind issue.link")
+		if !linkFlagsKind && changed("target-id", "link-type", "link-type-id", "direction") {
+			return errx.Usage("--target-id, --link-type, --link-type-id, and --direction are accepted only with --kind issue.link or issue.unlink")
 		}
 		if input.Kind == "attachment.add" {
 			if input.FilePath == "" {
@@ -187,11 +188,11 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 		return a.renderOperatorWrite(result)
 	}}
 	flags := command.Flags()
-	flags.StringVar(&input.Kind, "kind", "", "supported write kind: issue.create, issue.update, issue.edit, issue.link, comment.add, comment.delete, or attachment.add")
-	flags.StringVar(&input.IssueID, "id", "", "exact issue entity or readable ID for issue.update, issue.edit, issue.link (the source), comment.add, comment.delete, or attachment.add")
-	flags.StringVar(&input.TargetID, "target-id", "", "exact target issue entity or readable ID for issue.link")
-	flags.StringVar(&input.LinkType, "link-type", "", "exact issue link type name for issue.link; use --link-type-id when names repeat")
-	flags.StringVar(&input.LinkTypeID, "link-type-id", "", "immutable issue link type ID for issue.link")
+	flags.StringVar(&input.Kind, "kind", "", "supported write kind: issue.create, issue.update, issue.edit, issue.link, issue.unlink, comment.add, comment.delete, or attachment.add")
+	flags.StringVar(&input.IssueID, "id", "", "exact issue entity or readable ID for issue.update, issue.edit, issue.link or issue.unlink (the source), comment.add, comment.delete, or attachment.add")
+	flags.StringVar(&input.TargetID, "target-id", "", "exact target issue entity or readable ID for issue.link or issue.unlink (remove one issue link)")
+	flags.StringVar(&input.LinkType, "link-type", "", "exact issue link type name for issue.link or issue.unlink; use --link-type-id when names repeat")
+	flags.StringVar(&input.LinkTypeID, "link-type-id", "", "immutable issue link type ID for issue.link or issue.unlink")
 	flags.StringVar(&input.Direction, "direction", "", "exact link phrase read from the source issue, for example \"depends on\" or \"is required for\"; case-sensitive, never fuzzy")
 	flags.StringVar(&input.CommentID, "comment-id", "", "immutable exact comment ID for comment.delete")
 	flags.StringVar(&input.ProjectID, "project", "", "exact project entity ID or key for issue.create")

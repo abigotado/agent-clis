@@ -79,6 +79,7 @@ type OperatorWriteInfo struct {
 	LinkType         string                    `json:"link_type,omitempty"`
 	Direction        string                    `json:"direction,omitempty"`
 	LinkID           string                    `json:"link_id,omitempty"`
+	Disclosures      []string                  `json:"disclosures,omitempty"`
 	NonReplayable    bool                      `json:"non_replayable"`
 	RemoteID         string                    `json:"remote_id,omitempty"`
 	RemoteReadableID string                    `json:"remote_readable_id,omitempty"`
@@ -103,6 +104,14 @@ func operatorSnapshotInfo(snapshot operatorwrite.Snapshot) OperatorWriteInfo {
 	if link := snapshot.Link; link != nil {
 		result.TargetIssueID, result.TargetReadableID, result.TargetProjectKey = link.Target.ID, link.Target.ReadableID, link.Target.ProjectKey
 		result.LinkType, result.Direction, result.LinkID = link.Type.Name, link.Phrase, link.LinkID
+		if snapshot.Kind == operatorwrite.KindIssueUnlink {
+			if link.Type.Aggregation {
+				result.Disclosures = append(result.Disclosures, "aggregation_parent_removed")
+			}
+			if link.Type.Name == "Duplicate" {
+				result.Disclosures = append(result.Disclosures, "duplicate_link_removed")
+			}
+		}
 	}
 	result.Attachment = snapshot.Attachment
 	return result

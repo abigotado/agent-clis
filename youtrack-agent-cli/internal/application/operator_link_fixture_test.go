@@ -55,6 +55,11 @@ type linkFixture struct {
 	// postEffect false makes a 200 POST that does not change the world.
 	postEffect bool
 	beforePost func(*linkFixture)
+	// deletes counts DELETE requests; deleteStatus, when set, answers every
+	// DELETE with it; deleteEffect false makes a 2xx DELETE change nothing.
+	deletes      atomic.Int32
+	deleteStatus int
+	deleteEffect bool
 }
 
 func linkEntryID(issueID, typeID, direction string) string {
@@ -63,10 +68,15 @@ func linkEntryID(issueID, typeID, direction string) string {
 
 func newLinkFixture(t *testing.T) *linkFixture {
 	t.Helper()
+	return newLinkFixtureWith(t, profile.CapabilityRead, profile.CapabilityIssueLink)
+}
+
+func newLinkFixtureWith(t *testing.T, capabilities ...profile.Capability) *linkFixture {
+	t.Helper()
 	if runtime.GOOS == "darwin" && !OperatorWriteSupported() {
 		t.Skip("Darwin without CGO cannot audit operator-store ACLs; Linux fake-boundary tests remain enabled")
 	}
-	f := &linkFixture{issues: map[string]*linkIssueState{}, entries: map[string][]*linkEntryState{}, postEffect: true}
+	f := &linkFixture{issues: map[string]*linkIssueState{}, entries: map[string][]*linkEntryState{}, postEffect: true, deleteEffect: true}
 	for _, issue := range []*linkIssueState{
 		{id: "2-12", readable: "APP-12", projectID: "0-3", projectKey: "APP", updated: 2},
 		{id: "2-13", readable: "APP-13", projectID: "0-3", projectKey: "APP", updated: 2},
@@ -92,7 +102,7 @@ func newLinkFixture(t *testing.T) *linkFixture {
 	}
 	p := profile.Profile{Name: "work", ServiceURL: server.URL, RESTBaseURL: server.URL + "/api", MCPURL: mcp,
 		OAuth:             profile.OAuthConfig{IssuerURL: "https://hub.example.test", AuthorizationURL: "https://hub.example.test" + endpoint.OAuthAuthorizationPath, TokenURL: "https://hub.example.test" + endpoint.OAuthTokenPath, ClientID: "client", Scopes: []string{"YouTrack"}, RedirectURI: "http://127.0.0.1:18987/oauth/callback"},
-		ExpectedAccountID: "1-2", ExpectedLogin: "alice", Capabilities: []profile.Capability{profile.CapabilityRead, profile.CapabilityIssueLink}, Executor: profile.ExecutorRESTBestEffort, Assurance: profile.AssuranceBestEffort}
+		ExpectedAccountID: "1-2", ExpectedLogin: "alice", Capabilities: capabilities, Executor: profile.ExecutorRESTBestEffort, Assurance: profile.AssuranceBestEffort}
 	p, err = p.WithNewCredentialGeneration()
 	if err != nil {
 		t.Fatal(err)
@@ -159,6 +169,17 @@ func (f *linkFixture) addLocked(source, typeID, direction, target string) {
 	}
 	if entry := f.entry(target, typeID, reverse); entry != nil && !slices.Contains(entry.issues, source) {
 		entry.issues = append(entry.issues, source)
+	}
+}
+
+// removeLocked drops source -> target on both sides, as the server does.
+func (f *linkFixture) removeLocked(source, typeID, direction, target string) {
+	reverse := map[string]string{"OUTWARD": "INWARD", "INWARD": "OUTWARD", "BOTH": "BOTH"}[direction]
+	if entry := f.entry(source, typeID, direction); entry != nil {
+		entry.issues = slices.DeleteFunc(entry.issues, func(id string) bool { return id == target })
+	}
+	if entry := f.entry(target, typeID, reverse); entry != nil {
+		entry.issues = slices.DeleteFunc(entry.issues, func(id string) bool { return id == source })
 	}
 }
 
@@ -301,6 +322,29 @@ func (f *linkFixture) serve(t *testing.T) func(http.ResponseWriter, *http.Reques
 				return
 			}
 			encode(map[string]any{"id": body.ID, "idReadable": f.issues[body.ID].readable})
+		case r.Method == http.MethodDelete && len(parts) == 6 && parts[0] == "issues" && parts[2] == "links" && parts[4] == "issues":
+			f.deletes.Add(1)
+			if f.deleteStatus != 0 {
+				w.WriteHeader(f.deleteStatus)
+				return
+			}
+			issue := f.findIssue(parts[1])
+			var entry *linkEntryState
+			if issue != nil {
+				for _, candidate := range f.entries[issue.id] {
+					if candidate.id == parts[3] {
+						entry = candidate
+					}
+				}
+			}
+			if entry == nil || f.issues[parts[5]] == nil {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if f.deleteEffect {
+				f.removeLocked(issue.id, entry.typeID, entry.direction, parts[5])
+			}
+			encode(map[string]any{"id": parts[5]})
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL)
 			w.WriteHeader(http.StatusNotFound)

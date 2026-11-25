@@ -19,7 +19,7 @@ func TestReadonlyEditionNeverMentionsTheIssueLinkLane(t *testing.T) {
 	if code := app.Run(t.Context(), app.NewRootCommand(), []string{"capabilities", "-o", "json"}); code != errx.CodeOK {
 		t.Fatalf("code=%d stdout=%s", code, stdout)
 	}
-	for _, forbidden := range []string{"issue.link", "issue-link"} {
+	for _, forbidden := range []string{"issue.link", "issue-link", "issue.unlink", "issue-unlink"} {
 		if bytes.Contains(stdout.Bytes(), []byte(forbidden)) {
 			t.Fatalf("read-only capabilities mention %q: %s", forbidden, stdout)
 		}
@@ -35,7 +35,7 @@ func TestReadonlyEditionNeverMentionsTheIssueLinkLane(t *testing.T) {
 			return readErr
 		}
 		scanned++
-		for _, forbidden := range []string{"issue.link", "issue-link"} {
+		for _, forbidden := range []string{"issue.link", "issue-link", "issue.unlink", "issue-unlink"} {
 			if bytes.Contains(raw, []byte(forbidden)) {
 				t.Errorf("read-only skill file %s mentions %q", path, forbidden)
 			}

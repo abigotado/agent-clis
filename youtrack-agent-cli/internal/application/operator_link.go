@@ -218,52 +218,11 @@ func probeLink(ctx context.Context, client *youtrack.Client, link operatorwrite.
 // entry, and refuses every state in which the link would change nothing or
 // something other than a pure addition.
 func (s *Service) freezeIssueLink(ctx context.Context, client *youtrack.Client, selected profile.Profile, input OperatorSnapshotInput, snapshot operatorwrite.Snapshot) (operatorwrite.Snapshot, error) {
-	source, err := client.GetIssue(ctx, input.IssueID)
+	snapshot, link, err := s.freezeLinkEntry(ctx, client, selected, input, snapshot, "linked")
 	if err != nil {
 		return snapshot, err
 	}
-	target, err := client.GetIssue(ctx, input.TargetID)
-	if err != nil {
-		return snapshot, err
-	}
-	if source.ID == target.ID {
-		return snapshot, errx.Usage("an issue cannot be linked to itself")
-	}
-	var binding operatorwrite.Binding
-	for index, issue := range []youtrack.Issue{source, target} {
-		if issue.Project.Archived {
-			return snapshot, errx.Permission("OPERATOR_PROJECT_ARCHIVED", "a linked issue belongs to an archived project")
-		}
-		policy, err := s.Policies.RequireProject(ctx, selected, issue.Project.ID, issue.Project.ShortName)
-		if err != nil {
-			return snapshot, err
-		}
-		if index == 0 {
-			binding = operatorBinding(selected, policy)
-		} else if operatorBinding(selected, policy) != binding {
-			return snapshot, errx.Conflict("OPERATOR_BINDING_STALE", "operator project policy changed during snapshot")
-		}
-	}
-	linkType, err := resolveLinkType(ctx, client, input.LinkType, input.LinkTypeID)
-	if err != nil {
-		return snapshot, err
-	}
-	direction, err := resolveLinkDirection(linkType, input.Direction)
-	if err != nil {
-		return snapshot, err
-	}
-	entry, ok, err := linkEntry(ctx, client, source.ID, linkType.ID, direction)
-	if err != nil {
-		return snapshot, err
-	}
-	if !ok {
-		return snapshot, errLinkEntryUnavailable()
-	}
-	link := operatorwrite.Link{
-		Target: operatorwrite.Issue{ID: target.ID, ReadableID: target.IDReadable, ProjectID: target.Project.ID, ProjectKey: target.Project.ShortName, Updated: target.Updated},
-		Type:   operatorLinkType(linkType), Direction: direction, Phrase: input.Direction, LinkID: entry.ID,
-	}
-	block, err := probeLink(ctx, client, link, source.ID, target.ID)
+	block, err := probeLink(ctx, client, link, snapshot.Issue.ID, link.Target.ID)
 	if err != nil {
 		return snapshot, err
 	}
@@ -273,10 +232,62 @@ func (s *Service) freezeIssueLink(ctx context.Context, client *youtrack.Client, 
 	case linkParentExists:
 		return snapshot, errLinkParentExists()
 	}
-	snapshot.Binding = binding
-	snapshot.Issue = operatorwrite.Issue{ID: source.ID, ReadableID: source.IDReadable, ProjectID: source.Project.ID, ProjectKey: source.Project.ShortName, Updated: source.Updated}
 	snapshot.Link = &link
 	return snapshot, nil
+}
+
+// freezeLinkEntry is the part of an issue.link and issue.unlink snapshot that
+// does not depend on the link being present: both issues under one policy
+// binding, the exact link type and direction, and the server's link entry.
+func (s *Service) freezeLinkEntry(ctx context.Context, client *youtrack.Client, selected profile.Profile, input OperatorSnapshotInput, snapshot operatorwrite.Snapshot, verb string) (operatorwrite.Snapshot, operatorwrite.Link, error) {
+	source, err := client.GetIssue(ctx, input.IssueID)
+	if err != nil {
+		return snapshot, operatorwrite.Link{}, err
+	}
+	target, err := client.GetIssue(ctx, input.TargetID)
+	if err != nil {
+		return snapshot, operatorwrite.Link{}, err
+	}
+	if source.ID == target.ID {
+		return snapshot, operatorwrite.Link{}, errx.Usage("an issue cannot be %s to itself", verb)
+	}
+	var binding operatorwrite.Binding
+	for index, issue := range []youtrack.Issue{source, target} {
+		if issue.Project.Archived {
+			return snapshot, operatorwrite.Link{}, errx.Permission("OPERATOR_PROJECT_ARCHIVED", "a linked issue belongs to an archived project")
+		}
+		policy, err := s.Policies.RequireProject(ctx, selected, issue.Project.ID, issue.Project.ShortName)
+		if err != nil {
+			return snapshot, operatorwrite.Link{}, err
+		}
+		if index == 0 {
+			binding = operatorBinding(selected, policy)
+		} else if operatorBinding(selected, policy) != binding {
+			return snapshot, operatorwrite.Link{}, errx.Conflict("OPERATOR_BINDING_STALE", "operator project policy changed during snapshot")
+		}
+	}
+	linkType, err := resolveLinkType(ctx, client, input.LinkType, input.LinkTypeID)
+	if err != nil {
+		return snapshot, operatorwrite.Link{}, err
+	}
+	direction, err := resolveLinkDirection(linkType, input.Direction)
+	if err != nil {
+		return snapshot, operatorwrite.Link{}, err
+	}
+	entry, ok, err := linkEntry(ctx, client, source.ID, linkType.ID, direction)
+	if err != nil {
+		return snapshot, operatorwrite.Link{}, err
+	}
+	if !ok {
+		return snapshot, operatorwrite.Link{}, errLinkEntryUnavailable()
+	}
+	link := operatorwrite.Link{
+		Target: operatorwrite.Issue{ID: target.ID, ReadableID: target.IDReadable, ProjectID: target.Project.ID, ProjectKey: target.Project.ShortName, Updated: target.Updated},
+		Type:   operatorLinkType(linkType), Direction: direction, Phrase: input.Direction, LinkID: entry.ID,
+	}
+	snapshot.Binding = binding
+	snapshot.Issue = operatorwrite.Issue{ID: source.ID, ReadableID: source.IDReadable, ProjectID: source.Project.ID, ProjectKey: source.Project.ShortName, Updated: source.Updated}
+	return snapshot, link, nil
 }
 
 // requireLinkIssue compares an issue with its frozen identity. The updated
