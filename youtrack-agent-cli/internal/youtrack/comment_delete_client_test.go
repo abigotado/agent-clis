@@ -208,6 +208,7 @@ func TestDeleteCommentClassifiesOneShotHTTPOutcomes(t *testing.T) {
 		{name: "server failure is unknown", status: http.StatusServiceUnavailable, wantCode: errx.CodeConflict, wantReason: "WRITE_OUTCOME_UNKNOWN"},
 		{name: "accepted is unknown", status: http.StatusAccepted, wantCode: errx.CodeConflict, wantReason: "WRITE_OUTCOME_UNKNOWN"},
 		{name: "nonempty ok is unknown", status: http.StatusOK, body: "non-json success", wantCode: errx.CodeConflict, wantReason: "WRITE_OUTCOME_UNKNOWN"},
+		{name: "json object ok stays unknown for the strict comment mode", status: http.StatusOK, body: `{"$type":"IssueComment"}`, wantCode: errx.CodeConflict, wantReason: "WRITE_OUTCOME_UNKNOWN"},
 		{name: "plain oversized response is unknown", status: http.StatusOK, body: strings.Repeat("x", maxResponseBodyBytes+1), wantCode: errx.CodeConflict, wantReason: "WRITE_OUTCOME_UNKNOWN"},
 		{name: "compressed oversized response is unknown", status: http.StatusOK, body: strings.Repeat("x", maxResponseBodyBytes+1), gzip: true, wantCode: errx.CodeConflict, wantReason: "WRITE_OUTCOME_UNKNOWN"},
 		{name: "malformed compressed response is unknown", status: http.StatusOK, body: "not a gzip stream", gzip: true, wantCode: errx.CodeConflict, wantReason: "WRITE_OUTCOME_UNKNOWN"},

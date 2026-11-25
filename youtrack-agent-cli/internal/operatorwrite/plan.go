@@ -423,6 +423,17 @@ func digest(p Plan) (string, error) {
 	return protocolvalue.SHA256Hex(raw), nil
 }
 
+// legacyPlanKind reports whether a v1 or v2 plan may carry the kind. It is an
+// allow-list, so a kind added later can never be relabelled as a legacy plan.
+func legacyPlanKind(kind Kind) bool {
+	switch kind {
+	case KindIssueCreate, KindIssueUpdate, KindCommentAdd:
+		return true
+	default:
+		return false
+	}
+}
+
 func ValidatePlan(p Plan) error {
 	if p.Lane != Lane || ValidateID(p.ID) != nil || p.ConfirmationMode != ConfirmationMode ||
 		p.Notifications != Notifications || ValidateSnapshot(p.Snapshot) != nil || p.Request.Kind != p.Snapshot.Kind ||
@@ -432,11 +443,11 @@ func ValidatePlan(p Plan) error {
 	}
 	switch p.Version {
 	case LegacyPlanVersion1:
-		if p.Snapshot.Kind == KindCommentDelete || p.Snapshot.Kind == KindIssueEdit || p.Snapshot.Kind == KindIssueLink || p.Snapshot.Kind == KindAttachmentAdd || p.ExpiresAt.IsZero() || p.ExpiresAt.Location() != time.UTC || p.ExpiresAt.Sub(p.CreatedAt) != LegacyPlanTTL {
+		if !legacyPlanKind(p.Snapshot.Kind) || p.ExpiresAt.IsZero() || p.ExpiresAt.Location() != time.UTC || p.ExpiresAt.Sub(p.CreatedAt) != LegacyPlanTTL {
 			return invalid()
 		}
 	case PlanVersion2:
-		if p.Snapshot.Kind == KindCommentDelete || p.Snapshot.Kind == KindIssueEdit || p.Snapshot.Kind == KindIssueLink || p.Snapshot.Kind == KindAttachmentAdd || !p.ExpiresAt.IsZero() {
+		if !legacyPlanKind(p.Snapshot.Kind) || !p.ExpiresAt.IsZero() {
 			return invalid()
 		}
 	case PlanVersion3:
