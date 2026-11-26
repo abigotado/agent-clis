@@ -55,7 +55,7 @@ func ValidateSnapshot(s Snapshot) error {
 		s.CapturedAt.IsZero() || s.CapturedAt.Location() != time.UTC {
 		return invalid()
 	}
-	if s.Text != nil && s.Kind != KindIssueEdit || (s.Link != nil) != (s.Kind == KindIssueLink || s.Kind == KindIssueUnlink) || s.Attachment != nil && s.Kind != KindAttachmentAdd {
+	if s.Text != nil && s.Kind != KindIssueEdit || (s.Link != nil) != (s.Kind == KindIssueLink || s.Kind == KindIssueUnlink) || (s.Tag != nil) != (s.Kind == KindIssueTag || s.Kind == KindIssueUntag) || s.Attachment != nil && s.Kind != KindAttachmentAdd {
 		return invalid()
 	}
 	switch s.Kind {
@@ -95,6 +95,10 @@ func ValidateSnapshot(s Snapshot) error {
 		}
 	case KindIssueLink, KindIssueUnlink:
 		if !validIssue(s.Issue) || s.Project != nil || s.Fields != nil || s.Field != nil || s.Comment != nil || s.Text != nil || !validLink(*s.Link, s.Issue) {
+			return invalid()
+		}
+	case KindIssueTag, KindIssueUntag:
+		if !validIssue(s.Issue) || s.Project != nil || s.Fields != nil || s.Field != nil || s.Comment != nil || s.Text != nil || !validTag(*s.Tag) {
 			return invalid()
 		}
 	case KindAttachmentAdd:
@@ -142,6 +146,25 @@ func validLink(link Link, source Issue) bool {
 	default:
 		return false
 	}
+}
+
+// validTag checks the frozen tag. The owner is mandatory and the type is one of
+// the two YouTrack tag types.
+func validTag(tag Tag) bool {
+	return protocolvalue.IsIdentifier(tag.ID) && validTagName(tag.Name) && (tag.Type == "Tag" || tag.Type == "IssueTag") &&
+		protocolvalue.IsIdentifier(tag.OwnerID) && validText(tag.OwnerLogin, 256, true)
+}
+
+func validTagName(name string) bool {
+	if !validText(name, 255, true) {
+		return false
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func validComment(comment Comment, accountID string) bool {
@@ -343,7 +366,7 @@ func validRequest(q Request) bool {
 		return q.Summary == "" && q.Description == "" && validText(q.CommentText, MaxCommentBytes, true)
 	case KindCommentDelete, KindAttachmentAdd:
 		return q.CommentText == "" && q.Summary == "" && q.Description == ""
-	case KindIssueLink, KindIssueUnlink:
+	case KindIssueLink, KindIssueUnlink, KindIssueTag, KindIssueUntag:
 		return q.CommentText == "" && q.Summary == "" && q.Description == ""
 	case KindIssueEdit:
 		// Absent and empty are not distinguishable, so at least one non-empty
@@ -388,8 +411,8 @@ func Prepare(snapshot Snapshot, request Request, now time.Time) (Plan, error) {
 	case KindIssueEdit:
 		// The request text is applied verbatim, with no marker; the snapshot
 		// holds only hashes of the old text.
-	case KindIssueLink, KindIssueUnlink:
-		// The frozen snapshot is the complete link payload.
+	case KindIssueLink, KindIssueUnlink, KindIssueTag, KindIssueUntag:
+		// The frozen snapshot is the complete link or tag payload.
 	case KindAttachmentAdd:
 		// The frozen snapshot is the complete upload payload; no marker can
 		// ride inside the file without changing its bytes.
@@ -455,7 +478,7 @@ func ValidatePlan(p Plan) error {
 			return invalid()
 		}
 	case PlanVersion4:
-		if p.Snapshot.Kind != KindIssueUpdate && p.Snapshot.Kind != KindIssueEdit && p.Snapshot.Kind != KindIssueCreate && p.Snapshot.Kind != KindIssueLink && p.Snapshot.Kind != KindIssueUnlink && p.Snapshot.Kind != KindAttachmentAdd || !p.ExpiresAt.IsZero() {
+		if p.Snapshot.Kind != KindIssueUpdate && p.Snapshot.Kind != KindIssueEdit && p.Snapshot.Kind != KindIssueCreate && p.Snapshot.Kind != KindIssueLink && p.Snapshot.Kind != KindIssueUnlink && p.Snapshot.Kind != KindIssueTag && p.Snapshot.Kind != KindIssueUntag && p.Snapshot.Kind != KindAttachmentAdd || !p.ExpiresAt.IsZero() {
 			return invalid()
 		}
 	case PlanVersion5:
@@ -522,7 +545,7 @@ func validateMarkerText(p Plan) error {
 		// validRequest already rejects all mutable payload fields.
 	case KindIssueEdit:
 		// validRequest already checks the verbatim summary and description.
-	case KindIssueLink, KindIssueUnlink:
+	case KindIssueLink, KindIssueUnlink, KindIssueTag, KindIssueUntag:
 	case KindAttachmentAdd:
 		// validRequest already rejects all mutable payload fields.
 	default:

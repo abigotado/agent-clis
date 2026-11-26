@@ -50,6 +50,8 @@ func TestCapabilitiesAdvertiseDurablePlanMetadata(t *testing.T) {
 		"issue.edit":     operatorwrite.PlanVersion4,
 		"issue.link":     operatorwrite.PlanVersion4,
 		"issue.unlink":   operatorwrite.PlanVersion4,
+		"issue.tag":      operatorwrite.PlanVersion4,
+		"issue.untag":    operatorwrite.PlanVersion4,
 		"attachment.add": operatorwrite.PlanVersion4,
 	}
 	if capabilities.PlanVersion != operatorwrite.PlanVersion5 || capabilities.PlanLifetime != operatorwrite.CurrentPlanLifetime ||

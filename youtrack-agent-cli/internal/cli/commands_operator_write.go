@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"strconv"
+	"strings"
 
 	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/application"
 	"github.com/abigotado/agent-clis/youtrack-agent-cli/internal/errx"
@@ -21,6 +22,8 @@ func (view operatorWriteView) Fields() []output.Field {
 	fields := output.Field{Name: "fields", OnRequest: true}
 	deleteTarget := view.Kind == "comment.delete"
 	linkKind := view.Kind == "issue.link" || view.Kind == "issue.unlink"
+	tagKind := view.Kind == "issue.tag" || view.Kind == "issue.untag"
+	disclosureKind := tagKind || view.Kind == "issue.unlink"
 	commentText, summary, description := "", "", ""
 	comment := output.Field{Name: "comment", OnRequest: true}
 	requiredPermission := output.Field{Name: "required_server_permission", OnRequest: true}
@@ -77,7 +80,7 @@ func (view operatorWriteView) Fields() []output.Field {
 		{Name: "kind", Value: view.Kind, Raw: view.Kind},
 		{Name: "intent_sha256", Value: view.IntentSHA256, Raw: view.IntentSHA256},
 		{Name: "profile", Value: view.Profile, Raw: view.Profile},
-		{Name: "issue_id", Value: view.IssueID, Raw: view.IssueID, Always: deleteTarget || linkKind},
+		{Name: "issue_id", Value: view.IssueID, Raw: view.IssueID, Always: deleteTarget || linkKind || tagKind},
 		{Name: "comment_id", Value: view.CommentID, Raw: view.CommentID, OnRequest: !deleteTarget, Always: deleteTarget},
 		{Name: "project_id", Value: view.ProjectID, Raw: view.ProjectID, Always: deleteTarget},
 		{Name: "project_key", Value: view.ProjectKey, Raw: view.ProjectKey, Always: deleteTarget},
@@ -87,6 +90,9 @@ func (view operatorWriteView) Fields() []output.Field {
 		{Name: "link_type", Value: view.LinkType, Raw: view.LinkType, Always: linkKind, OnRequest: !linkKind},
 		{Name: "direction", Value: view.Direction, Raw: view.Direction, Always: linkKind, OnRequest: !linkKind},
 		{Name: "link_id", Value: view.LinkID, Raw: view.LinkID, Always: linkKind, OnRequest: !linkKind},
+		{Name: "tag_id", Value: view.TagID, Raw: view.TagID, Always: tagKind, OnRequest: !tagKind},
+		{Name: "tag_name", Value: view.TagName, Raw: view.TagName, Always: tagKind, OnRequest: !tagKind},
+		{Name: "disclosures", Value: strings.Join(view.Disclosures, ","), Raw: view.Disclosures, Always: disclosureKind && len(view.Disclosures) != 0, OnRequest: !disclosureKind || len(view.Disclosures) == 0},
 		{Name: "non_replayable", Value: strconv.FormatBool(view.NonReplayable), Raw: view.NonReplayable, Always: true},
 		{Name: "remote_id", Value: view.RemoteID, Raw: view.RemoteID},
 		{Name: "remote_readable_id", Value: view.RemoteReadableID, Raw: view.RemoteReadableID},
@@ -162,6 +168,16 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 		if !linkFlagsKind && changed("target-id", "link-type", "link-type-id", "direction") {
 			return errx.Usage("--target-id, --link-type, --link-type-id, and --direction are accepted only with --kind issue.link or issue.unlink")
 		}
+		tagKind := input.Kind == "issue.tag" || input.Kind == "issue.untag"
+		if tagKind && changed("field", "value", "field-id", "value-id", "clear-value", "clear-field", "clear-field-id", "project", "comment-id", "target-id", "link-type", "link-type-id", "direction", "file", "name") {
+			return errx.Usage("%s snapshot takes only --id, one of --tag and --tag-id, and --out", input.Kind)
+		}
+		if tagKind && changed("tag") && changed("tag-id") {
+			return errx.Usage("%s snapshot takes exactly one of --tag and --tag-id", input.Kind)
+		}
+		if !tagKind && changed("tag", "tag-id") {
+			return errx.Usage("--tag and --tag-id are accepted only with --kind issue.tag or issue.untag")
+		}
 		if input.Kind == "attachment.add" {
 			if input.FilePath == "" {
 				return errx.Usage("attachment.add snapshot requires --file")
@@ -188,11 +204,13 @@ func (a *App) newOperatorSnapshotCommand() *cobra.Command {
 		return a.renderOperatorWrite(result)
 	}}
 	flags := command.Flags()
-	flags.StringVar(&input.Kind, "kind", "", "supported write kind: issue.create, issue.update, issue.edit, issue.link, issue.unlink, comment.add, comment.delete, or attachment.add")
-	flags.StringVar(&input.IssueID, "id", "", "exact issue entity or readable ID for issue.update, issue.edit, issue.link or issue.unlink (the source), comment.add, comment.delete, or attachment.add")
+	flags.StringVar(&input.Kind, "kind", "", "supported write kind: issue.create, issue.update, issue.edit, issue.link, issue.unlink, issue.tag (add one tag), issue.untag (remove one tag), comment.add, comment.delete, or attachment.add")
+	flags.StringVar(&input.IssueID, "id", "", "exact issue entity or readable ID for issue.update, issue.edit, issue.link or issue.unlink (the source), issue.tag, issue.untag, comment.add, comment.delete, or attachment.add")
 	flags.StringVar(&input.TargetID, "target-id", "", "exact target issue entity or readable ID for issue.link or issue.unlink (remove one issue link)")
 	flags.StringVar(&input.LinkType, "link-type", "", "exact issue link type name for issue.link or issue.unlink; use --link-type-id when names repeat")
 	flags.StringVar(&input.LinkTypeID, "link-type-id", "", "immutable issue link type ID for issue.link or issue.unlink")
+	flags.StringVar(&input.Tag, "tag", "", "exact tag name for issue.tag or issue.untag; case-sensitive, never fuzzy; use --tag-id when names repeat")
+	flags.StringVar(&input.TagID, "tag-id", "", "immutable tag ID for issue.tag or issue.untag")
 	flags.StringVar(&input.Direction, "direction", "", "exact link phrase read from the source issue, for example \"depends on\" or \"is required for\"; case-sensitive, never fuzzy")
 	flags.StringVar(&input.CommentID, "comment-id", "", "immutable exact comment ID for comment.delete")
 	flags.StringVar(&input.ProjectID, "project", "", "exact project entity ID or key for issue.create")

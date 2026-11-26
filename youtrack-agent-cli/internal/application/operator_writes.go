@@ -54,6 +54,8 @@ func requireOperatorProfile(selected profile.Profile, kind operatorwrite.Kind) e
 		capability = profile.CapabilityIssueLink
 	case operatorwrite.KindIssueUnlink:
 		capability = profile.CapabilityIssueUnlink
+	case operatorwrite.KindIssueTag, operatorwrite.KindIssueUntag:
+		capability = profile.CapabilityIssueTag
 	case operatorwrite.KindAttachmentAdd:
 		capability = profile.CapabilityAttachmentAdd
 	default:
@@ -175,6 +177,11 @@ func (s *Service) SnapshotOperatorWrite(ctx context.Context, input OperatorSnaps
 		if err != nil {
 			return OperatorWriteInfo{}, err
 		}
+	} else if kind == operatorwrite.KindIssueTag || kind == operatorwrite.KindIssueUntag {
+		snapshot, err = s.freezeIssueTag(ctx, client, selected, input, snapshot, kind == operatorwrite.KindIssueUntag)
+		if err != nil {
+			return OperatorWriteInfo{}, err
+		}
 	} else if kind == operatorwrite.KindIssueCreate {
 		project, err := client.GetProject(ctx, input.ProjectID)
 		if err != nil {
@@ -272,6 +279,10 @@ func (s *Service) SnapshotOperatorWrite(ctx context.Context, input OperatorSnaps
 // validateOperatorTarget checks the kind-specific selectors before any
 // credential or network access.
 func validateOperatorTarget(kind operatorwrite.Kind, input OperatorSnapshotInput) error {
+	isTag := kind == operatorwrite.KindIssueTag || kind == operatorwrite.KindIssueUntag
+	if !isTag && (input.Tag != "" || input.TagID != "") {
+		return errx.Usage("--tag and --tag-id are accepted only by issue.tag and issue.untag")
+	}
 	if kind != operatorwrite.KindIssueLink && kind != operatorwrite.KindIssueUnlink && (input.TargetID != "" || input.LinkType != "" || input.LinkTypeID != "" || input.Direction != "") {
 		return errx.Usage("--target-id, --link-type, --link-type-id, and --direction are accepted only by issue.link and issue.unlink")
 	}
@@ -371,6 +382,13 @@ func validateOperatorTarget(kind operatorwrite.Kind, input OperatorSnapshotInput
 			err = youtrack.ValidateAddIssueLinkInput(youtrack.AddIssueLinkInput{SourceID: input.IssueID, LinkID: "0-0", TargetID: input.TargetID, TargetReadableID: "X-1"})
 		}
 		if err != nil {
+			return err
+		}
+	case operatorwrite.KindIssueTag, operatorwrite.KindIssueUntag:
+		if input.IssueID == "" || input.ProjectID != "" || input.CommentID != "" || len(input.Fields) != 0 {
+			return errx.Usage("%s snapshot requires an exact --id and exactly one of --tag or --tag-id; no --project, --comment-id, or field selectors", kind)
+		}
+		if err := validateTagSelectors(input); err != nil {
 			return err
 		}
 	case operatorwrite.KindIssueEdit:
@@ -972,7 +990,7 @@ func (s *Service) ApplyOperatorWrite(ctx context.Context, input OperatorApplyInp
 	if err := verifyClientAccount(ctx, client, selected); err != nil {
 		return OperatorWriteInfo{}, err
 	}
-	inLockVerify := plan.Snapshot.Kind == operatorwrite.KindCommentDelete || plan.Snapshot.Kind == operatorwrite.KindIssueLink || plan.Snapshot.Kind == operatorwrite.KindIssueUnlink || plan.Snapshot.Kind == operatorwrite.KindAttachmentAdd
+	inLockVerify := plan.Snapshot.Kind == operatorwrite.KindCommentDelete || plan.Snapshot.Kind == operatorwrite.KindIssueLink || plan.Snapshot.Kind == operatorwrite.KindIssueUnlink || plan.Snapshot.Kind == operatorwrite.KindIssueTag || plan.Snapshot.Kind == operatorwrite.KindIssueUntag || plan.Snapshot.Kind == operatorwrite.KindAttachmentAdd
 	// An attachment is checked both before the lock and again inside it.
 	if !inLockVerify || plan.Snapshot.Kind == operatorwrite.KindAttachmentAdd {
 		if err := verifyOperatorRemote(ctx, client, plan.Snapshot); err != nil {
@@ -1069,6 +1087,8 @@ func verifyOperatorRemote(ctx context.Context, client *youtrack.Client, snapshot
 		return verifyIssueLink(ctx, client, snapshot)
 	case operatorwrite.KindIssueUnlink:
 		return verifyIssueUnlink(ctx, client, snapshot)
+	case operatorwrite.KindIssueTag, operatorwrite.KindIssueUntag:
+		return verifyIssueTag(ctx, client, snapshot)
 	case operatorwrite.KindAttachmentAdd:
 		issue, err := client.GetIssue(ctx, snapshot.Issue.ID)
 		if err != nil {
@@ -1191,6 +1211,8 @@ func dispatchOperatorWrite(ctx context.Context, client *youtrack.Client, plan op
 		return dispatchIssueLink(ctx, client, plan)
 	case operatorwrite.KindIssueUnlink:
 		return dispatchIssueUnlink(ctx, client, plan)
+	case operatorwrite.KindIssueTag, operatorwrite.KindIssueUntag:
+		return dispatchIssueTag(ctx, client, plan)
 	case operatorwrite.KindAttachmentAdd:
 		uploaded, err := client.AddAttachment(ctx, upload)
 		if err != nil {
@@ -1456,6 +1478,12 @@ func (s *Service) ReconcileOperatorWrite(ctx context.Context, input OperatorReco
 		evidence = observed
 	case operatorwrite.KindIssueUnlink:
 		observed, err := observeIssueUnlink(ctx, client, snapshot)
+		if err != nil {
+			return OperatorWriteInfo{}, err
+		}
+		evidence = observed
+	case operatorwrite.KindIssueTag, operatorwrite.KindIssueUntag:
+		observed, err := observeIssueTag(ctx, client, snapshot)
 		if err != nil {
 			return OperatorWriteInfo{}, err
 		}

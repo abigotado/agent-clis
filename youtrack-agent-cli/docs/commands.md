@@ -312,13 +312,15 @@ Read one exact issue or project and freeze a supported write target
 | `--field` | stringArray |  | exact field name, for example Stage or Assignee; repeatable for issue.create, last wins otherwise |
 | `--field-id` | stringArray |  | immutable project custom-field ID; repeatable for issue.create, last wins otherwise |
 | `--file` | string |  | local regular file to attach; only with --kind attachment.add |
-| `--id` | string |  | exact issue entity or readable ID for issue.update, issue.edit, issue.link or issue.unlink (the source), comment.add, comment.delete, or attachment.add |
-| `--kind` | string |  | supported write kind: issue.create, issue.update, issue.edit, issue.link, issue.unlink, comment.add, comment.delete, or attachment.add |
+| `--id` | string |  | exact issue entity or readable ID for issue.update, issue.edit, issue.link or issue.unlink (the source), issue.tag, issue.untag, comment.add, comment.delete, or attachment.add |
+| `--kind` | string |  | supported write kind: issue.create, issue.update, issue.edit, issue.link, issue.unlink, issue.tag (add one tag), issue.untag (remove one tag), comment.add, comment.delete, or attachment.add |
 | `--link-type` | string |  | exact issue link type name for issue.link or issue.unlink; use --link-type-id when names repeat |
 | `--link-type-id` | string |  | immutable issue link type ID for issue.link or issue.unlink |
 | `--name` | string |  | upload file name for attachment.add; defaults to the file's base name |
 | `--out` | string |  | new exclusive 0600 snapshot path in an existing private directory |
 | `--project` | string |  | exact project entity ID or key for issue.create |
+| `--tag` | string |  | exact tag name for issue.tag or issue.untag; case-sensitive, never fuzzy; use --tag-id when names repeat |
+| `--tag-id` | string |  | immutable tag ID for issue.tag or issue.untag |
 | `--target-id` | string |  | exact target issue entity or readable ID for issue.link or issue.unlink (remove one issue link) |
 | `--value` | stringArray |  | exact target bundle value name, or exact user login for a user field, paired with --field |
 | `--value-id` | stringArray |  | immutable target bundle value ID, or user ID for a user field, paired with --field-id |

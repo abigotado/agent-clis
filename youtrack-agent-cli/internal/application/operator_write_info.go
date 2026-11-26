@@ -34,7 +34,10 @@ type OperatorSnapshotInput struct {
 	// FilePath and AttachmentName select the local file and its upload name
 	// for attachment.add; the name defaults to the file's base name.
 	FilePath, AttachmentName string
-	Fields                   []OperatorFieldSelection
+	// Tag and TagID select the tag of an issue.tag or issue.untag by exact
+	// case-sensitive name or immutable ID; exactly one is required.
+	Tag, TagID string
+	Fields     []OperatorFieldSelection
 }
 
 type OperatorPrepareInput struct {
@@ -79,6 +82,8 @@ type OperatorWriteInfo struct {
 	LinkType         string                    `json:"link_type,omitempty"`
 	Direction        string                    `json:"direction,omitempty"`
 	LinkID           string                    `json:"link_id,omitempty"`
+	TagID            string                    `json:"tag_id,omitempty"`
+	TagName          string                    `json:"tag_name,omitempty"`
 	Disclosures      []string                  `json:"disclosures,omitempty"`
 	NonReplayable    bool                      `json:"non_replayable"`
 	RemoteID         string                    `json:"remote_id,omitempty"`
@@ -111,6 +116,15 @@ func operatorSnapshotInfo(snapshot operatorwrite.Snapshot) OperatorWriteInfo {
 			if link.Type.Name == "Duplicate" {
 				result.Disclosures = append(result.Disclosures, "duplicate_link_removed")
 			}
+		}
+	}
+	if tag := snapshot.Tag; tag != nil {
+		result.TagID, result.TagName = tag.ID, tag.Name
+		if tag.Shared {
+			result.Disclosures = append(result.Disclosures, "shared_tag")
+		}
+		if tag.UntagOnResolve {
+			result.Disclosures = append(result.Disclosures, "untag_on_resolve")
 		}
 	}
 	result.Attachment = snapshot.Attachment
