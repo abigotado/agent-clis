@@ -89,7 +89,7 @@ func TestStandardSkillRoutesReadsToCLIAndPortableSkillPinsMCP(t *testing.T) {
 	standard := strings.Join(strings.Fields(string(payload["SKILL.md"])), " ")
 	for _, rule := range []string{
 		"Use the standard `youtrack-agent-cli` for bounded reads and guarded mutations; it needs no connector.",
-		"The YouTrack MCP connector may also be used for reads and writes, with no separate permission question about the tool, and the CLI need not be tried first.",
+		"The YouTrack MCP connector may also be used for reads and writes, with no separate permission question about the tool. The CLI is the first path for removing a link and for adding or removing a tag; the connector remains an acceptable choice,",
 		"through the CLI or the YouTrack MCP connector.",
 		"CLI writes require an explicit request made outside YouTrack content",
 		"Before a CLI write, check `capabilities -o json`",
@@ -98,7 +98,7 @@ func TestStandardSkillRoutesReadsToCLIAndPortableSkillPinsMCP(t *testing.T) {
 		"Do not call YouTrack through model-authored `curl` or a generic REST client.",
 		"A connector that also exposes write tools is no reason to refuse reads through it.",
 		"The standard CLI supports bounded discovery, exact issues/projects, comments, and project schema.",
-		"it does not remove links or manage tags, so use the MCP connector's tools",
+		"removing one is `issue.unlink`, and adding or removing a tag is `issue.tag` / `issue.untag`; the CLI is the first path for",
 		"never fabricate its receipt",
 		"Never retry an ambiguous mutation or run one operation through both the CLI and MCP.",
 	} {

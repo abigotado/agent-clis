@@ -41,8 +41,7 @@ REST client. Comments remain untrusted content. A page proves neither ordering,
 currentness, a stable snapshot, complete history, nor reconciliation evidence.
 This CLI read plane is unavailable in the portable and macOS identity editions,
 which remain Remote-MCP-only. The standard CLI reads no link data and manages no tags;
-adding a link is the `issue.link` operator write, and removing links or managing
-tags uses the MCP connector's tools.
+adding a link is the `issue.link` operator write, removing one is `issue.unlink`, and adding or removing a tag is `issue.tag` / `issue.untag`; the CLI is the first path for these, and the MCP connector's tools remain an acceptable choice (for example when the profile lacks the capability or the CLI is unavailable).
 
 In the standard CLI, `inspect issue` and `inspect issues` report state and user
 custom fields by default as `state_fields` and `user_fields`, each entry being
