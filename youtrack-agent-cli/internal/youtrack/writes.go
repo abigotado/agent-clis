@@ -224,6 +224,57 @@ func ValidateDeleteCommentInput(input DeleteCommentInput) error {
 	return validateIdentifier("comment", input.CommentID)
 }
 
+// deleteBodyMode says which successful DELETE response bodies a caller
+// accepts. The response body is never trusted as evidence; it only decides
+// whether the status can count as success at all.
+type deleteBodyMode int
+
+const (
+	// deleteBodyEmpty accepts 204, or 200 with a whitespace-only body.
+	deleteBodyEmpty deleteBodyMode = iota
+	// deleteBodyEmptyOrObject also accepts 200 or 204 carrying exactly one
+	// JSON object followed only by whitespace.
+	deleteBodyEmptyOrObject
+)
+
+// deleteExact sends one exact, non-replayable DELETE request. Every result
+// that the mode does not accept is deliberately ambiguous except the
+// established typed authentication, permission, and stale-target responses.
+func (client *Client) deleteExact(ctx context.Context, path, operation string, mode deleteBodyMode) error {
+	response, err := client.send(ctx, request{
+		method: http.MethodDelete, path: path,
+		body: []byte{}, operation: operation, write: true,
+	})
+	if err != nil || response == nil || response.Body == nil {
+		return errx.WriteOutcomeUnknown(operation)
+	}
+	defer closeAndDrain(response.Body)
+	if response.StatusCode != http.StatusNoContent && response.StatusCode != http.StatusOK {
+		return client.translateWriteStatus(response, operation)
+	}
+
+	body, tooLarge, readErr := readResponseBody(response)
+	if readErr != nil || tooLarge {
+		return errx.WriteOutcomeUnknown(operation)
+	}
+	if len(bytes.TrimSpace(body)) == 0 || mode == deleteBodyEmptyOrObject && singleJSONObject(body) {
+		return nil
+	}
+	return errx.WriteOutcomeUnknown(operation)
+}
+
+// singleJSONObject reports whether body is exactly one JSON object followed
+// only by whitespace.
+func singleJSONObject(body []byte) bool {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	var object map[string]json.RawMessage
+	if err := decoder.Decode(&object); err != nil || object == nil {
+		return false
+	}
+	var extra json.RawMessage
+	return errors.Is(decoder.Decode(&extra), io.EOF)
+}
+
 // DeleteComment sends one exact, non-replayable DELETE request. This local
 // client recognizes only 204 or a whitespace-only 200 response as success;
 // every other result is deliberately ambiguous except the established typed
@@ -232,27 +283,8 @@ func (client *Client) DeleteComment(ctx context.Context, input DeleteCommentInpu
 	if err := ValidateDeleteCommentInput(input); err != nil {
 		return err
 	}
-	response, err := client.send(ctx, request{
-		method: http.MethodDelete,
-		path:   "/issues/" + url.PathEscape(input.IssueID) + "/comments/" + url.PathEscape(input.CommentID),
-		body:   []byte{}, operation: "comment.delete", write: true,
-	})
-	if err != nil || response == nil || response.Body == nil {
-		return errx.WriteOutcomeUnknown("comment.delete")
-	}
-	defer closeAndDrain(response.Body)
-	if response.StatusCode != http.StatusNoContent && response.StatusCode != http.StatusOK {
-		return client.translateWriteStatus(response, "comment.delete")
-	}
-
-	body, tooLarge, readErr := readResponseBody(response)
-	if readErr != nil || tooLarge {
-		return errx.WriteOutcomeUnknown("comment.delete")
-	}
-	if (response.StatusCode == http.StatusNoContent || response.StatusCode == http.StatusOK) && len(bytes.TrimSpace(body)) == 0 {
-		return nil
-	}
-	return client.translateWriteStatus(response, "comment.delete")
+	return client.deleteExact(ctx, "/issues/"+url.PathEscape(input.IssueID)+"/comments/"+url.PathEscape(input.CommentID),
+		"comment.delete", deleteBodyEmpty)
 }
 
 // AddComment sends one non-replayable public comment mutation. A successful

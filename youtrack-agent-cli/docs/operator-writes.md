@@ -70,7 +70,7 @@ youtrack-agent-cli capabilities --profile work-write -o json
 ```
 
 Replace `ID:KEY` with a verified immutable project ID and key. Adding
-`issue-create`, `issue-create-user-fields`, `issue-link`, `attachment-add` or `comment-delete` to an existing profile changes its credential identity, so the
+`issue-create`, `issue-create-user-fields`, `issue-link`, `issue-unlink`, `issue-tag`, `attachment-add` or `comment-delete` to an existing profile changes its credential identity, so the
 old credential generation and project policy become stale: log in again and
 set the project allowlist again before preparing any plan. Profile/login/
 policy setup requires separate operator authorization; it is not an install hook.
@@ -168,8 +168,8 @@ before dispatch and never restores it.
 
 `capabilities` advertises the highest supported `plan_version: 5` and
 `plan_lifetime: until_consumed_or_stale`; its `plan_versions` map reports v5 for
-`issue.create` and `comment.add`, v4 for `issue.update`, `issue.edit`, `issue.link`
-and `attachment.add`, and v3 for deletion (previously prepared v2/v4 `issue.create`
+`issue.create` and `comment.add`, v4 for `issue.update`, `issue.edit`, `issue.link`,
+`issue.unlink`, `issue.tag`, `issue.untag` and `attachment.add`, and v3 for deletion (previously prepared v2/v4 `issue.create`
 and v2 `comment.add` plans are still accepted; v2 plans cannot carry user fields or a null target). Plan/status/apply results report
 their actual plan version/lifetime. V2/v3/v4/v5 default JSON/raw results and serialized plans
 omit `expires_at`. An explicit `--fields expires_at` projection retains the
@@ -179,13 +179,13 @@ The unchanged `source`/lane name `operator-write-v1` identifies the operator
 storage namespace, not the nested plan schema or JSON envelope version.
 
 New `issue.create` and `comment.add` plans are v5: their request text is sent
-verbatim, with no visible footer. New `issue.update`, `issue.edit`, `issue.link`
-and `attachment.add` plans are v4. V1/v2 bytes and hashes are preserved, and
+verbatim, with no visible footer. New `issue.update`, `issue.edit`, `issue.link`,
+`issue.unlink`, `issue.tag`, `issue.untag` and `attachment.add` plans are v4. V1/v2 bytes and hashes are preserved, and
 previously prepared v1/v2/v4 `issue.create` and v1/v2 `comment.add` plans still
 validate, apply and reconcile exactly as before, including the footer they were
 frozen with (the footer is part of the plan digest, so it cannot be removed from
 a prepared plan). V3 accepts only `comment.delete`, v4 only `issue.update`,
-`issue.edit`, `issue.create`, `issue.link` and `attachment.add`, and v5 only
+`issue.edit`, `issue.create`, `issue.link`, `issue.unlink`, `issue.tag`, `issue.untag` and `attachment.add`, and v5 only
 `issue.create` and `comment.add`. Only v4 and v5 can encode a User field or an
 explicit `null` target (clear), in an update field or in any create field; v1-v3
 plans refuse both. An older binary refuses v5 plans and records.
@@ -363,8 +363,9 @@ declared `issue-link` capability (canonical order: after `issue-edit` and
 existing profile gains it, and adding it changes the credential identity, so log
 in again and set the project allowlist again before preparing a plan. Both
 issues' projects must be on the allowlist: a link to an issue in a project
-outside it is refused. Removing links is not supported here; it stays with the
-MCP connector's `link_issues`, and one operation never runs through both.
+outside it is refused. Removing a link is `issue.unlink` (next section); the MCP
+connector's `link_issues` remains an acceptable alternative, and one operation
+never runs through both.
 
 ```sh
 youtrack-agent-cli operator-write snapshot --kind issue.link \
@@ -449,6 +450,102 @@ readable), the evidence is `linked_issue_unavailable`, again
 `operator_resolution_required`, and the record stays resolvable by the
 operator; it is not an error. Reconcile never
 POSTs and never restores eligibility; a moved issue is `OPERATOR_PROJECT_CHANGED`.
+
+## Removing a link
+
+`issue.unlink` removes one existing link between two issues. It needs a separately
+declared `issue-unlink` capability (canonical rank 9, after `attachment-add`): no
+existing profile gains it, and adding it changes the credential identity, so log
+in again and set the project allowlist again before preparing a plan. Both
+issues' projects must be on the allowlist. Plans are v4; an older binary refuses
+these records. `capabilities` lists `issue.unlink`. The MCP connector remains an
+acceptable alternative when the profile lacks the capability or the CLI is
+unavailable; one operation never runs through both.
+
+```sh
+youtrack-agent-cli operator-write snapshot --kind issue.unlink \
+  --id APP-123 --target-id OPS-7 --link-type Depend --direction "depends on" \
+  --out "$youtrack_operation_dir/snapshot.json"
+printf '%s' '{"kind":"issue.unlink"}' |
+  youtrack-agent-cli operator-write prepare --offline \
+    --snapshot "$youtrack_operation_dir/snapshot.json" --request-stdin
+```
+
+Snapshot flags and rules are those of `issue.link` (`--id` source, `--target-id`,
+`--link-type` or `--link-type-id`, exact case-sensitive `--direction` phrase).
+The canonical request is `{"kind":"issue.unlink"}`. A link that is not present is
+`OPERATOR_LINK_ABSENT` (exit 2, nothing to change).
+
+Apply re-checks inside the final lock that the link, type, entry and both issues
+are unchanged; any drift, including a 404, is `OPERATOR_LINK_STALE` or
+`OPERATOR_ISSUE_STALE` (exit 9) with zero DELETE and the plan unconsumed. It then
+sends one `DELETE /api/issues/{source}/links/{linkId}/issues/{target}`, confirmed
+by reads; anything unconfirmed is `WRITE_OUTCOME_UNKNOWN` and is never replayed. A
+DELETE 404 is a rejected record (`TARGET_CHANGED`); a 403 is exit 8 and consumes
+the plan. Reconcile is GET-only and never better than
+`operator_resolution_required`, with evidence
+`desired_link_absence_observed_without_causal_proof`, `link_still_present`,
+`linked_issue_unavailable` or `inconclusive`.
+
+The plan view carries `disclosures`; tell the operator before applying:
+`aggregation_parent_removed` (removing a Subtask/aggregation link removes the
+parent) and `duplicate_link_removed` (keyed on the link type name being exactly
+`Duplicate`, so a renamed Duplicate type gives no disclosure; a workflow may
+reopen the issue or change its resolution).
+
+## Tagging an issue
+
+`issue.tag` adds and `issue.untag` removes one tag on one exact issue. Both need
+the separately declared `issue-tag` capability (canonical rank 10, after
+`issue-unlink`); no existing profile gains it, and adding it changes the
+credential identity (log in again, set the allowlist again). The issue's project
+must be allowlisted. Plans are v4; an older binary refuses these records.
+`capabilities` lists both kinds. The MCP connector's `manage_issue_tags` remains
+an acceptable alternative when the profile lacks the capability or the CLI is
+unavailable; one operation never runs through both.
+
+```sh
+youtrack-agent-cli operator-write snapshot --kind issue.tag \
+  --id APP-123 --tag "needs-review" \
+  --out "$youtrack_operation_dir/snapshot.json"
+printf '%s' '{"kind":"issue.tag"}' |
+  youtrack-agent-cli operator-write prepare --offline \
+    --snapshot "$youtrack_operation_dir/snapshot.json" --request-stdin
+```
+
+Select the tag with `--tag NAME` or `--tag-id ID`. The name match is exact and
+case-sensitive: `issue.tag` searches the visible tags and `issue.untag` the
+issue's own tags, each in one page of 101. A truncated page is exit 9 even with a
+single exact match (`OPERATOR_SCHEMA_TRUNCATED` for tag, `OPERATOR_TAGS_TRUNCATED`
+for untag): use `--tag-id`. No match is `NOT_FOUND_TAG` (exit 3; for untag
+`OPERATOR_TAG_ABSENT`, exit 2); a case variant is `INEXACT_TAG` (exit 2); several
+matches are `AMBIGUOUS_TAG` (exit 4; candidates bounded to 10, names to 64
+characters). The tag is then read exactly by ID; for untag by name an unreadable
+tag is `OPERATOR_TAG_UNREADABLE` (exit 9). Refused at snapshot with exit 2: the
+personal Star (`StarWatchFolder`, or a tag named exactly `Star` owned by the
+profile's account) `OPERATOR_TAG_STAR_UNSUPPORTED`; any type other than
+`Tag`/`IssueTag`, or an ownerless tag, `OPERATOR_TAG_TYPE_UNSUPPORTED`; a tag
+already on the issue `OPERATOR_TAG_ALREADY_PRESENT`; untag of an absent tag
+`OPERATOR_TAG_ABSENT`. The plan view shows `tag_id` and `tag_name`.
+
+Apply re-checks tag and issue inside the lock; drift is `OPERATOR_TAG_STALE` or
+`OPERATOR_ISSUE_STALE` (exit 9) with zero writes. It sends one
+`POST /api/issues/{id}/tags` with `{"id":...}` (tag) or one
+`DELETE /api/issues/{id}/tags/{tagId}` (untag), with the same unknown/rejected
+rules as unlink. Whether the account may use a tag is not checked in advance; a
+403 is exit 8 and consumes the plan. Reconcile is GET-only with evidence
+`desired_tag_observed_without_causal_proof`, `tag_still_absent`,
+`desired_tag_absence_observed_without_causal_proof`, `tag_still_present`,
+`tagged_issue_unavailable` or `inconclusive`.
+
+The plan view carries `disclosures`: `shared_tag` (a shared tag is visible to
+others) and `untag_on_resolve` (YouTrack removes the tag when the issue is
+resolved). Tell the operator before applying.
+
+The REST contract for unlink and tags is verified against JetBrains
+documentation only, not a live instance: the tag `$type` values, the sharing
+fields (`visibleFor`/`updateableBy`), the POST/DELETE status codes and the 404
+semantics of `/issues/{id}/tags/{tagId}` are unverified live.
 
 ## Attaching a file
 
@@ -616,6 +713,13 @@ equivalent plan to work around uncertainty. The readonly editions and native
 | Concurrent/repeated apply | Refuse, no second mutation request. |
 | `issue.link` precondition drift | Exit 9 `OPERATOR_ISSUE_STALE` or `OPERATOR_LINK_STALE`, zero POST, plan unconsumed; snapshot again. |
 | `issue.link` target already linked or child already has a parent | Exit 2 `OPERATOR_LINK_ALREADY_PRESENT` or `OPERATOR_LINK_PARENT_EXISTS` at snapshot; nothing to apply. |
+| `issue.unlink` link not present | Exit 2 `OPERATOR_LINK_ABSENT` at snapshot; nothing to apply. |
+| `issue.unlink` precondition drift | Exit 9 `OPERATOR_LINK_STALE` or `OPERATOR_ISSUE_STALE`, zero DELETE, plan unconsumed; snapshot again. |
+| `issue.tag` / `issue.untag` already in the requested state | Exit 2 `OPERATOR_TAG_ALREADY_PRESENT` / `OPERATOR_TAG_ABSENT` at snapshot; nothing to apply. |
+| Tag name unmatched, inexact or ambiguous | Exit 3 `NOT_FOUND_TAG`, exit 2 `INEXACT_TAG`, exit 4 `AMBIGUOUS_TAG`; pick a candidate and use `--tag-id`. |
+| Tag Star or unsupported type | Exit 2 `OPERATOR_TAG_STAR_UNSUPPORTED` or `OPERATOR_TAG_TYPE_UNSUPPORTED` at snapshot. |
+| Tag search truncated or tag unreadable | Exit 9 `OPERATOR_SCHEMA_TRUNCATED`, `OPERATOR_TAGS_TRUNCATED` or `OPERATOR_TAG_UNREADABLE`; use `--tag-id`. |
+| `issue.tag` / `issue.untag` precondition drift | Exit 9 `OPERATOR_TAG_STALE` or `OPERATOR_ISSUE_STALE`, zero writes, plan unconsumed; snapshot again. |
 | Attachment source file changed, missing or replaced at apply | Exit 9 `OPERATOR_ATTACHMENT_SOURCE_STALE`; zero requests, plan unconsumed (nothing claimed). Take a new snapshot. |
 | Attachment upload lost, interrupted or read-back fails | `WRITE_OUTCOME_UNKNOWN`; the file is never uploaded again. The local record keeps a well-formed attachment `remote_id`; reconcile reads it exactly. |
 | Attachment upload rejected with 413 after the claim | Consumed terminal rejection; lower the size or ask the administrator, then take a new snapshot. |

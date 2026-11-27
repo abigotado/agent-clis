@@ -74,7 +74,7 @@ func PlanVersionFor(kind Kind) int {
 	switch kind {
 	case KindIssueCreate, KindCommentAdd:
 		return PlanVersion5
-	case KindIssueUpdate, KindIssueEdit, KindIssueLink, KindAttachmentAdd:
+	case KindIssueUpdate, KindIssueEdit, KindIssueLink, KindIssueUnlink, KindIssueTag, KindIssueUntag, KindAttachmentAdd:
 		return PlanVersion4
 	case KindCommentDelete:
 		return PlanVersion3
@@ -103,6 +103,9 @@ const (
 	KindCommentDelete Kind = "comment.delete"
 	KindIssueEdit     Kind = "issue.edit"
 	KindIssueLink     Kind = "issue.link"
+	KindIssueUnlink   Kind = "issue.unlink"
+	KindIssueTag      Kind = "issue.tag"
+	KindIssueUntag    Kind = "issue.untag"
 	// KindAttachmentAdd uploads one local file to one issue.
 	KindAttachmentAdd Kind = "attachment.add"
 )
@@ -161,6 +164,19 @@ type Link struct {
 	Direction string   `json:"direction"`
 	Phrase    string   `json:"phrase"`
 	LinkID    string   `json:"link_id"`
+}
+
+// Tag freezes the one tag an issue.tag or issue.untag plan acts on. The owner
+// is required: a tag without an owner is refused before a plan exists. Shared
+// records that the tag is visible to or updatable by anyone besides its owner.
+type Tag struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Type           string `json:"type"`
+	OwnerID        string `json:"owner_id"`
+	OwnerLogin     string `json:"owner_login"`
+	UntagOnResolve bool   `json:"untag_on_resolve"`
+	Shared         bool   `json:"shared"`
 }
 
 // Project is the exact allowlisted target of an issue.create snapshot.
@@ -338,6 +354,8 @@ type Snapshot struct {
 	Text *TextPrecondition `json:"text,omitempty"`
 	// Link is set only for issue.link; Issue is then the link source.
 	Link *Link `json:"link,omitempty"`
+	// Tag is set only for issue.tag and issue.untag; Issue is then the tagged issue.
+	Tag *Tag `json:"tag,omitempty"`
 	// Attachment is set only for attachment.add and freezes the exact file.
 	Attachment *Attachment `json:"attachment,omitempty"`
 	CapturedAt time.Time   `json:"captured_at"`
@@ -352,11 +370,11 @@ func (s Snapshot) ProjectRef() (id, key string) {
 }
 
 // ProjectRefs lists every project the snapshot's policy check binds: the
-// primary project, and for issue.link also the target issue's project.
+// primary project, and for issue.link and issue.unlink also the target issue's project.
 func (s Snapshot) ProjectRefs() []Project {
 	id, key := s.ProjectRef()
 	refs := []Project{{ID: id, Key: key}}
-	if s.Kind == KindIssueLink && s.Link != nil && (s.Link.Target.ProjectID != id || s.Link.Target.ProjectKey != key) {
+	if (s.Kind == KindIssueLink || s.Kind == KindIssueUnlink) && s.Link != nil && (s.Link.Target.ProjectID != id || s.Link.Target.ProjectKey != key) {
 		refs = append(refs, Project{ID: s.Link.Target.ProjectID, Key: s.Link.Target.ProjectKey})
 	}
 	return refs

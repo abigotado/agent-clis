@@ -256,3 +256,43 @@ func (client *Client) AddIssueLink(ctx context.Context, input AddIssueLinkInput)
 	}
 	return nil
 }
+
+// RemoveIssueLinkInput is the complete issue.unlink payload. LinkID is the
+// server-provided link entry ID of SourceID; TargetID is the database ID of
+// the issue to remove from that entry.
+type RemoveIssueLinkInput struct {
+	SourceID string
+	LinkID   string
+	TargetID string
+}
+
+// ValidateRemoveIssueLinkInput validates unlink intent without credentials or
+// network access.
+func ValidateRemoveIssueLinkInput(input RemoveIssueLinkInput) error {
+	if err := validateIdentifier("source issue", input.SourceID); err != nil {
+		return err
+	}
+	if err := validateIdentifier("link", input.LinkID); err != nil {
+		return err
+	}
+	if err := validateIdentifier("target issue", input.TargetID); err != nil {
+		return err
+	}
+	if input.SourceID == input.TargetID {
+		return errx.Usage("an issue cannot be unlinked from itself")
+	}
+	return nil
+}
+
+// RemoveIssueLink dispatches exactly one non-replayable DELETE that removes
+// the target from the source's link entry. Success is only HTTP 200 or 204
+// with an empty body or one JSON object; the body is never trusted. Anything
+// else that is not a typed rejection is WRITE_OUTCOME_UNKNOWN.
+func (client *Client) RemoveIssueLink(ctx context.Context, input RemoveIssueLinkInput) error {
+	if err := ValidateRemoveIssueLinkInput(input); err != nil {
+		return err
+	}
+	return client.deleteExact(ctx,
+		"/issues/"+url.PathEscape(input.SourceID)+"/links/"+url.PathEscape(input.LinkID)+"/issues/"+url.PathEscape(input.TargetID),
+		"issue.unlink", deleteBodyEmptyOrObject)
+}
