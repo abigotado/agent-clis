@@ -98,8 +98,16 @@ func dispatchIssueUnlink(ctx context.Context, client *youtrack.Client, plan oper
 			return link.Target.ID, link.Target.ReadableID, operatorUnknownError()
 		}
 	}
-	entry, ok, err := linkEntry(ctx, client, snapshot.Issue.ID, link.Type.ID, link.Direction)
-	if err != nil || !ok || entry.ID != link.LinkID {
+	entries, err := linkEntries(ctx, client, snapshot.Issue.ID, link.Type.ID, linkWireDirection(link.Direction))
+	switch {
+	case err != nil || len(entries) > 1:
+		return link.Target.ID, link.Target.ReadableID, operatorUnknownError()
+	case len(entries) == 0:
+		// YouTrack may drop an empty entry once its last target is removed; an
+		// unlisted entry after a 2xx DELETE is confirmed absence.
+		return link.Target.ID, link.Target.ReadableID, nil
+	}
+	if entries[0].ID != link.LinkID {
 		return link.Target.ID, link.Target.ReadableID, operatorUnknownError()
 	}
 	present, err := linkContains(ctx, client, snapshot.Issue.ID, link.LinkID, link.Target.ID)

@@ -60,6 +60,13 @@ type linkFixture struct {
 	deletes      atomic.Int32
 	deleteStatus int
 	deleteEffect bool
+	// deleteDropsEntry makes a DELETE also unlist the source entry (as when the
+	// server drops an empty entry); deleteRenumbersEntry gives it a new id.
+	deleteDropsEntry     bool
+	deleteRenumbersEntry bool
+	// deleteDuplicatesEntry makes a DELETE also list a second entry of the
+	// same type and direction.
+	deleteDuplicatesEntry bool
 }
 
 func linkEntryID(issueID, typeID, direction string) string {
@@ -343,6 +350,15 @@ func (f *linkFixture) serve(t *testing.T) func(http.ResponseWriter, *http.Reques
 			}
 			if f.deleteEffect {
 				f.removeLocked(issue.id, entry.typeID, entry.direction, parts[5])
+				if f.deleteDropsEntry {
+					f.entries[issue.id] = slices.DeleteFunc(f.entries[issue.id], func(candidate *linkEntryState) bool { return candidate == entry })
+				}
+				if f.deleteRenumbersEntry {
+					entry.id = "renumbered-after-delete"
+				}
+				if f.deleteDuplicatesEntry {
+					f.entries[issue.id] = append(f.entries[issue.id], &linkEntryState{id: "duplicate-after-delete", typeID: entry.typeID, direction: entry.direction})
+				}
 			}
 			encode(map[string]any{"id": parts[5]})
 		default:

@@ -225,6 +225,7 @@ func TestOperatorIssueUnlinkAuthFailuresInLockKeepTheirClassAndDeleteNothing(t *
 	}{
 		{name: "forbidden", status: 403, reason: "PERMISSION_DENIED", code: errx.CodePermission},
 		{name: "rate limited", status: 429, reason: "RATE_LIMITED", code: errx.CodeRetryable},
+		{name: "unauthorized", status: 401, reason: "AUTHENTICATION_FAILED", code: errx.CodeAuth},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -232,9 +233,7 @@ func TestOperatorIssueUnlinkAuthFailuresInLockKeepTheirClassAndDeleteNothing(t *
 			plan := f.prepareUnlink(t, nil)
 			f.service.HTTP = &getStatusTransport{next: f.service.HTTP, path: "/api/issues/2-19", status: test.status}
 			_, err := f.apply(t, plan)
-			if err == nil || errx.ExitCode(err) != test.code {
-				t.Fatalf("err=%v want code %d", err, test.code)
-			}
+			requireRefusal(t, err, test.reason, test.code)
 			status, statusErr := f.service.OperatorWriteStatus(t.Context(), plan.PlanID)
 			if f.deleteCount() != 0 || statusErr != nil || status.State != string(operatorwrite.StatePrepared) || status.NonReplayable {
 				t.Fatalf("deleted=%d or consumed: %#v %v", f.deleteCount(), status, statusErr)
@@ -295,6 +294,7 @@ func TestOperatorIssueUnlinkDeleteOutcomesAreSingleAndClassified(t *testing.T) {
 		name       string
 		status     int
 		noEffect   bool
+		setup      func(*linkFixture)
 		wantState  operatorwrite.State
 		wantReason string
 		wantCode   errx.Code
@@ -302,6 +302,9 @@ func TestOperatorIssueUnlinkDeleteOutcomesAreSingleAndClassified(t *testing.T) {
 		{name: "rate limited", status: 429, wantState: operatorwrite.StateUnknown, wantReason: "WRITE_OUTCOME_UNKNOWN", wantCode: errx.CodeConflict},
 		{name: "server error", status: 503, wantState: operatorwrite.StateUnknown, wantReason: "WRITE_OUTCOME_UNKNOWN", wantCode: errx.CodeConflict},
 		{name: "success that left the link", noEffect: true, wantState: operatorwrite.StateUnknown, wantReason: "WRITE_OUTCOME_UNKNOWN", wantCode: errx.CodeConflict},
+		{name: "entry vanished after delete", setup: func(f *linkFixture) { f.deleteDropsEntry = true }, wantState: operatorwrite.StateApplied},
+		{name: "entry duplicated after delete", setup: func(f *linkFixture) { f.deleteDuplicatesEntry = true }, wantState: operatorwrite.StateUnknown, wantReason: "WRITE_OUTCOME_UNKNOWN", wantCode: errx.CodeConflict},
+		{name: "entry id changed after delete", setup: func(f *linkFixture) { f.deleteRenumbersEntry = true }, wantState: operatorwrite.StateUnknown, wantReason: "WRITE_OUTCOME_UNKNOWN", wantCode: errx.CodeConflict},
 		{name: "forbidden", status: 403, wantState: operatorwrite.StateRejected, wantReason: "PERMISSION_DENIED", wantCode: errx.CodePermission},
 		{name: "not found", status: 404, wantState: operatorwrite.StateRejected, wantReason: "TARGET_CHANGED", wantCode: errx.CodeConflict},
 	}
@@ -310,8 +313,17 @@ func TestOperatorIssueUnlinkDeleteOutcomesAreSingleAndClassified(t *testing.T) {
 			f := newUnlinkFixture(t)
 			plan := f.prepareUnlink(t, nil)
 			f.deleteStatus, f.deleteEffect = test.status, !test.noEffect
+			if test.setup != nil {
+				test.setup(f)
+			}
 			_, err := f.apply(t, plan)
-			requireRefusal(t, err, test.wantReason, test.wantCode)
+			if test.wantReason == "" {
+				if err != nil {
+					t.Fatalf("expected success, got %v", err)
+				}
+			} else {
+				requireRefusal(t, err, test.wantReason, test.wantCode)
+			}
 			status, statusErr := f.service.OperatorWriteStatus(t.Context(), plan.PlanID)
 			if statusErr != nil || status.State != string(test.wantState) || !status.NonReplayable || f.deleteCount() != 1 {
 				t.Fatalf("status=%#v err=%v deletes=%d", status, statusErr, f.deleteCount())
