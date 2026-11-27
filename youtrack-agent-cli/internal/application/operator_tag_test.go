@@ -516,6 +516,57 @@ func TestOperatorIssueTagRefusals(t *testing.T) {
 	}
 }
 
+// renameOnExactGetTransport rewrites the name in the exact GET of one tag, so
+// the list answer and the exact read disagree like a concurrent rename.
+type renameOnExactGetTransport struct {
+	next     http.RoundTripper
+	path     string
+	from, to string
+}
+
+func (r *renameOnExactGetTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := r.next.RoundTrip(request)
+	if err != nil || request.Method != http.MethodGet || request.URL.Path != r.path {
+		return response, err
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+	raw = []byte(strings.Replace(string(raw), `"name":"`+r.from+`"`, `"name":"`+r.to+`"`, 1))
+	response.Body = io.NopCloser(strings.NewReader(string(raw)))
+	response.ContentLength = int64(len(raw))
+	response.Header.Del("Content-Length")
+	return response, nil
+}
+
+func TestOperatorIssueTagRenamedBetweenListAndExactReadIsStale(t *testing.T) {
+	for _, test := range []struct{ kind, id, name string }{
+		{"issue.tag", "t-1", "bug"},
+		{"issue.untag", "t-2", "urgent"},
+	} {
+		t.Run(test.kind, func(t *testing.T) {
+			f := newTagFixture(t)
+			f.service.HTTP = &renameOnExactGetTransport{next: f.service.HTTP, path: "/api/tags/" + test.id, from: test.name, to: "renamed"}
+			_, err := f.snapshot(t, test.kind, nil)
+			requireRefusal(t, err, "OPERATOR_TAG_STALE", errx.CodeConflict)
+			if f.writeCount() != 0 || len(f.nonGET()) != 0 {
+				t.Fatalf("writes=%d requests=%v", f.writeCount(), f.nonGET())
+			}
+			entries, readErr := os.ReadDir(f.dir)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			for _, entry := range entries {
+				if entry.Name() != "config" {
+					t.Fatalf("unexpected state written: %s", entry.Name())
+				}
+			}
+		})
+	}
+}
+
 func TestOperatorIssueTagSelectorsAreRefusedBeforeCredentials(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -587,6 +638,7 @@ func TestOperatorIssueTagDriftInLockIsConflictWithZeroWrites(t *testing.T) {
 		{name: "tag deleted", kind: "issue.tag", drift: func(f *tagFixture) { delete(f.tags, "t-1") }, wantReason: "OPERATOR_TAG_STALE"},
 		{name: "issue deleted", kind: "issue.tag", drift: func(f *tagFixture) { delete(f.issues, "2-12") }, wantReason: "OPERATOR_TAG_STALE"},
 		{name: "issue moved", kind: "issue.untag", drift: func(f *tagFixture) { f.issues["2-12"].projectID, f.issues["2-12"].projectKey = "0-4", "OPS" }, wantReason: "OPERATOR_ISSUE_STALE"},
+		{name: "project archived", kind: "issue.tag", drift: func(f *tagFixture) { f.issues["2-12"].archived = true }, wantReason: "OPERATOR_ISSUE_STALE"},
 		{name: "tag appeared", kind: "issue.tag", drift: func(f *tagFixture) { f.onIssue["2-12"] = append(f.onIssue["2-12"], "t-1") }, wantReason: "OPERATOR_TAG_STALE"},
 		{name: "tag disappeared", kind: "issue.untag", drift: func(f *tagFixture) { f.onIssue["2-12"] = nil }, wantReason: "OPERATOR_TAG_STALE"},
 	}

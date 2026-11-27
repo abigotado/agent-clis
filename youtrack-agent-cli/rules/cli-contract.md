@@ -216,7 +216,9 @@ Two hazards that are easy to reintroduce:
   `OPERATOR_TAG_ABSENT`, `OPERATOR_TAG_STAR_UNSUPPORTED`,
   `OPERATOR_TAG_TYPE_UNSUPPORTED` and `INEXACT_TAG` (exit 2), `NOT_FOUND_TAG`
   (exit 3), `AMBIGUOUS_TAG` (exit 4), `OPERATOR_TAG_STALE`,
-  `OPERATOR_TAGS_TRUNCATED` and `OPERATOR_TAG_UNREADABLE` (exit 9). Reconcile
+  `OPERATOR_TAGS_TRUNCATED` and `OPERATOR_TAG_UNREADABLE` (exit 9); the existing
+  `OPERATOR_SCHEMA_TRUNCATED` (more than 100 tags match the name) and
+  `OPERATOR_ISSUE_STALE` (exit 9) keep their meaning on these paths. Reconcile
   evidence `desired_tag_observed_without_causal_proof`, `tag_still_absent`,
   `desired_tag_absence_observed_without_causal_proof`, `tag_still_present`,
   `tagged_issue_unavailable` or `inconclusive`. No exit code is renumbered and

@@ -179,6 +179,9 @@ func (s *Service) freezeIssueTag(ctx context.Context, client *youtrack.Client, s
 		}
 		return snapshot, err
 	}
+	if input.TagID == "" && tag.Name != input.Tag {
+		return snapshot, errTagStale("the tag changed while it was being resolved")
+	}
 	if tag.Type == starFolderType || (tag.Name == "Star" && tag.OwnerID == selected.ExpectedAccountID) {
 		return snapshot, errx.Unsupported("OPERATOR_TAG_STAR_UNSUPPORTED", "the personal Star tag is not managed by this command")
 	}
